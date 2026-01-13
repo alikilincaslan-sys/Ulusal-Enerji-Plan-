@@ -29,6 +29,9 @@ KG_BASE_ROW_1IDX = 79
 KG_SUB_ROW_1IDX_1 = 102
 KG_SUB_ROW_1IDX_2 = 106
 
+# --- GDP RULE (Excel 1-indexed row in Scenario assumption sheet) ---
+GDP_ROW_1IDX = 6  # "Scenario assumption" sekmesinde 6. satır
+
 # Exclude headers/subtotals – installed capacity
 # NOTE: we DO NOT exclude Total Storage / Total Power to X, because we use them as totals.
 CAPACITY_EXCLUDE_EXACT = {
@@ -157,6 +160,28 @@ def _to_long(df_wide: pd.DataFrame, value_name="value"):
     return long.dropna(subset=[value_name])
 
 
+def _filter_years(df: pd.DataFrame, start_year: int, end_year: int) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    return df[(df["year"] >= start_year) & (df["year"] <= end_year)].copy()
+
+
+def _cagr(start_value: float, end_value: float, n_years: int) -> float:
+    # returns decimal (e.g., 0.035)
+    if n_years <= 0:
+        return np.nan
+    if start_value is None or end_value is None:
+        return np.nan
+    if not np.isfinite(start_value) or not np.isfinite(end_value):
+        return np.nan
+    if start_value <= 0 or end_value <= 0:
+        return np.nan
+    return (end_value / start_value) ** (1.0 / n_years) - 1.0
+
+
+# -----------------------------
+# Reading: Power_Generation
+# -----------------------------
 @st.cache_data(show_spinner=False)
 def read_power_generation(xlsx_file):
     raw = pd.read_excel(xlsx_file, sheet_name="Power_Generation", header=None)
@@ -208,10 +233,54 @@ def _is_natural_gas_item(item: str) -> bool:
     return bool(NATURAL_GAS_REGEX.search(it))
 
 
-def _filter_years(df: pd.DataFrame, start_year: int, end_year: int) -> pd.DataFrame:
-    if df is None or df.empty:
-        return df
-    return df[(df["year"] >= start_year) & (df["year"] <= end_year)].copy()
+# -----------------------------
+# Reading: Scenario assumption (GDP)
+# -----------------------------
+@st.cache_data(show_spinner=False)
+def read_gdp_series(xlsx_file) -> pd.DataFrame:
+    """
+    Scenario assumption sekmesinde 6. satırdaki GDP değerlerini okur.
+    Sheet adı farklı yazılmış olabilir diye birkaç aday dener.
+    """
+    candidates = [
+        "Scenario assumption",
+        "Scenario_assumption",
+        "Scenario Assumption",
+        "Scenario_Assumption",
+        "ScenarioAssumption",
+    ]
+
+    raw = None
+    used_sheet = None
+    for sh in candidates:
+        try:
+            raw = pd.read_excel(xlsx_file, sheet_name=sh, header=None)
+            used_sheet = sh
+            break
+        except Exception:
+            continue
+
+    if raw is None:
+        return pd.DataFrame(columns=["year", "value"])
+
+    year_row = _find_year_row(raw)
+    years, year_cols_idx = _extract_years(raw, year_row)
+
+    r0 = GDP_ROW_1IDX - 1
+    if r0 < 0 or r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "value"])
+
+    out_years, out_vals = [], []
+    for y, c in zip(years, year_cols_idx):
+        if y <= MAX_YEAR:
+            out_years.append(y)
+            out_vals.append(pd.to_numeric(raw.iloc[r0, c], errors="coerce"))
+
+    gdp = pd.DataFrame({"year": out_years, "value": out_vals})
+    gdp["value"] = pd.to_numeric(gdp["value"], errors="coerce")
+    gdp = gdp.dropna(subset=["value"]).sort_values("year")
+    gdp["sheet"] = used_sheet
+    return gdp
 
 
 # -----------------------------
@@ -227,10 +296,6 @@ def _gen_is_excluded(item: str) -> bool:
 
 
 def _series_total_storage_from_block(df_block: pd.DataFrame) -> pd.DataFrame:
-    """
-    Preferred: Total Storage row.
-    Fallback: sum pumped storage + battery + demand response.
-    """
     s = get_series_from_block(df_block, TOTAL_STORAGE_LABEL)
     if not s.empty:
         s["group"] = "Total Storage"
@@ -246,12 +311,6 @@ def _series_total_storage_from_block(df_block: pd.DataFrame) -> pd.DataFrame:
 
 
 def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Üretim karması (GWh):
-    - Renewables / Combustion Plants ara-toplamları hariç
-    - Depolama bileşenleri sayılmaz; 'Total Storage' (varsa) tek kalem alınır
-    - Natural gas = sadece 5 satırın toplamı
-    """
     if gross_gen_df is None or gross_gen_df.empty:
         return pd.DataFrame(columns=["year", "group", "value"])
 
@@ -308,9 +367,6 @@ def _cap_is_excluded(item: str) -> bool:
 
 
 def _row_values_by_excel_row(raw: pd.DataFrame, row_1idx: int, year_cols_idx: list[int], years: list[int]) -> pd.Series:
-    """
-    Returns a Series indexed by year for a fixed Excel row (1-indexed).
-    """
     r0 = row_1idx - 1
     if r0 < 0 or r0 >= len(raw):
         return pd.Series(dtype=float)
@@ -323,10 +379,6 @@ def _row_values_by_excel_row(raw: pd.DataFrame, row_1idx: int, year_cols_idx: li
 
 
 def total_capacity_series_from_rows(raw: pd.DataFrame, year_cols_idx: list[int], years: list[int]) -> pd.DataFrame:
-    """
-    KG toplamı (GW) = Row79 - (Row102 + Row106)
-    (Excel satır numarası, 1-indexed; Power_Generation sheet)
-    """
     s79 = _row_values_by_excel_row(raw, KG_BASE_ROW_1IDX, year_cols_idx, years)
     s102 = _row_values_by_excel_row(raw, KG_SUB_ROW_1IDX_1, year_cols_idx, years)
     s106 = _row_values_by_excel_row(raw, KG_SUB_ROW_1IDX_2, year_cols_idx, years)
@@ -339,10 +391,6 @@ def total_capacity_series_from_rows(raw: pd.DataFrame, year_cols_idx: list[int],
 
 
 def storage_series_capacity(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Preferred: Total Storage row (GW)
-    Fallback: sum pumped storage + battery + demand response (GW)
-    """
     df = installed_cap_df.copy()
     df = df[~df["item"].apply(_cap_is_excluded)]
     s = get_series_from_block(df, TOTAL_STORAGE_LABEL)
@@ -360,10 +408,6 @@ def storage_series_capacity(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def ptx_series_capacity(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Preferred: Total Power to X row (GW)
-    Fallback: sum Power to Hydrogen/Gas/Liquids rows (GW)
-    """
     df = installed_cap_df.copy()
     df = df[~df["item"].apply(_cap_is_excluded)]
     s = get_series_from_block(df, TOTAL_PTX_LABEL)
@@ -381,12 +425,6 @@ def ptx_series_capacity(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.DataFrame, cap_storage: pd.DataFrame, cap_ptx: pd.DataFrame) -> pd.DataFrame:
-    """
-    KG karması (GW) – Depolama ve PTX hariç:
-    - Natural gas = 5 satır toplamı
-    - Other Renewables -> Other içinde gösterilir
-    - Other residual = (Total - Storage - PTX) - sum(known)
-    """
     if installed_cap_df is None or installed_cap_df.empty or cap_total.empty:
         return pd.DataFrame(columns=["year", "group", "value"])
 
@@ -460,10 +498,58 @@ if not uploaded:
     st.info("Başlamak için Excel dosyanızı yükleyin.")
     st.stop()
 
+# Read blocks
 blocks = read_power_generation(uploaded)
 balance = blocks["electricity_balance"]
 gross_gen = blocks["gross_generation"]
 installed_cap = blocks["installed_capacity"]
+
+# GDP (Scenario assumption row 6)
+gdp = read_gdp_series(uploaded)
+gdp = _filter_years(gdp, start_year, MAX_YEAR)
+
+# GDP CAGR between start_year and MAX_YEAR (based on filtered years)
+gdp_cagr = np.nan
+gdp_start_val = np.nan
+gdp_end_val = np.nan
+if not gdp.empty:
+    # Prefer exact boundary years if present; else use nearest inside range
+    gdp_sorted = gdp.sort_values("year")
+    # start
+    if (gdp_sorted["year"] == start_year).any():
+        gdp_start_val = float(gdp_sorted.loc[gdp_sorted["year"] == start_year, "value"].iloc[0])
+        y0 = start_year
+    else:
+        gdp_start_val = float(gdp_sorted.iloc[0]["value"])
+        y0 = int(gdp_sorted.iloc[0]["year"])
+    # end
+    if (gdp_sorted["year"] == MAX_YEAR).any():
+        gdp_end_val = float(gdp_sorted.loc[gdp_sorted["year"] == MAX_YEAR, "value"].iloc[0])
+        y1 = MAX_YEAR
+    else:
+        gdp_end_val = float(gdp_sorted.iloc[-1]["value"])
+        y1 = int(gdp_sorted.iloc[-1]["year"])
+
+    gdp_cagr = _cagr(gdp_start_val, gdp_end_val, int(y1 - y0))
+
+# ---- FIRST DISPLAY GRAPH: GDP ----
+st.subheader("GDP (Scenario Assumption) – Trend")
+if gdp.empty:
+    st.warning("GDP serisi okunamadı: 'Scenario assumption' sekmesi veya 6. satır/yıl kolonları bulunamadı.")
+else:
+    st.altair_chart(
+        alt.Chart(gdp)
+        .mark_line()
+        .encode(
+            x=alt.X("year:O", title="Yıl"),
+            y=alt.Y("value:Q", title="GDP"),
+            tooltip=["year:O", alt.Tooltip("value:Q", format=",.3f")],
+        )
+        .properties(height=300),
+        use_container_width=True,
+    )
+
+st.divider()
 
 # Electricity supply (GWh)
 total_supply = get_series_from_block(balance, TOTAL_SUPPLY_LABEL)
@@ -479,7 +565,7 @@ ye_int = share_series_from_mix(gen_mix, total_supply, INTERMITTENT_RE_GROUPS, "Y
 ye_both = pd.concat([ye_total, ye_int], ignore_index=True)
 ye_both = _filter_years(ye_both, start_year, MAX_YEAR)
 
-# Installed capacity total (GW) – NEW RULE: Row79 - (Row102 + Row106)
+# Installed capacity total (GW) – Row79 - (Row102 + Row106)
 cap_total = total_capacity_series_from_rows(
     raw=blocks["_raw"],
     year_cols_idx=blocks["_year_cols_idx"],
@@ -506,13 +592,12 @@ cap_mix = capacity_mix_excl_storage_ptx(
 cap_mix = _filter_years(cap_mix, start_year, MAX_YEAR)
 
 # -----------------------------
-# KPI row
+# KPI row (GDP CAGR FIRST)
 # -----------------------------
 st.subheader("Özet KPI’lar")
-k1, k2, k3, k4, k5 = st.columns(5)
+k0, k1, k2, k3, k4, k5 = st.columns(6)
 
 latest_year = int(total_supply["year"].max()) if not total_supply.empty else None
-
 latest_total = float(total_supply.loc[total_supply["year"] == latest_year, "value"].iloc[0]) if latest_year else np.nan
 
 latest_ye_total = np.nan
@@ -530,16 +615,23 @@ latest_cap = np.nan
 if latest_year and not cap_total.empty and (cap_total["year"] == latest_year).any():
     latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
 
+# KPI: GDP CAGR between start_year and MAX_YEAR (or nearest available inside range)
+cagr_label = f"GDP CAGR (%) – {start_year}–{MAX_YEAR}"
+k0.metric(cagr_label, f"{(gdp_cagr*100):.2f}%" if np.isfinite(gdp_cagr) else "—")
+
 k1.metric("Senaryo", scenario_name)
 k2.metric(f"Toplam Arz (GWh) – {latest_year if latest_year else ''}", f"{latest_total:,.0f}" if np.isfinite(latest_total) else "—")
 k3.metric(f"YE Üretimi (GWh) – {latest_year if latest_year else ''}", f"{latest_ren:,.0f}" if np.isfinite(latest_ren) else "—")
-k4.metric(f"YE Payı (%) – {latest_year if latest_year else ''}", f"{latest_ye_total:,.1f}% / {latest_ye_int:,.1f}%" if np.isfinite(latest_ye_total) else "—")
+k4.metric(
+    f"YE Payı (%) – {latest_year if latest_year else ''}",
+    f"{latest_ye_total:,.1f}% / {latest_ye_int:,.1f}%" if np.isfinite(latest_ye_total) else "—"
+)
 k5.metric(f"Kurulu Güç (GW) – {latest_year if latest_year else ''}", f"{latest_cap:,.3f}" if np.isfinite(latest_cap) else "—")
 
 st.divider()
 
 # -----------------------------
-# Charts: Supply + YE share (two lines; intermittent dashed)
+# Charts: Supply + YE share
 # -----------------------------
 left, right = st.columns([2, 1])
 
@@ -687,22 +779,24 @@ st.divider()
 # Data tabs (debug/control)
 # -----------------------------
 st.subheader("Veri Kontrolü")
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
-    ["Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX"]
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
+    ["GDP", "Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX"]
 )
 with tab1:
-    st.dataframe(balance, use_container_width=True)
+    st.dataframe(gdp, use_container_width=True)
 with tab2:
-    st.dataframe(gross_gen, use_container_width=True)
+    st.dataframe(balance, use_container_width=True)
 with tab3:
-    st.dataframe(gen_mix, use_container_width=True)
+    st.dataframe(gross_gen, use_container_width=True)
 with tab4:
-    st.dataframe(installed_cap, use_container_width=True)
+    st.dataframe(gen_mix, use_container_width=True)
 with tab5:
-    st.dataframe(cap_total, use_container_width=True)
+    st.dataframe(installed_cap, use_container_width=True)
 with tab6:
-    st.dataframe(cap_mix, use_container_width=True)
+    st.dataframe(cap_total, use_container_width=True)
 with tab7:
+    st.dataframe(cap_mix, use_container_width=True)
+with tab8:
     st.dataframe(storage_ptx, use_container_width=True)
 
 with st.expander("Çalıştırma"):
