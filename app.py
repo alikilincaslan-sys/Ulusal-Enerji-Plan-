@@ -20,29 +20,34 @@ TOTAL_SUPPLY_LABEL = "Total Domestic Power Generation - Gross"
 # Installed capacity total row (GW)
 TOTAL_CAPACITY_LABEL = "Gross Installed Capacity (in GWe)"
 
-# Storage total rows (both generation/capacity blocks)
+# Storage & PTX total rows (GW / GWh depending on block)
 TOTAL_STORAGE_LABEL = "Total Storage"
+TOTAL_PTX_LABEL = "Total Power to X"
 
-# Exclude headers/subtotals (do not count) – installed capacity
-# NOTE: "Total Storage" is NOT excluded anymore; we will use it as the storage total.
+# Exclude headers/subtotals – installed capacity
+# NOTE: we DO NOT exclude Total Storage / Total Power to X, because we use them as totals.
 CAPACITY_EXCLUDE_EXACT = {
     "Renewables",
     "Combustion Plants",
-    "Total Power to X",
 }
-CAPACITY_EXCLUDE_REGEX = re.compile(r"^\s*Total\s+(?!Storage\b)", flags=re.IGNORECASE)  # exclude Total * except Total Storage
+CAPACITY_EXCLUDE_REGEX = re.compile(r"^\s*Total\s+(?!Storage\b)(?!Power to X\b)", flags=re.IGNORECASE)
 
-# Exclude headers/subtotals (do not count) – generation mix block
+# Exclude headers/subtotals – gross generation block
 GEN_EXCLUDE_EXACT = {
     "Renewables",
     "Combustion Plants",
-    "Total Power to X",
 }
-GEN_EXCLUDE_REGEX = re.compile(r"^\s*Total\s+(?!Storage\b)", flags=re.IGNORECASE)
+GEN_EXCLUDE_REGEX = re.compile(r"^\s*Total\s+(?!Storage\b)(?!Power to X\b)", flags=re.IGNORECASE)
 
 # Components that should NOT be counted if Total Storage exists (avoid double count)
 STORAGE_COMPONENT_REGEX = re.compile(
     r"(pumped\s+storage|\bbattery\b|demand\s+response)",
+    flags=re.IGNORECASE,
+)
+
+# PTX components (if Total Power to X not present)
+PTX_COMPONENT_REGEX = re.compile(
+    r"^power\s+to\s+(hydrogen|gas|liquids)\b|power\s+to\s+x",
     flags=re.IGNORECASE,
 )
 
@@ -54,14 +59,12 @@ NATURAL_GAS_ITEMS_EXACT = {
     "Open cycle, IC and GT",
     "Industrial CHP plants Oil/Gas",
 }
-# fallback fuzzy match (in case of minor spelling differences)
 NATURAL_GAS_REGEX = re.compile(
     r"^(industrial\s+chp\s+plant\s+solid\s+fuels|ccgt\s+without\s+ccs|ccgt\s+with\s+ccs|open\s+cycle,\s*ic\s+and\s+gt|industrial\s+chp\s+plants?\s+oil/gas)$",
     flags=re.IGNORECASE,
 )
 
-# Technology mapping (used for generation/capacity mixes)
-# Gas is renamed to Natural gas, but we do NOT use broad gas regex to avoid over-counting.
+# Technology mapping
 TECH_GROUPS = {
     "Hydro": [r"\bhydro\b"],
     "Wind (RES)": [r"\bwind\b", r"\bres\b"],
@@ -73,6 +76,8 @@ TECH_GROUPS = {
 }
 
 RENEWABLE_GROUPS = {"Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables"}
+INTERMITTENT_RE_GROUPS = {"Wind (RES)", "Solar (GES)"}
+
 
 # -----------------------------
 # Helpers
@@ -175,7 +180,7 @@ def get_series_from_block(block_df: pd.DataFrame, label: str) -> pd.DataFrame:
     year_cols = [c for c in row.columns if isinstance(c, int)]
     s = pd.to_numeric(row.iloc[0][year_cols], errors="coerce")
     out = pd.DataFrame({"year": year_cols, "value": s.values}).dropna()
-    return out[out["year"] <= MAX_YEAR].sort_values("year")
+    return out.sort_values("year")
 
 
 def _strict_match_group(item: str) -> str:
@@ -194,6 +199,12 @@ def _is_natural_gas_item(item: str) -> bool:
     return bool(NATURAL_GAS_REGEX.search(it))
 
 
+def _filter_years(df: pd.DataFrame, start_year: int, end_year: int) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    return df[(df["year"] >= start_year) & (df["year"] <= end_year)].copy()
+
+
 # -----------------------------
 # Generation (GWh) – Mix
 # -----------------------------
@@ -206,13 +217,32 @@ def _gen_is_excluded(item: str) -> bool:
     return False
 
 
+def _series_total_storage_from_block(df_block: pd.DataFrame) -> pd.DataFrame:
+    """
+    Preferred: Total Storage row.
+    Fallback: sum pumped storage + battery + demand response.
+    """
+    s = get_series_from_block(df_block, TOTAL_STORAGE_LABEL)
+    if not s.empty:
+        s["group"] = "Total Storage"
+        return s[["year", "group", "value"]]
+
+    comps = df_block[df_block["item"].astype(str).apply(lambda x: bool(STORAGE_COMPONENT_REGEX.search(x)))]
+    if comps.empty:
+        return pd.DataFrame(columns=["year", "group", "value"])
+    long = _to_long(comps, value_name="value")
+    out = long.groupby("year", as_index=False)["value"].sum()
+    out["group"] = "Total Storage"
+    return out[["year", "group", "value"]]
+
+
 def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
     """
     Üretim karması (GWh):
-    - Renewables / Combustion Plants / Total Power to X gibi ara toplamlar hariç
-    - Pumped Storage / Battery / Demand Response bileşenleri hariç
-    - Depolama: doğrudan 'Total Storage' satırından (varsa) alınır
-    - Natural gas: sadece verilen 5 satırın toplamı
+    - Renewables / Combustion Plants ara-toplamları hariç
+    - Depolama bileşenleri sayılmaz; 'Total Storage' (varsa) tek kalem alınır
+    - Natural gas = sadece 5 satırın toplamı
+    - PTX bileşenleri karışık ise zaten 'Other' içine düşebilir; isterseniz ayrılaştırırız.
     """
     if gross_gen_df is None or gross_gen_df.empty:
         return pd.DataFrame(columns=["year", "group", "value"])
@@ -220,56 +250,45 @@ def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
     df = gross_gen_df.copy()
     df = df[~df["item"].apply(_gen_is_excluded)]
 
-    # --- Total Storage series (preferred) + remove storage components to avoid double count
-    storage_series = get_series_from_block(df, TOTAL_STORAGE_LABEL)
-    df_wo_storage_components = df[~df["item"].astype(str).apply(lambda s: bool(STORAGE_COMPONENT_REGEX.search(s)))].copy()
+    # Total Storage as one bucket; remove storage components to avoid double count
+    storage_bucket = _series_total_storage_from_block(df)
+    df_no_storage_components = df[~df["item"].astype(str).apply(lambda x: bool(STORAGE_COMPONENT_REGEX.search(x)))].copy()
+    if not storage_bucket.empty:
+        df_no_storage_components = df_no_storage_components[df_no_storage_components["item"].str.strip().ne(TOTAL_STORAGE_LABEL)]
 
-    # If Total Storage exists, keep it for later and remove from df used for grouping
-    if not storage_series.empty:
-        df_wo_storage_components = df_wo_storage_components[df_wo_storage_components["item"].str.strip().ne(TOTAL_STORAGE_LABEL)]
-
-    # --- Natural gas series: sum of specific items, then remove them from other grouping
-    natgas_rows = df_wo_storage_components[df_wo_storage_components["item"].apply(_is_natural_gas_item)]
+    # Natural gas as one bucket; remove those rows from remaining grouping
+    natgas_rows = df_no_storage_components[df_no_storage_components["item"].apply(_is_natural_gas_item)]
     natgas_long = _to_long(natgas_rows, value_name="value")
     natgas_series = natgas_long.groupby("year", as_index=False)["value"].sum()
     natgas_series["group"] = "Natural gas"
+    natgas_series = natgas_series[["year", "group", "value"]]
 
-    df_rest = df_wo_storage_components[~df_wo_storage_components["item"].apply(_is_natural_gas_item)].copy()
+    df_rest = df_no_storage_components[~df_no_storage_components["item"].apply(_is_natural_gas_item)].copy()
 
-    # --- Group remaining items
     long = _to_long(df_rest, value_name="value")
     long["group"] = long["item"].apply(_strict_match_group)
     mix = long.groupby(["year", "group"], as_index=False)["value"].sum()
 
     # add Natural gas
-    mix = pd.concat([mix, natgas_series[["year", "group", "value"]]], ignore_index=True)
+    mix = pd.concat([mix, natgas_series], ignore_index=True)
 
-    # add Total Storage (as single bucket)
-    if not storage_series.empty:
-        ts = storage_series.rename(columns={"value": "value"}).copy()
-        ts["group"] = "Total Storage"
-        mix = pd.concat([mix, ts[["year", "group", "value"]]], ignore_index=True)
-    else:
-        # fallback: if Total Storage row not present, sum components
-        comps = df[df["item"].astype(str).apply(lambda s: bool(STORAGE_COMPONENT_REGEX.search(s)))]
-        comps_long = _to_long(comps, value_name="value")
-        ts2 = comps_long.groupby("year", as_index=False)["value"].sum()
-        ts2["group"] = "Total Storage"
-        mix = pd.concat([mix, ts2[["year", "group", "value"]]], ignore_index=True)
+    # add Total Storage
+    if not storage_bucket.empty:
+        mix = pd.concat([mix, storage_bucket], ignore_index=True)
 
-    mix = mix[mix["year"] <= MAX_YEAR]
     return mix
 
 
-def renewable_share(mix_df: pd.DataFrame, total_series_df: pd.DataFrame) -> pd.DataFrame:
+def share_series_from_mix(mix_df: pd.DataFrame, total_series_df: pd.DataFrame, groups: set[str], name: str) -> pd.DataFrame:
     if mix_df.empty or total_series_df.empty:
-        return pd.DataFrame(columns=["year", "value"])
+        return pd.DataFrame(columns=["year", "series", "value"])
 
-    ren = mix_df[mix_df["group"].isin(RENEWABLE_GROUPS)].groupby("year", as_index=False)["value"].sum()
-    tot = total_series_df.rename(columns={"value": "total"})
-    out = ren.merge(tot, on="year", how="inner")
+    num = mix_df[mix_df["group"].isin(groups)].groupby("year", as_index=False)["value"].sum()
+    den = total_series_df.rename(columns={"value": "total"}).copy()
+    out = num.merge(den, on="year", how="inner")
     out["value"] = (out["value"] / out["total"]) * 100.0
-    return out[["year", "value"]].sort_values("year")
+    out["series"] = name
+    return out[["year", "series", "value"]]
 
 
 # -----------------------------
@@ -286,100 +305,110 @@ def _cap_is_excluded(item: str) -> bool:
 
 def total_capacity_series(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Toplam kurulu güç (GW): TOTAL_CAPACITY_LABEL satırından.
-    Bulunamazsa: ara toplamları hariç tutarak topla.
+    KG toplamı (GW): TOTAL_CAPACITY_LABEL satırından BİREBİR.
     """
-    if installed_cap_df is None or installed_cap_df.empty:
-        return pd.DataFrame(columns=["year", "value"])
-
     s = get_series_from_block(installed_cap_df, TOTAL_CAPACITY_LABEL)
-    if not s.empty:
-        return s
+    return s
 
+
+def storage_series_capacity(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Preferred: Total Storage row (GW)
+    Fallback: sum pumped storage + battery + demand response (GW)
+    """
     df = installed_cap_df.copy()
     df = df[~df["item"].apply(_cap_is_excluded)]
-    df = df[df["item"].str.strip().ne(TOTAL_CAPACITY_LABEL)]
+    s = get_series_from_block(df, TOTAL_STORAGE_LABEL)
+    if not s.empty:
+        s["category"] = "Total Storage"
+        return s[["year", "category", "value"]]
 
-    year_cols = [c for c in df.columns if isinstance(c, int)]
-    summed = df[year_cols].apply(pd.to_numeric, errors="coerce").sum(axis=0)
-    out = pd.DataFrame({"year": year_cols, "value": summed.values}).dropna()
-    return out[out["year"] <= MAX_YEAR].sort_values("year")
+    comps = df[df["item"].astype(str).apply(lambda x: bool(STORAGE_COMPONENT_REGEX.search(x)))]
+    if comps.empty:
+        return pd.DataFrame(columns=["year", "category", "value"])
+    long = _to_long(comps, value_name="value")
+    out = long.groupby("year", as_index=False)["value"].sum()
+    out["category"] = "Total Storage"
+    return out[["year", "category", "value"]]
 
 
-def capacity_mix_from_block(installed_cap_df: pd.DataFrame, cap_total: pd.DataFrame) -> pd.DataFrame:
+def ptx_series_capacity(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Kurulu güç karması (GW):
-    - Renewables / Combustion Plants / Total Power to X gibi ara toplamlar hariç
-    - Depolama: doğrudan 'Total Storage' satırından (varsa), bileşenler sayılmaz
+    Preferred: Total Power to X row (GW)
+    Fallback: sum Power to Hydrogen/Gas/Liquids rows (GW)
+    """
+    df = installed_cap_df.copy()
+    df = df[~df["item"].apply(_cap_is_excluded)]
+    s = get_series_from_block(df, TOTAL_PTX_LABEL)
+    if not s.empty:
+        s["category"] = "Power to X"
+        return s[["year", "category", "value"]]
+
+    comps = df[df["item"].astype(str).apply(lambda x: bool(PTX_COMPONENT_REGEX.search(x.strip())))]
+    if comps.empty:
+        return pd.DataFrame(columns=["year", "category", "value"])
+    long = _to_long(comps, value_name="value")
+    out = long.groupby("year", as_index=False)["value"].sum()
+    out["category"] = "Power to X"
+    return out[["year", "category", "value"]]
+
+
+def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.DataFrame, cap_storage: pd.DataFrame, cap_ptx: pd.DataFrame) -> pd.DataFrame:
+    """
+    KG karması (GW) – Depolama ve PTX hariç:
+    - Natural gas = 5 satır toplamı
     - Other Renewables -> Other içinde gösterilir
-    - Natural gas: sadece verilen 5 satırın toplamı
-    - Other: residual (Total - diğer gruplar - Total Storage)
+    - Other residual = (Total - Storage - PTX) - sum(known)
     """
-    if installed_cap_df is None or installed_cap_df.empty or cap_total is None or cap_total.empty:
+    if installed_cap_df is None or installed_cap_df.empty or cap_total.empty:
         return pd.DataFrame(columns=["year", "group", "value"])
 
     df = installed_cap_df.copy()
     df = df[~df["item"].apply(_cap_is_excluded)]
     df = df[df["item"].str.strip().ne(TOTAL_CAPACITY_LABEL)]
 
-    # Total Storage from row + remove components
-    storage_series = get_series_from_block(df, TOTAL_STORAGE_LABEL)
-    df = df[~df["item"].astype(str).apply(lambda s: bool(STORAGE_COMPONENT_REGEX.search(s)))].copy()
-    if not storage_series.empty:
-        df = df[df["item"].str.strip().ne(TOTAL_STORAGE_LABEL)]
+    # remove storage components and totals
+    df = df[~df["item"].astype(str).apply(lambda x: bool(STORAGE_COMPONENT_REGEX.search(x)))]
+    df = df[df["item"].str.strip().ne(TOTAL_STORAGE_LABEL)]
 
-    # Natural gas from specific items
+    # remove ptx components and totals
+    df = df[~df["item"].astype(str).apply(lambda x: bool(PTX_COMPONENT_REGEX.search(x.strip())))]
+    df = df[df["item"].str.strip().ne(TOTAL_PTX_LABEL)]
+
+    # Natural gas series
     natgas_rows = df[df["item"].apply(_is_natural_gas_item)]
     natgas_long = _to_long(natgas_rows, value_name="value")
     natgas_series = natgas_long.groupby("year", as_index=False)["value"].sum()
     natgas_series["group"] = "Natural gas"
+    natgas_series = natgas_series[["year", "group", "value"]]
 
     df_rest = df[~df["item"].apply(_is_natural_gas_item)].copy()
 
-    # Group remaining
+    # group remaining
     long = _to_long(df_rest, value_name="value")
     long["group"] = long["item"].apply(_strict_match_group)
 
-    # Fold Other Renewables into Other (capacity only)
+    # fold Other Renewables into Other (capacity)
     long.loc[long["group"] == "Other Renewables", "group"] = "Other"
 
     mix = long.groupby(["year", "group"], as_index=False)["value"].sum()
+    mix = pd.concat([mix, natgas_series], ignore_index=True)
 
-    # Add Natural gas
-    mix = pd.concat([mix, natgas_series[["year", "group", "value"]]], ignore_index=True)
-
-    # Add Total Storage
-    if not storage_series.empty:
-        ts = storage_series.copy()
-        ts["group"] = "Total Storage"
-        mix = pd.concat([mix, ts[["year", "group", "value"]]], ignore_index=True)
-    else:
-        # fallback: sum components if row not present
-        comps = installed_cap_df[installed_cap_df["item"].astype(str).apply(lambda s: bool(STORAGE_COMPONENT_REGEX.search(s)))]
-        comps_long = _to_long(comps, value_name="value")
-        ts2 = comps_long.groupby("year", as_index=False)["value"].sum()
-        ts2["group"] = "Total Storage"
-        mix = pd.concat([mix, ts2[["year", "group", "value"]]], ignore_index=True)
-
-    mix = mix[mix["year"] <= MAX_YEAR]
-
-    # Residual Other to match TOTAL_CAPACITY_LABEL each year
+    # residual Other to match: (Total - Storage - PTX)
     total_map = cap_total.set_index("year")["value"].to_dict()
+    storage_map = (cap_storage.set_index("year")["value"].to_dict() if not cap_storage.empty else {})
+    ptx_map = (cap_ptx.set_index("year")["value"].to_dict() if not cap_ptx.empty else {})
 
+    # known sum excluding Other
     known = mix[mix["group"] != "Other"].groupby("year", as_index=False)["value"].sum().rename(columns={"value": "known_sum"})
-    known["total"] = known["year"].map(total_map)
-    known["residual_other"] = (known["total"] - known["known_sum"]).clip(lower=0)
+    known["total_excl"] = known["year"].map(total_map) - known["year"].map(storage_map).fillna(0) - known["year"].map(ptx_map).fillna(0)
+    known["residual_other"] = (known["total_excl"] - known["known_sum"]).clip(lower=0)
 
     other_rows = known[["year", "residual_other"]].rename(columns={"residual_other": "value"})
     other_rows["group"] = "Other"
 
     mix = mix[mix["group"] != "Other"]
     mix = pd.concat([mix, other_rows], ignore_index=True)
-
-    # Safety: ensure all years exist
-    for y, tot in total_map.items():
-        if y <= MAX_YEAR and y not in set(mix["year"]):
-            mix = pd.concat([mix, pd.DataFrame([{"year": y, "group": "Other", "value": tot}])], ignore_index=True)
 
     return mix
 
@@ -399,13 +428,15 @@ with st.sidebar:
         if stem.lower().startswith("finalreport_"):
             stem = stem[len("FinalReport_") :]
         default_scenario = stem
-
     scenario_name = st.text_input("Senaryo adı", value=default_scenario)
 
     st.divider()
     st.header("Ayarlar")
     max_year = st.selectbox("Maksimum yıl", [2050, 2045, 2040, 2035], index=0)
     MAX_YEAR = int(max_year)
+
+    # Start year selector (based on common years in your file)
+    start_year = st.selectbox("Başlangıç yılı", [2018, 2020, 2025, 2030, 2035, 2040, 2045], index=0)
 
 if not uploaded:
     st.info("Başlamak için Excel dosyanızı yükleyin.")
@@ -418,14 +449,34 @@ installed_cap = blocks["installed_capacity"]
 
 # Electricity supply (GWh)
 total_supply = get_series_from_block(balance, TOTAL_SUPPLY_LABEL)
+total_supply = _filter_years(total_supply, start_year, MAX_YEAR)
 
-# Generation mix (GWh) + RE share
+# Generation mix (GWh)
 gen_mix = generation_mix_from_block(gross_gen)
-ye = renewable_share(gen_mix, total_supply)
+gen_mix = _filter_years(gen_mix, start_year, MAX_YEAR)
 
-# Installed capacity (GW) total + mix
+# YE share: total RE + intermittent (RES+GES) on same chart
+ye_total = share_series_from_mix(gen_mix, total_supply, RENEWABLE_GROUPS, "YE Payı (Toplam)")
+ye_int = share_series_from_mix(gen_mix, total_supply, INTERMITTENT_RE_GROUPS, "YE Payı (RES+GES)")
+ye_both = pd.concat([ye_total, ye_int], ignore_index=True)
+ye_both = _filter_years(ye_both, start_year, MAX_YEAR)
+
+# Installed capacity total (GW) – MUST match the row exactly
 cap_total = total_capacity_series(installed_cap)
-cap_mix = capacity_mix_from_block(installed_cap, cap_total)
+cap_total = _filter_years(cap_total, start_year, MAX_YEAR)
+
+# Storage & PTX (GW) – separate chart
+cap_storage = storage_series_capacity(installed_cap)
+cap_ptx = ptx_series_capacity(installed_cap)
+cap_storage = _filter_years(cap_storage, start_year, MAX_YEAR)
+cap_ptx = _filter_years(cap_ptx, start_year, MAX_YEAR)
+
+storage_ptx = pd.concat([cap_storage, cap_ptx], ignore_index=True)
+storage_ptx = storage_ptx.rename(columns={"category": "group"})
+
+# Capacity mix excluding storage & PTX (GW)
+cap_mix = capacity_mix_excl_storage_ptx(installed_cap, cap_total, cap_storage.rename(columns={"group": "category"}, errors="ignore"), cap_ptx.rename(columns={"group": "category"}, errors="ignore"))
+cap_mix = _filter_years(cap_mix, start_year, MAX_YEAR)
 
 # -----------------------------
 # KPI row
@@ -437,16 +488,21 @@ latest_year = int(total_supply["year"].max()) if not total_supply.empty else Non
 
 latest_total = float(total_supply.loc[total_supply["year"] == latest_year, "value"].iloc[0]) if latest_year else np.nan
 
-latest_ye = (
-    float(ye.loc[ye["year"] == latest_year, "value"].iloc[0])
-    if (latest_year and not ye.empty and (ye["year"] == latest_year).any())
-    else np.nan
-)
+# latest YE shares
+latest_ye_total = np.nan
+latest_ye_int = np.nan
+if latest_year and not ye_both.empty:
+    if (ye_both["year"] == latest_year).any():
+        tmp = ye_both[ye_both["year"] == latest_year].set_index("series")["value"].to_dict()
+        latest_ye_total = float(tmp.get("YE Payı (Toplam)", np.nan))
+        latest_ye_int = float(tmp.get("YE Payı (RES+GES)", np.nan))
 
+# latest renewable generation (GWh) for KPI
 latest_ren = np.nan
 if latest_year and not gen_mix.empty:
     latest_ren = float(gen_mix[(gen_mix["year"] == latest_year) & (gen_mix["group"].isin(RENEWABLE_GROUPS))]["value"].sum())
 
+# latest capacity total (GW) – exactly from row
 latest_cap = np.nan
 if latest_year and not cap_total.empty and (cap_total["year"] == latest_year).any():
     latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
@@ -454,13 +510,13 @@ if latest_year and not cap_total.empty and (cap_total["year"] == latest_year).an
 k1.metric("Senaryo", scenario_name)
 k2.metric(f"Toplam Arz (GWh) – {latest_year if latest_year else ''}", f"{latest_total:,.0f}" if np.isfinite(latest_total) else "—")
 k3.metric(f"YE Üretimi (GWh) – {latest_year if latest_year else ''}", f"{latest_ren:,.0f}" if np.isfinite(latest_ren) else "—")
-k4.metric(f"YE Payı (%) – {latest_year if latest_year else ''}", f"{latest_ye:,.1f}%" if np.isfinite(latest_ye) else "—")
+k4.metric(f"YE Payı (%) – {latest_year if latest_year else ''}", f"{latest_ye_total:,.1f}% / {latest_ye_int:,.1f}%" if np.isfinite(latest_ye_total) else "—")
 k5.metric(f"Kurulu Güç (GW) – {latest_year if latest_year else ''}", f"{latest_cap:,.1f}" if np.isfinite(latest_cap) else "—")
 
 st.divider()
 
 # -----------------------------
-# Charts: Supply + YE share
+# Charts: Supply + YE share (two lines; intermittent dashed)
 # -----------------------------
 left, right = st.columns([2, 1])
 
@@ -478,14 +534,25 @@ with left:
         )
 
 with right:
-    st.subheader("YE Payı (%)")
-    if ye.empty:
+    st.subheader("YE Payı (%) – Toplam ve RES+GES")
+    if ye_both.empty:
         st.warning("YE payı hesaplanamadı (mix veya total boş).")
     else:
+        # strokeDash based on series
+        dash = alt.condition(
+            alt.datum.series == "YE Payı (RES+GES)",
+            alt.value([6, 4]),
+            alt.value([1, 0]),
+        )
         st.altair_chart(
-            alt.Chart(ye)
+            alt.Chart(ye_both)
             .mark_line()
-            .encode(x=alt.X("year:O", title="Yıl"), y=alt.Y("value:Q", title="%"))
+            .encode(
+                x=alt.X("year:O", title="Yıl"),
+                y=alt.Y("value:Q", title="%"),
+                color=alt.Color("series:N", title="Seri"),
+                strokeDash=dash,
+            )
             .properties(height=320),
             use_container_width=True,
         )
@@ -493,10 +560,10 @@ with right:
 st.divider()
 
 # -----------------------------
-# Charts: Generation mix (GWh)
+# Charts: Generation mix (GWh) – with Natural gas + Total Storage (single)
 # -----------------------------
 st.subheader("Üretim Karması (Gross, GWh) – Teknoloji Bazında")
-st.caption("Not: Renewables/Combustion Plants ara-toplamları hariç. Pumped storage/battery/demand response sayılmaz; 'Total Storage' satırı kullanılır. Gas = 'Natural gas' (5 satır toplamı).")
+st.caption("Not: Renewables/Combustion Plants ara-toplamları hariç. Depolama tek kalem: 'Total Storage'. Gas = 'Natural gas' (5 satır toplamı).")
 
 if gen_mix.empty:
     st.warning("Gross generation bloğundan teknoloji karması çıkarılamadı.")
@@ -521,11 +588,12 @@ else:
 st.divider()
 
 # -----------------------------
-# Charts: Installed Capacity (GW)
+# Capacity section
 # -----------------------------
 st.subheader("Kurulu Güç (Gross Installed Capacity, GW)")
-st.caption("Not: Renewables/Combustion Plants ara-toplamları hariç. Depolama 'Total Storage' satırından. Natural gas = 5 satır toplamı. Other Renewables capacity tarafında Other içine alınır; Other residual (Toplam satıra eşitlenir).")
+st.caption("KG toplamı her yıl 'Gross Installed Capacity (in GWe)' satırına eşittir. KG karması grafiği depolama & PTX hariç; depolama ve PTX ayrı grafikte verilir.")
 
+# Total capacity trend
 c_left, c_right = st.columns([2, 1])
 
 with c_left:
@@ -542,18 +610,19 @@ with c_left:
         )
 
 with c_right:
-    st.markdown("### Kurulu Güç (GW) – Son Yıl")
+    st.markdown("### KG – Son Yıl (GW)")
     if latest_year and np.isfinite(latest_cap):
         st.metric(str(latest_year), f"{latest_cap:,.1f} GW")
     else:
         st.metric("—", "—")
 
-st.markdown("### Kurulu Güç Karması (GW) – Teknoloji Bazında")
+# Capacity mix excluding storage & PTX
+st.markdown("### Kurulu Güç Karması (GW) – Depolama & PTX Hariç")
 
 if cap_mix.empty:
     st.warning("Kurulu güç karması çıkarılamadı.")
 else:
-    order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Natural gas", "Coal", "Lignite", "Nuclear", "Total Storage", "Other"]
+    order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
     cap_mix["group"] = pd.Categorical(cap_mix["group"], categories=order_cap, ordered=True)
     cap_mix = cap_mix.sort_values(["year", "group"])
 
@@ -570,14 +639,33 @@ else:
         use_container_width=True,
     )
 
+# Storage & PTX separate chart
+st.markdown("### Depolama ve Power-to-X (GW) – Ayrı Grafik")
+
+if storage_ptx.empty:
+    st.warning("Depolama/PTX serileri bulunamadı (Total Storage / Total Power to X yok ve bileşenler de bulunamadı).")
+else:
+    st.altair_chart(
+        alt.Chart(storage_ptx)
+        .mark_bar()
+        .encode(
+            x=alt.X("year:O", title="Yıl"),
+            y=alt.Y("value:Q", title="GW", stack=True),
+            color=alt.Color("group:N", title="Kategori"),
+            tooltip=["year:O", "group:N", alt.Tooltip("value:Q", format=",.2f")],
+        )
+        .properties(height=320),
+        use_container_width=True,
+    )
+
 st.divider()
 
 # -----------------------------
 # Data tabs (debug/control)
 # -----------------------------
 st.subheader("Veri Kontrolü")
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "Mix (capacity)"]
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    ["Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Mix excl. S&PTX", "Storage+PTX"]
 )
 with tab1:
     st.dataframe(balance, use_container_width=True)
@@ -589,6 +677,8 @@ with tab4:
     st.dataframe(installed_cap, use_container_width=True)
 with tab5:
     st.dataframe(cap_mix, use_container_width=True)
+with tab6:
+    st.dataframe(storage_ptx, use_container_width=True)
 
 with st.expander("Çalıştırma"):
     st.code("pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py", language="bash")
