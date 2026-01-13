@@ -1,5 +1,7 @@
 # app.py
 import re
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -26,11 +28,9 @@ TECH_GROUPS = {
     "Gas": [r"\bgas\b", r"\bccgt\b", r"\bocgt\b"],
     "Nuclear": [r"\bnuclear\b"],
     "Other Renewables": [r"\bgeothermal\b", r"\bbiomass\b", r"\bbiogas\b", r"\bwaste\b"],
-    "Other": [r".*"],  # fallback
 }
 
 RENEWABLE_GROUPS = {"Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables"}
-
 
 # -----------------------------
 # Helpers
@@ -40,9 +40,10 @@ def _as_int_year(x):
         v = int(float(x))
         if 1900 <= v <= 2100:
             return v
-    except:
+    except Exception:
         pass
     return None
+
 
 def _find_year_row(raw: pd.DataFrame, scan_rows=25):
     best_idx, best_score = None, -1
@@ -55,9 +56,9 @@ def _find_year_row(raw: pd.DataFrame, scan_rows=25):
             best_idx = i
     return best_idx
 
+
 def _extract_years(raw: pd.DataFrame, year_row_idx: int):
-    years = []
-    cols = []
+    years, cols = [], []
     for j, v in enumerate(raw.iloc[year_row_idx, :].tolist()):
         y = _as_int_year(v)
         if y is not None:
@@ -65,7 +66,14 @@ def _extract_years(raw: pd.DataFrame, year_row_idx: int):
             cols.append(j)
     return years, cols
 
-def _extract_block(raw: pd.DataFrame, first_col_idx: int, year_cols_idx: list[int], years: list[int], block_title_regex: str):
+
+def _extract_block(
+    raw: pd.DataFrame,
+    first_col_idx: int,
+    year_cols_idx: list[int],
+    years: list[int],
+    block_title_regex: str,
+):
     # block başlığını bul (ilk kolon üzerinden)
     c0 = raw.iloc[:, first_col_idx].astype(str)
     mask = c0.str.contains(block_title_regex, case=False, na=False, regex=True)
@@ -91,8 +99,7 @@ def _extract_block(raw: pd.DataFrame, first_col_idx: int, year_cols_idx: list[in
     blk = raw.iloc[start : end + 1, use_cols].copy()
     blk.columns = ["item"] + years
     blk["item"] = blk["item"].astype(str).str.strip()
-    # boş item satırlarını at
-    blk = blk[blk["item"].ne("") & blk["item"].ne("nan")]
+    blk = blk[(blk["item"] != "") & (blk["item"].str.lower() != "nan")]
 
     # yıl filtresi
     keep_years = [y for y in years if y <= MAX_YEAR]
@@ -101,15 +108,9 @@ def _extract_block(raw: pd.DataFrame, first_col_idx: int, year_cols_idx: list[in
     # sayısallaştır
     for y in keep_years:
         blk[y] = pd.to_numeric(blk[y], errors="coerce")
+
     return blk
 
-def _match_group(item: str):
-    s = item.lower().strip()
-    for grp, pats in TECH_GROUPS.items():
-        for p in pats:
-            if re.search(p, s, flags=re.IGNORECASE):
-                return grp
-    return "Other"
 
 def _to_long(df_wide: pd.DataFrame, value_name="value"):
     year_cols = [c for c in df_wide.columns if isinstance(c, int)]
@@ -119,8 +120,8 @@ def _to_long(df_wide: pd.DataFrame, value_name="value"):
 
 
 @st.cache_data(show_spinner=False)
-def read_power_generation(xlsx_path: str):
-    raw = pd.read_excel(xlsx_path, sheet_name="Power_Generation", header=None)
+def read_power_generation(xlsx_file):
+    raw = pd.read_excel(xlsx_file, sheet_name="Power_Generation", header=None)
 
     year_row = _find_year_row(raw)
     years, year_cols_idx = _extract_years(raw, year_row)
@@ -130,20 +131,16 @@ def read_power_generation(xlsx_path: str):
 
     blocks = {
         "electricity_balance": _extract_block(
-            raw, first_col_idx, year_cols_idx, years,
-            r"Electricity\s+Balance"
+            raw, first_col_idx, year_cols_idx, years, r"Electricity\s+Balance"
         ),
         "gross_generation": _extract_block(
-            raw, first_col_idx, year_cols_idx, years,
-            r"Gross\s+Electricity\s+Generation\s+by\s+plant\s+type"
+            raw, first_col_idx, year_cols_idx, years, r"Gross\s+Electricity\s+Generation\s+by\s+plant\s+type"
         ),
         "net_generation": _extract_block(
-            raw, first_col_idx, year_cols_idx, years,
-            r"Net\s+Electricity\s+Generation\s+by\s+plant\s+type"
+            raw, first_col_idx, year_cols_idx, years, r"Net\s+Electricity\s+Generation\s+by\s+plant\s+type"
         ),
         "installed_capacity": _extract_block(
-            raw, first_col_idx, year_cols_idx, years,
-            r"Gross\s+Installed\s+Capacity"
+            raw, first_col_idx, year_cols_idx, years, r"Gross\s+Installed\s+Capacity"
         ),
     }
     return blocks
@@ -152,19 +149,28 @@ def read_power_generation(xlsx_path: str):
 def get_series_from_block(block_df: pd.DataFrame, label: str) -> pd.DataFrame:
     if block_df is None:
         return pd.DataFrame(columns=["year", "value"])
+
     row = block_df[block_df["item"].str.strip().eq(label)]
     if row.empty:
-        # esnek arama
         row = block_df[block_df["item"].str.contains(re.escape(label), case=False, na=False)]
     if row.empty:
         return pd.DataFrame(columns=["year", "value"])
 
     year_cols = [c for c in row.columns if isinstance(c, int)]
-    s = row.iloc[0][year_cols].astype(float)
+    s = pd.to_numeric(row.iloc[0][year_cols], errors="coerce")
     out = pd.DataFrame({"year": year_cols, "value": s.values})
     out = out.dropna()
     out = out[out["year"] <= MAX_YEAR].sort_values("year")
     return out
+
+
+def _strict_match_group(item: str) -> str:
+    s = item.lower().strip()
+    for grp, pats in TECH_GROUPS.items():
+        for p in pats:
+            if re.search(p, s, flags=re.IGNORECASE):
+                return grp
+    return "Other"
 
 
 def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
@@ -175,22 +181,7 @@ def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["year", "group", "value"])
 
     long = _to_long(gross_gen_df, value_name="value")
-    long["group"] = long["item"].apply(_match_group)
-
-    # "Other" fallback çok geniş olabileceği için:
-    # Eğer item zaten belirli bir gruba girmişse Other'a düşmez; ama pats içinde ".*" var.
-    # Bu nedenle, fallback'i kontrollü yapalım: önce all group matching, sonra unmatched = Other.
-    def strict_match(item):
-        s = item.lower().strip()
-        for grp, pats in TECH_GROUPS.items():
-            if grp == "Other":
-                continue
-            for p in pats:
-                if re.search(p, s, flags=re.IGNORECASE):
-                    return grp
-        return "Other"
-
-    long["group"] = long["item"].apply(strict_match)
+    long["group"] = long["item"].apply(_strict_match_group)
 
     mix = long.groupby(["year", "group"], as_index=False)["value"].sum()
     mix = mix[mix["year"] <= MAX_YEAR]
@@ -209,8 +200,7 @@ def renewable_share(mix_df: pd.DataFrame, total_series_df: pd.DataFrame) -> pd.D
     tot = total_series_df.rename(columns={"value": "total"})
     out = ren.merge(tot, on="year", how="inner")
     out["value"] = (out["value"] / out["total"]) * 100.0
-    out = out[["year", "value"]].sort_values("year")
-    return out
+    return out[["year", "value"]].sort_values("year")
 
 
 # -----------------------------
@@ -221,19 +211,20 @@ st.title("Power_Generation Dashboard (GWh)")
 with st.sidebar:
     st.header("Dosya")
     uploaded = st.file_uploader("Excel yükleyin (.xlsx)", type=["xlsx"])
-  import os
 
-scenario_name = "Scenario"
+    # Dosya adından senaryo adı türet (FinalReport_ önekini kaldır)
+    default_scenario = "Scenario"
+    if uploaded is not None and getattr(uploaded, "name", None):
+        stem = Path(uploaded.name).stem  # uzantısız dosya adı
+        if stem.lower().startswith("finalreport_"):
+            stem = stem[len("FinalReport_"):]
+        default_scenario = stem
 
-if uploaded is not None:
-    fname = os.path.splitext(uploaded.name)[0]   # .xlsx at
-    scenario_name = fname.replace("FinalReport_", "")
+    scenario_name = st.text_input("Senaryo adı", value=default_scenario)
 
-scenario_name = st.text_input("Senaryo adı", value=scenario_name)
     st.divider()
     st.header("Ayarlar")
     max_year = st.selectbox("Maksimum yıl", [2050, 2045, 2040, 2035], index=0)
-    # global override
     MAX_YEAR = int(max_year)
 
 if not uploaded:
@@ -242,7 +233,6 @@ if not uploaded:
 
 # Okuma
 blocks = read_power_generation(uploaded)
-
 balance = blocks["electricity_balance"]
 gross_gen = blocks["gross_generation"]
 
@@ -263,9 +253,18 @@ st.subheader("Özet KPI’lar")
 k1, k2, k3, k4 = st.columns(4)
 
 latest_year = int(total_supply["year"].max()) if not total_supply.empty else None
-latest_total = float(total_supply.loc[total_supply["year"] == latest_year, "value"].iloc[0]) if latest_year else np.nan
+latest_total = (
+    float(total_supply.loc[total_supply["year"] == latest_year, "value"].iloc[0])
+    if latest_year
+    else np.nan
+)
 
-latest_ye = float(ye.loc[ye["year"] == latest_year, "value"].iloc[0]) if (latest_year and not ye.empty and (ye["year"] == latest_year).any()) else np.nan
+latest_ye = (
+    float(ye.loc[ye["year"] == latest_year, "value"].iloc[0])
+    if (latest_year and not ye.empty and (ye["year"] == latest_year).any())
+    else np.nan
+)
+
 latest_ren = np.nan
 if latest_year and not mix.empty:
     latest_ren = float(mix[(mix["year"] == latest_year) & (mix["group"].isin(RENEWABLE_GROUPS))]["value"].sum())
@@ -315,7 +314,6 @@ st.subheader("Üretim Karması (Gross, GWh) – Teknoloji Bazında")
 if mix.empty:
     st.warning("Gross generation bloğundan teknoloji karması çıkarılamadı.")
 else:
-    # İstenen ayrım: Coal & Lignite ayrı, Hydro tek, RES/GES ayrı (zaten grupladık)
     order = ["Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables", "Gas", "Coal", "Lignite", "Nuclear", "Other"]
     mix["group"] = pd.Categorical(mix["group"], categories=order, ordered=True)
     mix = mix.sort_values(["year", "group"])
@@ -344,12 +342,9 @@ with tab2:
 with tab3:
     st.dataframe(mix, use_container_width=True)
 
-# -----------------------------
-# Run instructions (for local)
-# -----------------------------
 with st.expander("Çalıştırma"):
     st.code(
-        "pip install streamlit pandas openpyxl altair\n"
+        "pip install streamlit pandas openpyxl altair numpy\n"
         "streamlit run app.py",
-        language="bash"
+        language="bash",
     )
