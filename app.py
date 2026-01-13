@@ -17,12 +17,17 @@ MAX_YEAR = 2050
 # Electricity supply (GWh) – reference
 TOTAL_SUPPLY_LABEL = "Total Domestic Power Generation - Gross"
 
-# Installed capacity total row (GW)
+# Installed capacity total row (GW) - label kept for reference, but KG total uses row formula below
 TOTAL_CAPACITY_LABEL = "Gross Installed Capacity (in GWe)"
 
 # Storage & PTX total rows (GW / GWh depending on block)
 TOTAL_STORAGE_LABEL = "Total Storage"
 TOTAL_PTX_LABEL = "Total Power to X"
+
+# --- KG TOTAL RULE (Excel 1-indexed rows in Power_Generation sheet) ---
+KG_BASE_ROW_1IDX = 79
+KG_SUB_ROW_1IDX_1 = 102
+KG_SUB_ROW_1IDX_2 = 106
 
 # Exclude headers/subtotals – installed capacity
 # NOTE: we DO NOT exclude Total Storage / Total Power to X, because we use them as totals.
@@ -164,6 +169,10 @@ def read_power_generation(xlsx_file):
         "gross_generation": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Gross\s+Electricity\s+Generation\s+by\s+plant\s+type"),
         "net_generation": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Net\s+Electricity\s+Generation\s+by\s+plant\s+type"),
         "installed_capacity": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Gross\s+Installed\s+Capacity"),
+        # meta for fixed-row reading
+        "_raw": raw,
+        "_years": years,
+        "_year_cols_idx": year_cols_idx,
     }
 
 
@@ -242,7 +251,6 @@ def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
     - Renewables / Combustion Plants ara-toplamları hariç
     - Depolama bileşenleri sayılmaz; 'Total Storage' (varsa) tek kalem alınır
     - Natural gas = sadece 5 satırın toplamı
-    - PTX bileşenleri karışık ise zaten 'Other' içine düşebilir; isterseniz ayrılaştırırız.
     """
     if gross_gen_df is None or gross_gen_df.empty:
         return pd.DataFrame(columns=["year", "group", "value"])
@@ -250,13 +258,12 @@ def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
     df = gross_gen_df.copy()
     df = df[~df["item"].apply(_gen_is_excluded)]
 
-    # Total Storage as one bucket; remove storage components to avoid double count
     storage_bucket = _series_total_storage_from_block(df)
+
     df_no_storage_components = df[~df["item"].astype(str).apply(lambda x: bool(STORAGE_COMPONENT_REGEX.search(x)))].copy()
     if not storage_bucket.empty:
         df_no_storage_components = df_no_storage_components[df_no_storage_components["item"].str.strip().ne(TOTAL_STORAGE_LABEL)]
 
-    # Natural gas as one bucket; remove those rows from remaining grouping
     natgas_rows = df_no_storage_components[df_no_storage_components["item"].apply(_is_natural_gas_item)]
     natgas_long = _to_long(natgas_rows, value_name="value")
     natgas_series = natgas_long.groupby("year", as_index=False)["value"].sum()
@@ -269,10 +276,7 @@ def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
     long["group"] = long["item"].apply(_strict_match_group)
     mix = long.groupby(["year", "group"], as_index=False)["value"].sum()
 
-    # add Natural gas
     mix = pd.concat([mix, natgas_series], ignore_index=True)
-
-    # add Total Storage
     if not storage_bucket.empty:
         mix = pd.concat([mix, storage_bucket], ignore_index=True)
 
@@ -303,12 +307,35 @@ def _cap_is_excluded(item: str) -> bool:
     return False
 
 
-def total_capacity_series(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
+def _row_values_by_excel_row(raw: pd.DataFrame, row_1idx: int, year_cols_idx: list[int], years: list[int]) -> pd.Series:
     """
-    KG toplamı (GW): TOTAL_CAPACITY_LABEL satırından BİREBİR.
+    Returns a Series indexed by year for a fixed Excel row (1-indexed).
     """
-    s = get_series_from_block(installed_cap_df, TOTAL_CAPACITY_LABEL)
-    return s
+    r0 = row_1idx - 1
+    if r0 < 0 or r0 >= len(raw):
+        return pd.Series(dtype=float)
+
+    data = {}
+    for y, c in zip(years, year_cols_idx):
+        if y <= MAX_YEAR:
+            data[y] = pd.to_numeric(raw.iloc[r0, c], errors="coerce")
+    return pd.Series(data, dtype=float)
+
+
+def total_capacity_series_from_rows(raw: pd.DataFrame, year_cols_idx: list[int], years: list[int]) -> pd.DataFrame:
+    """
+    KG toplamı (GW) = Row79 - (Row102 + Row106)
+    (Excel satır numarası, 1-indexed; Power_Generation sheet)
+    """
+    s79 = _row_values_by_excel_row(raw, KG_BASE_ROW_1IDX, year_cols_idx, years)
+    s102 = _row_values_by_excel_row(raw, KG_SUB_ROW_1IDX_1, year_cols_idx, years)
+    s106 = _row_values_by_excel_row(raw, KG_SUB_ROW_1IDX_2, year_cols_idx, years)
+
+    kg = s79 - (s102.fillna(0) + s106.fillna(0))
+    out = pd.DataFrame({"year": kg.index.astype(int), "value": kg.values})
+    out["value"] = pd.to_numeric(out["value"], errors="coerce")
+    out = out.dropna(subset=["value"]).sort_values("year")
+    return out
 
 
 def storage_series_capacity(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
@@ -367,15 +394,12 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
     df = df[~df["item"].apply(_cap_is_excluded)]
     df = df[df["item"].str.strip().ne(TOTAL_CAPACITY_LABEL)]
 
-    # remove storage components and totals
     df = df[~df["item"].astype(str).apply(lambda x: bool(STORAGE_COMPONENT_REGEX.search(x)))]
     df = df[df["item"].str.strip().ne(TOTAL_STORAGE_LABEL)]
 
-    # remove ptx components and totals
     df = df[~df["item"].astype(str).apply(lambda x: bool(PTX_COMPONENT_REGEX.search(x.strip())))]
     df = df[df["item"].str.strip().ne(TOTAL_PTX_LABEL)]
 
-    # Natural gas series
     natgas_rows = df[df["item"].apply(_is_natural_gas_item)]
     natgas_long = _to_long(natgas_rows, value_name="value")
     natgas_series = natgas_long.groupby("year", as_index=False)["value"].sum()
@@ -384,22 +408,17 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
 
     df_rest = df[~df["item"].apply(_is_natural_gas_item)].copy()
 
-    # group remaining
     long = _to_long(df_rest, value_name="value")
     long["group"] = long["item"].apply(_strict_match_group)
-
-    # fold Other Renewables into Other (capacity)
     long.loc[long["group"] == "Other Renewables", "group"] = "Other"
 
     mix = long.groupby(["year", "group"], as_index=False)["value"].sum()
     mix = pd.concat([mix, natgas_series], ignore_index=True)
 
-    # residual Other to match: (Total - Storage - PTX)
     total_map = cap_total.set_index("year")["value"].to_dict()
     storage_map = (cap_storage.set_index("year")["value"].to_dict() if not cap_storage.empty else {})
     ptx_map = (cap_ptx.set_index("year")["value"].to_dict() if not cap_ptx.empty else {})
 
-    # known sum excluding Other
     known = mix[mix["group"] != "Other"].groupby("year", as_index=False)["value"].sum().rename(columns={"value": "known_sum"})
     known["total_excl"] = known["year"].map(total_map) - known["year"].map(storage_map).fillna(0) - known["year"].map(ptx_map).fillna(0)
     known["residual_other"] = (known["total_excl"] - known["known_sum"]).clip(lower=0)
@@ -435,7 +454,6 @@ with st.sidebar:
     max_year = st.selectbox("Maksimum yıl", [2050, 2045, 2040, 2035], index=0)
     MAX_YEAR = int(max_year)
 
-    # Start year selector (based on common years in your file)
     start_year = st.selectbox("Başlangıç yılı", [2018, 2020, 2025, 2030, 2035, 2040, 2045], index=0)
 
 if not uploaded:
@@ -455,14 +473,18 @@ total_supply = _filter_years(total_supply, start_year, MAX_YEAR)
 gen_mix = generation_mix_from_block(gross_gen)
 gen_mix = _filter_years(gen_mix, start_year, MAX_YEAR)
 
-# YE share: total RE + intermittent (RES+GES) on same chart
+# YE share: total RE + intermittent (RES+GES)
 ye_total = share_series_from_mix(gen_mix, total_supply, RENEWABLE_GROUPS, "YE Payı (Toplam)")
 ye_int = share_series_from_mix(gen_mix, total_supply, INTERMITTENT_RE_GROUPS, "YE Payı (RES+GES)")
 ye_both = pd.concat([ye_total, ye_int], ignore_index=True)
 ye_both = _filter_years(ye_both, start_year, MAX_YEAR)
 
-# Installed capacity total (GW) – MUST match the row exactly
-cap_total = total_capacity_series(installed_cap)
+# Installed capacity total (GW) – NEW RULE: Row79 - (Row102 + Row106)
+cap_total = total_capacity_series_from_rows(
+    raw=blocks["_raw"],
+    year_cols_idx=blocks["_year_cols_idx"],
+    years=blocks["_years"],
+)
 cap_total = _filter_years(cap_total, start_year, MAX_YEAR)
 
 # Storage & PTX (GW) – separate chart
@@ -475,7 +497,12 @@ storage_ptx = pd.concat([cap_storage, cap_ptx], ignore_index=True)
 storage_ptx = storage_ptx.rename(columns={"category": "group"})
 
 # Capacity mix excluding storage & PTX (GW)
-cap_mix = capacity_mix_excl_storage_ptx(installed_cap, cap_total, cap_storage.rename(columns={"group": "category"}, errors="ignore"), cap_ptx.rename(columns={"group": "category"}, errors="ignore"))
+cap_mix = capacity_mix_excl_storage_ptx(
+    installed_cap,
+    cap_total,
+    cap_storage.rename(columns={"group": "category"}, errors="ignore"),
+    cap_ptx.rename(columns={"group": "category"}, errors="ignore"),
+)
 cap_mix = _filter_years(cap_mix, start_year, MAX_YEAR)
 
 # -----------------------------
@@ -488,21 +515,17 @@ latest_year = int(total_supply["year"].max()) if not total_supply.empty else Non
 
 latest_total = float(total_supply.loc[total_supply["year"] == latest_year, "value"].iloc[0]) if latest_year else np.nan
 
-# latest YE shares
 latest_ye_total = np.nan
 latest_ye_int = np.nan
-if latest_year and not ye_both.empty:
-    if (ye_both["year"] == latest_year).any():
-        tmp = ye_both[ye_both["year"] == latest_year].set_index("series")["value"].to_dict()
-        latest_ye_total = float(tmp.get("YE Payı (Toplam)", np.nan))
-        latest_ye_int = float(tmp.get("YE Payı (RES+GES)", np.nan))
+if latest_year and not ye_both.empty and (ye_both["year"] == latest_year).any():
+    tmp = ye_both[ye_both["year"] == latest_year].set_index("series")["value"].to_dict()
+    latest_ye_total = float(tmp.get("YE Payı (Toplam)", np.nan))
+    latest_ye_int = float(tmp.get("YE Payı (RES+GES)", np.nan))
 
-# latest renewable generation (GWh) for KPI
 latest_ren = np.nan
 if latest_year and not gen_mix.empty:
     latest_ren = float(gen_mix[(gen_mix["year"] == latest_year) & (gen_mix["group"].isin(RENEWABLE_GROUPS))]["value"].sum())
 
-# latest capacity total (GW) – exactly from row
 latest_cap = np.nan
 if latest_year and not cap_total.empty and (cap_total["year"] == latest_year).any():
     latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
@@ -511,7 +534,7 @@ k1.metric("Senaryo", scenario_name)
 k2.metric(f"Toplam Arz (GWh) – {latest_year if latest_year else ''}", f"{latest_total:,.0f}" if np.isfinite(latest_total) else "—")
 k3.metric(f"YE Üretimi (GWh) – {latest_year if latest_year else ''}", f"{latest_ren:,.0f}" if np.isfinite(latest_ren) else "—")
 k4.metric(f"YE Payı (%) – {latest_year if latest_year else ''}", f"{latest_ye_total:,.1f}% / {latest_ye_int:,.1f}%" if np.isfinite(latest_ye_total) else "—")
-k5.metric(f"Kurulu Güç (GW) – {latest_year if latest_year else ''}", f"{latest_cap:,.1f}" if np.isfinite(latest_cap) else "—")
+k5.metric(f"Kurulu Güç (GW) – {latest_year if latest_year else ''}", f"{latest_cap:,.3f}" if np.isfinite(latest_cap) else "—")
 
 st.divider()
 
@@ -538,7 +561,6 @@ with right:
     if ye_both.empty:
         st.warning("YE payı hesaplanamadı (mix veya total boş).")
     else:
-        # strokeDash based on series
         dash = alt.condition(
             alt.datum.series == "YE Payı (RES+GES)",
             alt.value([6, 4]),
@@ -560,7 +582,7 @@ with right:
 st.divider()
 
 # -----------------------------
-# Charts: Generation mix (GWh) – with Natural gas + Total Storage (single)
+# Charts: Generation mix (GWh)
 # -----------------------------
 st.subheader("Üretim Karması (Gross, GWh) – Teknoloji Bazında")
 st.caption("Not: Renewables/Combustion Plants ara-toplamları hariç. Depolama tek kalem: 'Total Storage'. Gas = 'Natural gas' (5 satır toplamı).")
@@ -568,7 +590,11 @@ st.caption("Not: Renewables/Combustion Plants ara-toplamları hariç. Depolama t
 if gen_mix.empty:
     st.warning("Gross generation bloğundan teknoloji karması çıkarılamadı.")
 else:
-    order_gen = ["Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables", "Natural gas", "Coal", "Lignite", "Nuclear", "Total Storage", "Other"]
+    order_gen = [
+        "Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables",
+        "Natural gas", "Coal", "Lignite", "Nuclear",
+        "Total Storage", "Other"
+    ]
     gen_mix["group"] = pd.Categorical(gen_mix["group"], categories=order_gen, ordered=True)
     gen_mix = gen_mix.sort_values(["year", "group"])
 
@@ -590,16 +616,15 @@ st.divider()
 # -----------------------------
 # Capacity section
 # -----------------------------
-st.subheader("Kurulu Güç (Gross Installed Capacity, GW)")
-st.caption("KG toplamı her yıl 'Gross Installed Capacity (in GWe)' satırına eşittir. KG karması grafiği depolama & PTX hariç; depolama ve PTX ayrı grafikte verilir.")
+st.subheader("Kurulu Güç (GW)")
+st.caption("KG toplamı: Row79 − (Row102 + Row106). KG karması depolama & PTX hariç; depolama ve PTX ayrı grafikte verilir.")
 
-# Total capacity trend
 c_left, c_right = st.columns([2, 1])
 
 with c_left:
     st.markdown("### Toplam Kurulu Güç Trend (GW)")
     if cap_total.empty:
-        st.warning("Toplam kurulu güç serisi üretilemedi (toplam satırı bulunamadı).")
+        st.warning("Toplam kurulu güç serisi üretilemedi (satır bazlı okuma başarısız).")
     else:
         st.altair_chart(
             alt.Chart(cap_total)
@@ -612,11 +637,10 @@ with c_left:
 with c_right:
     st.markdown("### KG – Son Yıl (GW)")
     if latest_year and np.isfinite(latest_cap):
-        st.metric(str(latest_year), f"{latest_cap:,.1f} GW")
+        st.metric(str(latest_year), f"{latest_cap:,.3f} GW")
     else:
         st.metric("—", "—")
 
-# Capacity mix excluding storage & PTX
 st.markdown("### Kurulu Güç Karması (GW) – Depolama & PTX Hariç")
 
 if cap_mix.empty:
@@ -639,7 +663,6 @@ else:
         use_container_width=True,
     )
 
-# Storage & PTX separate chart
 st.markdown("### Depolama ve Power-to-X (GW) – Ayrı Grafik")
 
 if storage_ptx.empty:
@@ -664,8 +687,8 @@ st.divider()
 # Data tabs (debug/control)
 # -----------------------------
 st.subheader("Veri Kontrolü")
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-    ["Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Mix excl. S&PTX", "Storage+PTX"]
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+    ["Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX"]
 )
 with tab1:
     st.dataframe(balance, use_container_width=True)
@@ -676,8 +699,10 @@ with tab3:
 with tab4:
     st.dataframe(installed_cap, use_container_width=True)
 with tab5:
-    st.dataframe(cap_mix, use_container_width=True)
+    st.dataframe(cap_total, use_container_width=True)
 with tab6:
+    st.dataframe(cap_mix, use_container_width=True)
+with tab7:
     st.dataframe(storage_ptx, use_container_width=True)
 
 with st.expander("Çalıştırma"):
