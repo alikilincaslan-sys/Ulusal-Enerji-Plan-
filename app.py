@@ -29,10 +29,11 @@ KG_BASE_ROW_1IDX = 79
 KG_SUB_ROW_1IDX_1 = 102
 KG_SUB_ROW_1IDX_2 = 106
 
-# --- GDP RULE (Scenario_Assumptions sheet) ---
-GDP_SHEET_NAME = "Scenario_Assumptions"
-GDP_YEAR_ROW_1IDX = 3   # years on row 3
-GDP_VALUE_ROW_1IDX = 6  # GDP values on row 6
+# --- Scenario_Assumptions sheet rules ---
+SCENARIO_SHEET_NAME = "Scenario_Assumptions"
+SCENARIO_YEAR_ROW_1IDX = 3   # years on row 3
+GDP_VALUE_ROW_1IDX = 6       # GDP values on row 6
+POP_VALUE_ROW_1IDX = 5       # Population values on row 5
 
 # Exclude headers/subtotals – installed capacity
 CAPACITY_EXCLUDE_EXACT = {
@@ -233,25 +234,25 @@ def _is_natural_gas_item(item: str) -> bool:
 
 
 # -----------------------------
-# Reading: GDP (Scenario_Assumptions)
+# Reading: Scenario_Assumptions series (Population, GDP, etc.)
 # -----------------------------
 @st.cache_data(show_spinner=False)
-def read_gdp_series(xlsx_file) -> pd.DataFrame:
+def read_scenario_series(xlsx_file, value_row_1idx: int, series_name: str) -> pd.DataFrame:
     """
     Sheet: Scenario_Assumptions
     Years: row 3 (Excel 1-indexed)
-    GDP values: row 6 (Excel 1-indexed)
+    Values: value_row_1idx (Excel 1-indexed)
     """
     try:
-        raw = pd.read_excel(xlsx_file, sheet_name=GDP_SHEET_NAME, header=None)
+        raw = pd.read_excel(xlsx_file, sheet_name=SCENARIO_SHEET_NAME, header=None)
     except Exception:
-        return pd.DataFrame(columns=["year", "value"])
+        return pd.DataFrame(columns=["year", "value", "series"])
 
-    year_r0 = GDP_YEAR_ROW_1IDX - 1
-    val_r0 = GDP_VALUE_ROW_1IDX - 1
+    year_r0 = SCENARIO_YEAR_ROW_1IDX - 1
+    val_r0 = value_row_1idx - 1
 
     if year_r0 < 0 or year_r0 >= len(raw) or val_r0 < 0 or val_r0 >= len(raw):
-        return pd.DataFrame(columns=["year", "value"])
+        return pd.DataFrame(columns=["year", "value", "series"])
 
     row_year = raw.iloc[year_r0, :].tolist()
     row_val = raw.iloc[val_r0, :].tolist()
@@ -265,11 +266,11 @@ def read_gdp_series(xlsx_file) -> pd.DataFrame:
             years.append(int(y))
             vals.append(pd.to_numeric(v_cell, errors="coerce"))
 
-    gdp = pd.DataFrame({"year": years, "value": vals})
-    gdp["value"] = pd.to_numeric(gdp["value"], errors="coerce")
-    gdp = gdp.dropna(subset=["value"]).sort_values("year")
-    gdp["sheet"] = GDP_SHEET_NAME
-    return gdp
+    df = pd.DataFrame({"year": years, "value": vals})
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+    df = df.dropna(subset=["value"]).sort_values("year")
+    df["series"] = series_name
+    return df
 
 
 # -----------------------------
@@ -493,8 +494,11 @@ balance = blocks["electricity_balance"]
 gross_gen = blocks["gross_generation"]
 installed_cap = blocks["installed_capacity"]
 
-# GDP (Scenario_Assumptions: years row 3, values row 6)
-gdp = read_gdp_series(uploaded)
+# Scenario_Assumptions: Population and GDP
+population = read_scenario_series(uploaded, POP_VALUE_ROW_1IDX, "Türkiye Nüfus Gelişimi")
+population = _filter_years(population, start_year, MAX_YEAR)
+
+gdp = read_scenario_series(uploaded, GDP_VALUE_ROW_1IDX, "GDP")
 gdp = _filter_years(gdp, start_year, MAX_YEAR)
 
 # GDP CAGR between start_year and MAX_YEAR (based on filtered years)
@@ -518,10 +522,27 @@ if not gdp.empty:
 
     gdp_cagr = _cagr(gdp_start_val, gdp_end_val, int(y1 - y0))
 
-# ---- FIRST DISPLAY GRAPH: GDP ----
-st.subheader("GDP (Scenario_Assumptions) – (Billion US$ 2015)")
+# ---- FIRST GRAPH: Population ----
+st.subheader("Türkiye Nüfus Gelişimi")
+if population.empty:
+    st.warning(f"Nüfus serisi okunamadı: '{SCENARIO_SHEET_NAME}' sekmesi veya {SCENARIO_YEAR_ROW_1IDX}. satır (yıl) / {POP_VALUE_ROW_1IDX}. satır (Nüfus) bulunamadı.")
+else:
+    st.altair_chart(
+        alt.Chart(population)
+        .mark_line()
+        .encode(
+            x=alt.X("year:O", title="Yıl"),
+            y=alt.Y("value:Q", title="Nüfus"),
+            tooltip=["year:O", alt.Tooltip("value:Q", format=",.3f")],
+        )
+        .properties(height=280),
+        use_container_width=True,
+    )
+
+# ---- SECOND GRAPH: GDP ----
+st.subheader("GDP (Scenario_Assumptions) – Trend")
 if gdp.empty:
-    st.warning(f"GDP serisi okunamadı: '{GDP_SHEET_NAME}' sekmesi veya {GDP_YEAR_ROW_1IDX}. satır (yıl) / {GDP_VALUE_ROW_1IDX}. satır (GDP) bulunamadı.")
+    st.warning(f"GDP serisi okunamadı: '{SCENARIO_SHEET_NAME}' sekmesi veya {SCENARIO_YEAR_ROW_1IDX}. satır (yıl) / {GDP_VALUE_ROW_1IDX}. satır (GDP) bulunamadı.")
 else:
     st.altair_chart(
         alt.Chart(gdp)
@@ -531,7 +552,7 @@ else:
             y=alt.Y("value:Q", title="GDP"),
             tooltip=["year:O", alt.Tooltip("value:Q", format=",.3f")],
         )
-        .properties(height=300),
+        .properties(height=280),
         use_container_width=True,
     )
 
@@ -764,24 +785,37 @@ st.divider()
 # Data tabs (debug/control)
 # -----------------------------
 st.subheader("Veri Kontrolü")
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
-    ["GDP", "Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX"]
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(
+    [
+        "Nüfus",
+        "GDP",
+        "Electricity Balance",
+        "Gross Generation",
+        "Mix (generation)",
+        "Installed Capacity",
+        "KG Total (rows)",
+        "KG Mix excl. S&PTX",
+        "Storage+PTX",
+    ]
 )
+
 with tab1:
-    st.dataframe(gdp, use_container_width=True)
+    st.dataframe(population, use_container_width=True)
 with tab2:
-    st.dataframe(balance, use_container_width=True)
+    st.dataframe(gdp, use_container_width=True)
 with tab3:
-    st.dataframe(gross_gen, use_container_width=True)
+    st.dataframe(balance, use_container_width=True)
 with tab4:
-    st.dataframe(gen_mix, use_container_width=True)
+    st.dataframe(gross_gen, use_container_width=True)
 with tab5:
-    st.dataframe(installed_cap, use_container_width=True)
+    st.dataframe(gen_mix, use_container_width=True)
 with tab6:
-    st.dataframe(cap_total, use_container_width=True)
+    st.dataframe(installed_cap, use_container_width=True)
 with tab7:
-    st.dataframe(cap_mix, use_container_width=True)
+    st.dataframe(cap_total, use_container_width=True)
 with tab8:
+    st.dataframe(cap_mix, use_container_width=True)
+with tab9:
     st.dataframe(storage_ptx, use_container_width=True)
 
 with st.expander("Çalıştırma"):
