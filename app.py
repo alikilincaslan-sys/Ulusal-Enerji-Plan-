@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
-st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
+st.set_page_config(page_title="Turkiye Ulusal Enerji Planı Görünümü", layout="wide")
 
 # -----------------------------
 # Config
