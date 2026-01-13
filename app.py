@@ -29,11 +29,12 @@ KG_BASE_ROW_1IDX = 79
 KG_SUB_ROW_1IDX_1 = 102
 KG_SUB_ROW_1IDX_2 = 106
 
-# --- GDP RULE (Excel 1-indexed row in Scenario assumption sheet) ---
-GDP_ROW_1IDX = 6  # "Scenario assumption" sekmesinde 6. satır
+# --- GDP RULE (Scenario_Assumptions sheet) ---
+GDP_SHEET_NAME = "Scenario_Assumptions"
+GDP_YEAR_ROW_1IDX = 3   # years on row 3
+GDP_VALUE_ROW_1IDX = 6  # GDP values on row 6
 
 # Exclude headers/subtotals – installed capacity
-# NOTE: we DO NOT exclude Total Storage / Total Power to X, because we use them as totals.
 CAPACITY_EXCLUDE_EXACT = {
     "Renewables",
     "Combustion Plants",
@@ -167,7 +168,6 @@ def _filter_years(df: pd.DataFrame, start_year: int, end_year: int) -> pd.DataFr
 
 
 def _cagr(start_value: float, end_value: float, n_years: int) -> float:
-    # returns decimal (e.g., 0.035)
     if n_years <= 0:
         return np.nan
     if start_value is None or end_value is None:
@@ -194,7 +194,6 @@ def read_power_generation(xlsx_file):
         "gross_generation": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Gross\s+Electricity\s+Generation\s+by\s+plant\s+type"),
         "net_generation": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Net\s+Electricity\s+Generation\s+by\s+plant\s+type"),
         "installed_capacity": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Gross\s+Installed\s+Capacity"),
-        # meta for fixed-row reading
         "_raw": raw,
         "_years": years,
         "_year_cols_idx": year_cols_idx,
@@ -234,52 +233,42 @@ def _is_natural_gas_item(item: str) -> bool:
 
 
 # -----------------------------
-# Reading: Scenario assumption (GDP)
+# Reading: GDP (Scenario_Assumptions)
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def read_gdp_series(xlsx_file) -> pd.DataFrame:
     """
-    Scenario assumption sekmesinde 6. satırdaki GDP değerlerini okur.
-    Sheet adı farklı yazılmış olabilir diye birkaç aday dener.
+    Sheet: Scenario_Assumptions
+    Years: row 3 (Excel 1-indexed)
+    GDP values: row 6 (Excel 1-indexed)
     """
-    candidates = [
-        "Scenario assumption",
-        "Scenario_assumption",
-        "Scenario Assumption",
-        "Scenario_Assumption",
-        "ScenarioAssumption",
-    ]
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name=GDP_SHEET_NAME, header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "value"])
 
-    raw = None
-    used_sheet = None
-    for sh in candidates:
-        try:
-            raw = pd.read_excel(xlsx_file, sheet_name=sh, header=None)
-            used_sheet = sh
-            break
-        except Exception:
+    year_r0 = GDP_YEAR_ROW_1IDX - 1
+    val_r0 = GDP_VALUE_ROW_1IDX - 1
+
+    if year_r0 < 0 or year_r0 >= len(raw) or val_r0 < 0 or val_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "value"])
+
+    row_year = raw.iloc[year_r0, :].tolist()
+    row_val = raw.iloc[val_r0, :].tolist()
+
+    years, vals = [], []
+    for y_cell, v_cell in zip(row_year, row_val):
+        y = _as_int_year(y_cell)
+        if y is None:
             continue
-
-    if raw is None:
-        return pd.DataFrame(columns=["year", "value"])
-
-    year_row = _find_year_row(raw)
-    years, year_cols_idx = _extract_years(raw, year_row)
-
-    r0 = GDP_ROW_1IDX - 1
-    if r0 < 0 or r0 >= len(raw):
-        return pd.DataFrame(columns=["year", "value"])
-
-    out_years, out_vals = [], []
-    for y, c in zip(years, year_cols_idx):
         if y <= MAX_YEAR:
-            out_years.append(y)
-            out_vals.append(pd.to_numeric(raw.iloc[r0, c], errors="coerce"))
+            years.append(int(y))
+            vals.append(pd.to_numeric(v_cell, errors="coerce"))
 
-    gdp = pd.DataFrame({"year": out_years, "value": out_vals})
+    gdp = pd.DataFrame({"year": years, "value": vals})
     gdp["value"] = pd.to_numeric(gdp["value"], errors="coerce")
     gdp = gdp.dropna(subset=["value"]).sort_values("year")
-    gdp["sheet"] = used_sheet
+    gdp["sheet"] = GDP_SHEET_NAME
     return gdp
 
 
@@ -504,25 +493,22 @@ balance = blocks["electricity_balance"]
 gross_gen = blocks["gross_generation"]
 installed_cap = blocks["installed_capacity"]
 
-# GDP (Scenario assumption row 6)
+# GDP (Scenario_Assumptions: years row 3, values row 6)
 gdp = read_gdp_series(uploaded)
 gdp = _filter_years(gdp, start_year, MAX_YEAR)
 
 # GDP CAGR between start_year and MAX_YEAR (based on filtered years)
 gdp_cagr = np.nan
-gdp_start_val = np.nan
-gdp_end_val = np.nan
 if not gdp.empty:
-    # Prefer exact boundary years if present; else use nearest inside range
     gdp_sorted = gdp.sort_values("year")
-    # start
+
     if (gdp_sorted["year"] == start_year).any():
         gdp_start_val = float(gdp_sorted.loc[gdp_sorted["year"] == start_year, "value"].iloc[0])
         y0 = start_year
     else:
         gdp_start_val = float(gdp_sorted.iloc[0]["value"])
         y0 = int(gdp_sorted.iloc[0]["year"])
-    # end
+
     if (gdp_sorted["year"] == MAX_YEAR).any():
         gdp_end_val = float(gdp_sorted.loc[gdp_sorted["year"] == MAX_YEAR, "value"].iloc[0])
         y1 = MAX_YEAR
@@ -533,9 +519,9 @@ if not gdp.empty:
     gdp_cagr = _cagr(gdp_start_val, gdp_end_val, int(y1 - y0))
 
 # ---- FIRST DISPLAY GRAPH: GDP ----
-st.subheader("GDP (Scenario Assumption) – Trend")
+st.subheader("GDP (Scenario_Assumptions) – Trend")
 if gdp.empty:
-    st.warning("GDP serisi okunamadı: 'Scenario assumption' sekmesi veya 6. satır/yıl kolonları bulunamadı.")
+    st.warning(f"GDP serisi okunamadı: '{GDP_SHEET_NAME}' sekmesi veya {GDP_YEAR_ROW_1IDX}. satır (yıl) / {GDP_VALUE_ROW_1IDX}. satır (GDP) bulunamadı.")
 else:
     st.altair_chart(
         alt.Chart(gdp)
@@ -615,7 +601,6 @@ latest_cap = np.nan
 if latest_year and not cap_total.empty and (cap_total["year"] == latest_year).any():
     latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
 
-# KPI: GDP CAGR between start_year and MAX_YEAR (or nearest available inside range)
 cagr_label = f"GDP CAGR (%) – {start_year}–{MAX_YEAR}"
 k0.metric(cagr_label, f"{(gdp_cagr*100):.2f}%" if np.isfinite(gdp_cagr) else "—")
 
