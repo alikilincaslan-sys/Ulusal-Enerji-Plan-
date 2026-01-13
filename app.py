@@ -15,7 +15,19 @@ st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 MAX_YEAR = 2050
 
 TOTAL_SUPPLY_LABEL = "Total Domestic Power Generation - Gross"
-BATTERY_TOTAL_LABEL = None  # ileride ekleyebiliriz
+
+# Installed capacity total satırı (ekrandaki en üst satır)
+TOTAL_CAPACITY_LABEL = "Gross Installed Capacity (in GWe)"
+
+# Kurulu güç bloğunda ara-toplamlar / üst başlıklar: HESABA DAHİL ETME
+CAPACITY_EXCLUDE_EXACT = {
+    "Renewables",
+    "Combustion Plants",
+    "Total Storage",
+    "Total Power to X",
+}
+# Daha genel güvenlik: "Total " ile başlayan alt toplamlar da hariç
+CAPACITY_EXCLUDE_REGEX = re.compile(r"^\s*Total\s+", flags=re.IGNORECASE)
 
 # Teknoloji kırılımı: Coal/Lignite ayrı, Hydro tek, RES ve GES ayrı
 TECH_GROUPS = {
@@ -26,7 +38,7 @@ TECH_GROUPS = {
     "Lignite": [r"\blignite\b"],
     "Gas": [r"\bgas\b", r"\bccgt\b", r"\bocgt\b"],
     "Nuclear": [r"\bnuclear\b"],
-    "Other Renewables": [r"\bgeothermal\b", r"\bbiomass\b", r"\bbiogas\b", r"\bwaste\b"],
+    "Other Renewables": [r"\bgeothermal\b", r"\bbiomass\b", r"\bbiogas\b", r"\bwaste\b", r"\bwave\b", r"\btidal\b"],
 }
 
 RENEWABLE_GROUPS = {"Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables"}
@@ -108,9 +120,7 @@ def _extract_block(
 
 def _to_long(df_wide: pd.DataFrame, value_name="value"):
     year_cols = [c for c in df_wide.columns if isinstance(c, int)]
-    long = df_wide.melt(
-        id_vars=["item"], value_vars=year_cols, var_name="year", value_name=value_name
-    )
+    long = df_wide.melt(id_vars=["item"], value_vars=year_cols, var_name="year", value_name=value_name)
     long = long.dropna(subset=[value_name])
     return long
 
@@ -129,18 +139,10 @@ def read_power_generation(xlsx_file):
             raw, first_col_idx, year_cols_idx, years, r"Electricity\s+Balance"
         ),
         "gross_generation": _extract_block(
-            raw,
-            first_col_idx,
-            year_cols_idx,
-            years,
-            r"Gross\s+Electricity\s+Generation\s+by\s+plant\s+type",
+            raw, first_col_idx, year_cols_idx, years, r"Gross\s+Electricity\s+Generation\s+by\s+plant\s+type"
         ),
         "net_generation": _extract_block(
-            raw,
-            first_col_idx,
-            year_cols_idx,
-            years,
-            r"Net\s+Electricity\s+Generation\s+by\s+plant\s+type",
+            raw, first_col_idx, year_cols_idx, years, r"Net\s+Electricity\s+Generation\s+by\s+plant\s+type"
         ),
         "installed_capacity": _extract_block(
             raw, first_col_idx, year_cols_idx, years, r"Gross\s+Installed\s+Capacity"
@@ -150,7 +152,7 @@ def read_power_generation(xlsx_file):
 
 
 def get_series_from_block(block_df: pd.DataFrame, label: str) -> pd.DataFrame:
-    if block_df is None:
+    if block_df is None or block_df.empty:
         return pd.DataFrame(columns=["year", "value"])
 
     row = block_df[block_df["item"].str.strip().eq(label)]
@@ -161,8 +163,7 @@ def get_series_from_block(block_df: pd.DataFrame, label: str) -> pd.DataFrame:
 
     year_cols = [c for c in row.columns if isinstance(c, int)]
     s = pd.to_numeric(row.iloc[0][year_cols], errors="coerce")
-    out = pd.DataFrame({"year": year_cols, "value": s.values})
-    out = out.dropna()
+    out = pd.DataFrame({"year": year_cols, "value": s.values}).dropna()
     out = out[out["year"] <= MAX_YEAR].sort_values("year")
     return out
 
@@ -192,11 +193,7 @@ def renewable_share(mix_df: pd.DataFrame, total_series_df: pd.DataFrame) -> pd.D
     if mix_df.empty or total_series_df.empty:
         return pd.DataFrame(columns=["year", "value"])
 
-    ren = (
-        mix_df[mix_df["group"].isin(RENEWABLE_GROUPS)]
-        .groupby("year", as_index=False)["value"]
-        .sum()
-    )
+    ren = mix_df[mix_df["group"].isin(RENEWABLE_GROUPS)].groupby("year", as_index=False)["value"].sum()
     tot = total_series_df.rename(columns={"value": "total"})
     out = ren.merge(tot, on="year", how="inner")
     out["value"] = (out["value"] / out["total"]) * 100.0
@@ -204,16 +201,33 @@ def renewable_share(mix_df: pd.DataFrame, total_series_df: pd.DataFrame) -> pd.D
 
 
 # -----------------------------
-# NEW: Installed Capacity (GW) helpers
+# Installed Capacity (GW) helpers
 # -----------------------------
+def _capacity_is_excluded(item: str) -> bool:
+    it = (item or "").strip()
+    if it in CAPACITY_EXCLUDE_EXACT:
+        return True
+    if CAPACITY_EXCLUDE_REGEX.search(it):
+        # "Total Storage", "Total Power to X" vb. zaten yakalanır
+        return True
+    return False
+
+
 def capacity_mix_from_block(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
     """
     Gross Installed Capacity bloğundan teknoloji bazlı kurulu güç karması (GW).
+    Ara toplam satırları hariç.
     """
     if installed_cap_df is None or installed_cap_df.empty:
         return pd.DataFrame(columns=["year", "group", "value"])
 
-    long = _to_long(installed_cap_df, value_name="value")
+    df = installed_cap_df.copy()
+    df = df[~df["item"].apply(_capacity_is_excluded)]
+
+    # Toplam satırını karma grafiğine dahil etmeyelim
+    df = df[df["item"].str.strip().ne(TOTAL_CAPACITY_LABEL)]
+
+    long = _to_long(df, value_name="value")
     long["group"] = long["item"].apply(_strict_match_group)
 
     mix = long.groupby(["year", "group"], as_index=False)["value"].sum()
@@ -223,23 +237,38 @@ def capacity_mix_from_block(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
 
 def total_capacity_series(installed_cap_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Installed capacity bloğundan toplam kurulu güç serisi (GW).
-    - Önce 'Total' içeren satır arar.
-    - Bulamazsa tüm satırları yıl bazında toplar.
+    Toplam kurulu güç serisi (GW):
+    Öncelik: doğrudan toplam satırı 'Gross Installed Capacity (in GWe)'.
+    Bulunamazsa: ara toplamları hariç tutarak tüm kalemleri toplar.
     """
     if installed_cap_df is None or installed_cap_df.empty:
         return pd.DataFrame(columns=["year", "value"])
 
-    cand = installed_cap_df[installed_cap_df["item"].str.contains(r"\btotal\b", case=False, na=False)]
-    if not cand.empty:
-        row = cand.iloc[0:1]
-        year_cols = [c for c in row.columns if isinstance(c, int)]
-        s = pd.to_numeric(row.iloc[0][year_cols], errors="coerce")
-        out = pd.DataFrame({"year": year_cols, "value": s.values}).dropna()
-        return out[out["year"] <= MAX_YEAR].sort_values("year")
+    # 1) Doğrudan toplam satırı
+    s = get_series_from_block(installed_cap_df, TOTAL_CAPACITY_LABEL)
+    if not s.empty:
+        return s
 
-    year_cols = [c for c in installed_cap_df.columns if isinstance(c, int)]
-    summed = installed_cap_df[year_cols].apply(pd.to_numeric, errors="coerce").sum(axis=0)
+    # 2) Yedek: "Gross Installed Capacity" içeren satır
+    cand = installed_cap_df[installed_cap_df["item"].str.contains(r"Gross\s+Installed\s+Capacity", case=False, na=False)]
+    if not cand.empty:
+        tmp = installed_cap_df.copy()
+        tmp["item"] = tmp["item"].astype(str).str.strip()
+        tmp = tmp[tmp.index.isin(cand.index)]
+        # ilk eşleşen
+        label = tmp.iloc[0]["item"]
+        s2 = get_series_from_block(installed_cap_df, label)
+        if not s2.empty:
+            return s2
+
+    # 3) Son çare: ara toplamları hariç tutarak topla
+    df = installed_cap_df.copy()
+    df = df[~df["item"].apply(_capacity_is_excluded)]
+    # varsa toplam satırını da hariç tut (çift saymasın)
+    df = df[df["item"].str.strip().ne(TOTAL_CAPACITY_LABEL)]
+
+    year_cols = [c for c in df.columns if isinstance(c, int)]
+    summed = df[year_cols].apply(pd.to_numeric, errors="coerce").sum(axis=0)
     out = pd.DataFrame({"year": year_cols, "value": summed.values}).dropna()
     return out[out["year"] <= MAX_YEAR].sort_values("year")
 
@@ -271,13 +300,13 @@ if not uploaded:
     st.info("Başlamak için Excel dosyanızı yükleyin.")
     st.stop()
 
-# Okuma
+# Read blocks
 blocks = read_power_generation(uploaded)
 balance = blocks["electricity_balance"]
 gross_gen = blocks["gross_generation"]
 installed_cap = blocks["installed_capacity"]
 
-# Electricity supply series (GWh) (your rule)
+# Supply series (GWh)
 total_supply = get_series_from_block(balance, TOTAL_SUPPLY_LABEL)
 
 # Generation mix (GWh)
@@ -402,7 +431,7 @@ else:
 st.divider()
 
 # -----------------------------
-# NEW Charts: Installed Capacity (GW)
+# Charts: Installed Capacity (GW)
 # -----------------------------
 st.subheader("Kurulu Güç (Gross Installed Capacity, GW)")
 
@@ -411,7 +440,7 @@ c_left, c_right = st.columns([2, 1])
 with c_left:
     st.markdown("### Toplam Kurulu Güç Trend (GW)")
     if cap_total.empty:
-        st.warning("Toplam kurulu güç serisi üretilemedi (Installed Capacity bloğu boş olabilir).")
+        st.warning("Toplam kurulu güç serisi üretilemedi (Installed Capacity bloğu / toplam satırı bulunamadı).")
     else:
         chart_cap = (
             alt.Chart(cap_total)
@@ -428,7 +457,7 @@ with c_right:
     else:
         st.metric("—", "—")
 
-st.markdown("### Kurulu Güç Karması (GW) – Teknoloji Bazında")
+st.markdown("### Kurulu Güç Karması (GW) – Teknoloji Bazında (Ara toplamlar hariç)")
 
 if cap_mix.empty:
     st.warning("Kurulu güç karması çıkarılamadı.")
@@ -455,7 +484,7 @@ st.divider()
 # -----------------------------
 # Data tabs (debug/control)
 # -----------------------------
-st.subheader("Filtreli Veri (kontrol)")
+st.subheader("Veri Kontrolü")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
     ["Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "Mix (capacity)"]
@@ -473,7 +502,6 @@ with tab5:
 
 with st.expander("Çalıştırma"):
     st.code(
-        "pip install streamlit pandas openpyxl altair numpy\n"
-        "streamlit run app.py",
+        "pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py",
         language="bash",
     )
