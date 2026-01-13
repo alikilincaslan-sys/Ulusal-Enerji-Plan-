@@ -68,10 +68,23 @@ TECH_GROUPS = {
 RENEWABLE_GROUPS = {"Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables"}
 INTERMITTENT_RE_GROUPS = {"Wind (RES)", "Solar (GES)"}
 
+# Population y-axis minimum (absolute)
+POP_Y_MIN = 60_000_000  # 60 million
+
 
 # -----------------------------
 # Helpers
 # -----------------------------
+def facet_columns(n: int) -> int:
+    if n <= 1:
+        return 1
+    if n == 2:
+        return 2
+    if n == 3:
+        return 3
+    return 3  # 4+ for readability
+
+
 def _as_int_year(x):
     try:
         v = int(float(x))
@@ -421,7 +434,6 @@ def compute_gdp_cagr(gdp_df: pd.DataFrame, start_year: int, end_year: int) -> fl
     if g.empty:
         return np.nan
 
-    # start
     if (g["year"] == start_year).any():
         v0 = float(g.loc[g["year"] == start_year, "value"].iloc[0])
         y0 = start_year
@@ -429,7 +441,6 @@ def compute_gdp_cagr(gdp_df: pd.DataFrame, start_year: int, end_year: int) -> fl
         v0 = float(g.iloc[0]["value"])
         y0 = int(g.iloc[0]["year"])
 
-    # end
     if (g["year"] == end_year).any():
         v1 = float(g.loc[g["year"] == end_year, "value"].iloc[0])
         y1 = end_year
@@ -446,28 +457,23 @@ def process_one_scenario(file_bytes: bytes, scenario: str, start_year: int, max_
     gross_gen = blocks["gross_generation"]
     installed_cap = blocks["installed_capacity"]
 
-    # Scenario_Assumptions
     pop = read_scenario_series_bytes(file_bytes, POP_VALUE_ROW_1IDX, max_year=max_year, series_name="Türkiye Nüfus Gelişimi")
     gdp = read_scenario_series_bytes(file_bytes, GDP_VALUE_ROW_1IDX, max_year=max_year, series_name="GDP")
 
     pop = _filter_years(pop, start_year, max_year)
     gdp = _filter_years(gdp, start_year, max_year)
 
-    # Supply
     total_supply = get_series_from_block(balance, TOTAL_SUPPLY_LABEL)
     total_supply = _filter_years(total_supply, start_year, max_year)
 
-    # Generation mix
     gen_mix = generation_mix_from_block(gross_gen)
     gen_mix = _filter_years(gen_mix, start_year, max_year)
 
-    # YE shares (two series)
     ye_total = share_series_from_mix(gen_mix, total_supply, RENEWABLE_GROUPS, "YE Payı (Toplam)")
     ye_int = share_series_from_mix(gen_mix, total_supply, INTERMITTENT_RE_GROUPS, "YE Payı (RES+GES)")
     ye_both = pd.concat([ye_total, ye_int], ignore_index=True)
     ye_both = _filter_years(ye_both, start_year, max_year)
 
-    # Installed capacity total (rows formula)
     cap_total = total_capacity_series_from_rows(
         raw=blocks["_raw"],
         year_cols_idx=blocks["_year_cols_idx"],
@@ -476,14 +482,12 @@ def process_one_scenario(file_bytes: bytes, scenario: str, start_year: int, max_
     )
     cap_total = _filter_years(cap_total, start_year, max_year)
 
-    # Storage & PTX
     cap_storage = storage_series_capacity(installed_cap)
     cap_ptx = ptx_series_capacity(installed_cap)
     cap_storage = _filter_years(cap_storage, start_year, max_year)
     cap_ptx = _filter_years(cap_ptx, start_year, max_year)
     storage_ptx = pd.concat([cap_storage, cap_ptx], ignore_index=True).rename(columns={"category": "group"})
 
-    # Capacity mix excluding storage & PTX
     cap_mix = capacity_mix_excl_storage_ptx(
         installed_cap,
         cap_total,
@@ -492,7 +496,6 @@ def process_one_scenario(file_bytes: bytes, scenario: str, start_year: int, max_
     )
     cap_mix = _filter_years(cap_mix, start_year, max_year)
 
-    # Add scenario column everywhere
     for df in (pop, gdp):
         if not df.empty:
             df["scenario"] = scenario
@@ -505,7 +508,6 @@ def process_one_scenario(file_bytes: bytes, scenario: str, start_year: int, max_
     if not ye_both.empty:
         ye_both["scenario"] = scenario
 
-    # KPIs
     latest_year = int(total_supply["year"].max()) if not total_supply.empty else np.nan
     latest_total = float(total_supply.loc[total_supply["year"] == latest_year, "value"].iloc[0]) if np.isfinite(latest_year) else np.nan
 
@@ -573,11 +575,9 @@ if not uploaded_files:
     st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
     st.stop()
 
-# Build scenario list from filenames
 scenario_map = {}
 for f in uploaded_files:
     scen = scenario_name_from_filename(getattr(f, "name", "Scenario"))
-    # ensure unique
     base = scen
     i = 2
     while scen in scenario_map:
@@ -587,7 +587,6 @@ for f in uploaded_files:
 
 all_scenarios = list(scenario_map.keys())
 
-# Selection controls
 with st.sidebar:
     colA, colB = st.columns([1, 1])
     with colA:
@@ -602,19 +601,15 @@ if not selected:
     st.warning("En az 1 senaryo seçin.")
     st.stop()
 
+n_scen = len(selected)
+ncols = facet_columns(n_scen)
+
 # -----------------------------
 # Process selected scenarios
 # -----------------------------
-pop_all = []
-gdp_all = []
-supply_all = []
-ye_all = []
-genmix_all = []
-cap_total_all = []
-cap_mix_all = []
-storage_ptx_all = []
+pop_all, gdp_all, supply_all, ye_all = [], [], [], []
+genmix_all, cap_total_all, cap_mix_all, storage_ptx_all = [], [], [], []
 kpi_rows = []
-
 errors = []
 
 for scen in selected:
@@ -662,43 +657,64 @@ kpi_df = pd.DataFrame(kpi_rows)
 if not kpi_df.empty:
     kpi_df = kpi_df.sort_values(["latest_year", "scenario"], ascending=[False, True])
 
+# Ensure numeric years for line stability
+if not population.empty:
+    population["year"] = pd.to_numeric(population["year"], errors="coerce")
+    population = population.dropna(subset=["year"]).sort_values(["scenario", "year"])
+
+if not gdp.empty:
+    gdp["year"] = pd.to_numeric(gdp["year"], errors="coerce")
+    gdp = gdp.dropna(subset=["year"]).sort_values(["scenario", "year"])
+
+if not total_supply.empty:
+    total_supply["year"] = pd.to_numeric(total_supply["year"], errors="coerce")
+    total_supply = total_supply.dropna(subset=["year"]).sort_values(["scenario", "year"])
+
+if not cap_total.empty:
+    cap_total["year"] = pd.to_numeric(cap_total["year"], errors="coerce")
+    cap_total = cap_total.dropna(subset=["year"]).sort_values(["scenario", "year"])
+
 # -----------------------------
-# FIRST GRAPH: Population (multi-scenario)
+# FIRST GRAPH: Population (y from 60M)
 # -----------------------------
 st.subheader("Türkiye Nüfus Gelişimi")
 if population.empty:
     st.warning("Nüfus serisi bulunamadı (Scenario_Assumptions: yıl=3. satır, nüfus=5. satır).")
 else:
-    st.altair_chart(
+    pop_chart = (
         alt.Chart(population)
         .mark_line()
         .encode(
-            x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title="Nüfus"),
+            x=alt.X("year:Q", title="Yıl"),
+            y=alt.Y("value:Q", title="Nüfus", scale=alt.Scale(domainMin=POP_Y_MIN)),
             color=alt.Color("scenario:N", title="Senaryo"),
-            tooltip=["scenario:N", "year:O", alt.Tooltip("value:Q", format=",.3f")],
+            order=alt.Order("year:Q"),
+            tooltip=["scenario:N", alt.Tooltip("year:Q", format=".0f"), alt.Tooltip("value:Q", format=",.0f")],
         )
-        .properties(height=280),
-        use_container_width=True,
+        .properties(height=280)
     )
+    st.altair_chart(pop_chart, use_container_width=True)
 
-# SECOND GRAPH: GDP (multi-scenario)
+# -----------------------------
+# GDP GRAPH (fixed - no zigzag)
+# -----------------------------
 st.subheader("GDP (Scenario_Assumptions) – Trend")
 if gdp.empty:
     st.warning("GDP serisi bulunamadı (Scenario_Assumptions: yıl=3. satır, GDP=6. satır).")
 else:
-    st.altair_chart(
+    gdp_chart = (
         alt.Chart(gdp)
         .mark_line()
         .encode(
-            x=alt.X("year:O", title="Yıl"),
+            x=alt.X("year:Q", title="Yıl"),
             y=alt.Y("value:Q", title="GDP"),
             color=alt.Color("scenario:N", title="Senaryo"),
-            tooltip=["scenario:N", "year:O", alt.Tooltip("value:Q", format=",.3f")],
+            order=alt.Order("year:Q"),
+            tooltip=["scenario:N", alt.Tooltip("year:Q", format=".0f"), alt.Tooltip("value:Q", format=",.3f")],
         )
-        .properties(height=280),
-        use_container_width=True,
+        .properties(height=280)
     )
+    st.altair_chart(gdp_chart, use_container_width=True)
 
 st.divider()
 
@@ -741,24 +757,39 @@ with left:
     if total_supply.empty:
         st.warning(f"'{TOTAL_SUPPLY_LABEL}' serisi bulunamadı.")
     else:
-        st.altair_chart(
+        supply_chart = (
             alt.Chart(total_supply)
             .mark_line()
             .encode(
-                x=alt.X("year:O", title="Yıl"),
+                x=alt.X("year:Q", title="Yıl"),
                 y=alt.Y("value:Q", title="GWh"),
-                color=alt.Color("scenario:N", title="Senaryo"),
-                tooltip=["scenario:N", "year:O", alt.Tooltip("value:Q", format=",.0f")],
+                order=alt.Order("year:Q"),
+                tooltip=["scenario:N", alt.Tooltip("year:Q", format=".0f"), alt.Tooltip("value:Q", format=",.0f")],
             )
-            .properties(height=320),
-            use_container_width=True,
+            .properties(height=300)
         )
+
+        if n_scen == 1:
+            st.altair_chart(supply_chart.encode(color=alt.value("#000")), use_container_width=True)
+        else:
+            st.altair_chart(
+                supply_chart.facet(
+                    column=alt.Column("scenario:N", title="Senaryo", sort=selected),
+                    columns=ncols,
+                ).resolve_scale(y="shared"),
+                use_container_width=True,
+            )
 
 with right:
     st.subheader("YE Payı (%) – Toplam ve RES+GES")
     if ye_both.empty:
         st.warning("YE payı hesaplanamadı.")
     else:
+        # make years numeric for stable ordering
+        ye_both = ye_both.copy()
+        ye_both["year"] = pd.to_numeric(ye_both["year"], errors="coerce")
+        ye_both = ye_both.dropna(subset=["year"]).sort_values(["scenario", "series", "year"])
+
         dash = alt.condition(
             alt.datum.series == "YE Payı (RES+GES)",
             alt.value([6, 4]),
@@ -768,23 +799,24 @@ with right:
             alt.Chart(ye_both)
             .mark_line()
             .encode(
-                x=alt.X("year:O", title="Yıl"),
+                x=alt.X("year:Q", title="Yıl"),
                 y=alt.Y("value:Q", title="%"),
                 color=alt.Color("scenario:N", title="Senaryo"),
                 strokeDash=dash,
-                tooltip=["scenario:N", "series:N", "year:O", alt.Tooltip("value:Q", format=",.1f")],
+                order=alt.Order("year:Q"),
+                tooltip=["scenario:N", "series:N", alt.Tooltip("year:Q", format=".0f"), alt.Tooltip("value:Q", format=",.1f")],
             )
-            .properties(height=320),
+            .properties(height=300),
             use_container_width=True,
         )
 
 st.divider()
 
 # -----------------------------
-# Generation mix (stacked) – facet by scenario
+# Generation mix (stacked) – facet by scenario (dynamic columns)
 # -----------------------------
 st.subheader("Üretim Karması (Gross, GWh) – Teknoloji Bazında (Senaryo Karşılaştırma)")
-st.caption("Stacked grafikte aynı yıl için senaryoları yan yana görmek için senaryo bazında facet kullanılır.")
+st.caption("Stacked grafikte senaryo panelleri: 2 senaryo=2 sütun, 3 senaryo=3 sütun, 4+=3 sütun.")
 
 if gen_mix.empty:
     st.warning("Üretim karması çıkarılamadı.")
@@ -809,36 +841,50 @@ else:
         .properties(height=340)
     )
 
-    st.altair_chart(
-        base.facet(
-            column=alt.Column("scenario:N", title="Senaryo", sort=selected),
-        ).resolve_scale(y="independent"),
-        use_container_width=True,
-    )
+    if n_scen == 1:
+        st.altair_chart(base, use_container_width=True)
+    else:
+        st.altair_chart(
+            base.facet(
+                column=alt.Column("scenario:N", title="Senaryo", sort=selected),
+                columns=ncols,
+            ).resolve_scale(y="independent"),
+            use_container_width=True,
+        )
 
 st.divider()
 
 # -----------------------------
-# Installed Capacity: total trend (multi-scenario)
+# Installed Capacity: total trend (facet, dynamic columns)
 # -----------------------------
 st.subheader("Toplam Kurulu Güç Trend (GW) – Senaryo Karşılaştırma")
 if cap_total.empty:
     st.warning("Kurulu güç toplam serisi üretilemedi.")
 else:
-    st.altair_chart(
+    cap_total_chart = (
         alt.Chart(cap_total)
         .mark_line()
         .encode(
-            x=alt.X("year:O", title="Yıl"),
+            x=alt.X("year:Q", title="Yıl"),
             y=alt.Y("value:Q", title="GW"),
-            color=alt.Color("scenario:N", title="Senaryo"),
-            tooltip=["scenario:N", "year:O", alt.Tooltip("value:Q", format=",.3f")],
+            order=alt.Order("year:Q"),
+            tooltip=["scenario:N", alt.Tooltip("year:Q", format=".0f"), alt.Tooltip("value:Q", format=",.3f")],
         )
-        .properties(height=320),
-        use_container_width=True,
+        .properties(height=300)
     )
 
-# Capacity mix stacked – facet
+    if n_scen == 1:
+        st.altair_chart(cap_total_chart.encode(color=alt.value("#000")), use_container_width=True)
+    else:
+        st.altair_chart(
+            cap_total_chart.facet(
+                column=alt.Column("scenario:N", title="Senaryo", sort=selected),
+                columns=ncols,
+            ).resolve_scale(y="shared"),
+            use_container_width=True,
+        )
+
+# Capacity mix stacked – facet (dynamic columns)
 st.subheader("Kurulu Güç Karması (GW) – Depolama & PTX Hariç (Senaryo Karşılaştırma)")
 if cap_mix.empty:
     st.warning("Kurulu güç karması çıkarılamadı.")
@@ -858,12 +904,19 @@ else:
         )
         .properties(height=340)
     )
-    st.altair_chart(
-        base2.facet(column=alt.Column("scenario:N", title="Senaryo", sort=selected)).resolve_scale(y="independent"),
-        use_container_width=True,
-    )
 
-# Storage + PTX stacked – facet
+    if n_scen == 1:
+        st.altair_chart(base2, use_container_width=True)
+    else:
+        st.altair_chart(
+            base2.facet(
+                column=alt.Column("scenario:N", title="Senaryo", sort=selected),
+                columns=ncols,
+            ).resolve_scale(y="independent"),
+            use_container_width=True,
+        )
+
+# Storage + PTX stacked – facet (dynamic columns)
 st.subheader("Depolama ve Power-to-X (GW) – Senaryo Karşılaştırma")
 if storage_ptx.empty:
     st.warning("Depolama/PTX serileri bulunamadı.")
@@ -879,10 +932,17 @@ else:
         )
         .properties(height=300)
     )
-    st.altair_chart(
-        base3.facet(column=alt.Column("scenario:N", title="Senaryo", sort=selected)).resolve_scale(y="independent"),
-        use_container_width=True,
-    )
+
+    if n_scen == 1:
+        st.altair_chart(base3, use_container_width=True)
+    else:
+        st.altair_chart(
+            base3.facet(
+                column=alt.Column("scenario:N", title="Senaryo", sort=selected),
+                columns=ncols,
+            ).resolve_scale(y="independent"),
+            use_container_width=True,
+        )
 
 # -----------------------------
 # Optional: Debug tabs
