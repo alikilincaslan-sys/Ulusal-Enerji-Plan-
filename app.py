@@ -221,7 +221,15 @@ st.title("Power_Generation Dashboard (GWh)")
 with st.sidebar:
     st.header("Dosya")
     uploaded = st.file_uploader("Excel yükleyin (.xlsx)", type=["xlsx"])
-    scenario_name = st.text_input("Senaryo adı", value="Scenario-1")
+  import os
+
+scenario_name = "Scenario"
+
+if uploaded is not None:
+    fname = os.path.splitext(uploaded.name)[0]   # .xlsx at
+    scenario_name = fname.replace("FinalReport_", "")
+
+scenario_name = st.text_input("Senaryo adı", value=scenario_name)
     st.divider()
     st.header("Ayarlar")
     max_year = st.selectbox("Maksimum yıl", [2050, 2045, 2040, 2035], index=0)
