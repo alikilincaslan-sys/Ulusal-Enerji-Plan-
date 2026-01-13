@@ -519,7 +519,7 @@ if not gdp.empty:
     gdp_cagr = _cagr(gdp_start_val, gdp_end_val, int(y1 - y0))
 
 # ---- FIRST DISPLAY GRAPH: GDP ----
-st.subheader("GDP (Scenario_Assumptions) – Trend")
+st.subheader("GDP (Scenario_Assumptions) – (Billion US$ 2015)")
 if gdp.empty:
     st.warning(f"GDP serisi okunamadı: '{GDP_SHEET_NAME}' sekmesi veya {GDP_YEAR_ROW_1IDX}. satır (yıl) / {GDP_VALUE_ROW_1IDX}. satır (GDP) bulunamadı.")
 else:
