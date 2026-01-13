@@ -663,7 +663,7 @@ else:
         use_container_width=True,
     )
 
-st.markdown("### Depolama ve Power-to-X (GW))
+st.markdown("### Depolama ve Power-to-X (GW)")
 
 if storage_ptx.empty:
     st.warning("Depolama/PTX serileri bulunamadı (Total Storage / Total Power to X yok ve bileşenler de bulunamadı).")
