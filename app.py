@@ -701,17 +701,16 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
 # -----------------------------
 st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü")
 
+# -----------------------------
+# Multi-scenario UI (IEA-style)
+# -----------------------------
 with st.sidebar:
-    st.header("Dosya")
-    uploaded = st.file_uploader("Excel yükleyin (.xlsx)", type=["xlsx"])
-
-    default_scenario = "Scenario"
-    if uploaded is not None and getattr(uploaded, "name", None):
-        stem = Path(uploaded.name).stem
-        if stem.lower().startswith("finalreport_"):
-            stem = stem[len("FinalReport_") :]
-        default_scenario = stem
-    scenario_name = st.text_input("Senaryo adı", value=default_scenario)
+    st.header("Dosyalar (çoklu senaryo)")
+    uploaded_files = st.file_uploader(
+        "Excel yükleyin (.xlsx) — en fazla 12 dosya",
+        type=["xlsx"],
+        accept_multiple_files=True,
+    )
 
     st.divider()
     st.header("Ayarlar")
@@ -720,578 +719,497 @@ with st.sidebar:
 
     start_year = st.selectbox("Başlangıç yılı", [2018, 2020, 2025, 2030, 2035, 2040, 2045], index=0)
 
-if not uploaded:
-    st.info("Başlamak için Excel dosyanızı yükleyin.")
+    st.divider()
+    st.header("Karşılaştırma modu")
+    compare_mode = st.radio(
+        "Stacked grafikler",
+        ["Small multiples (önerilen)", "Yıl içinde yan yana (clustered)", "2030/2050 snapshot"],
+        index=0,
+    )
+
+if not uploaded_files:
+    st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
     st.stop()
 
-# Read blocks
-blocks = read_power_generation(uploaded)
-balance = blocks["electricity_balance"]
-gross_gen = blocks["gross_generation"]
-installed_cap = blocks["installed_capacity"]
+if len(uploaded_files) > 12:
+    st.warning("En fazla 12 dosya yükleyebilirsiniz. İlk 12 dosya alınacak.")
+    uploaded_files = uploaded_files[:12]
 
-# Scenario_Assumptions (Nüfus & GSYH)
-pop = read_population_series(uploaded)
-pop = _filter_years(pop, start_year, MAX_YEAR)
+def _derive_scenario_name(uploaded) -> str:
+    name = getattr(uploaded, "name", "Scenario")
+    stem = Path(name).stem
+    if stem.lower().startswith("finalreport_"):
+        stem = stem[len("FinalReport_") :]
+    return stem or "Scenario"
 
-gdp = read_gdp_series(uploaded)  # GSYH
-gdp = _filter_years(gdp, start_year, MAX_YEAR)
+# Scenario names (auto)
+scenario_names_all = [_derive_scenario_name(f) for f in uploaded_files]
 
-carbon_price = read_carbon_price_series(uploaded)
-carbon_price = _filter_years(carbon_price, start_year, MAX_YEAR)
-
-co2 = read_co2_emissions_series(uploaded)
-co2 = _filter_years(co2, start_year, MAX_YEAR)
-
-primary_energy = read_primary_energy_production_series(uploaded)
-primary_energy = _filter_years(primary_energy, start_year, MAX_YEAR)
-
-primary_energy_source = read_primary_energy_consumption_by_source(uploaded)
-primary_energy_source = _filter_years(primary_energy_source, start_year, MAX_YEAR)
-
-dependency_ratio = read_energy_import_dependency_ratio(uploaded)
-dependency_ratio = _filter_years(dependency_ratio, start_year, MAX_YEAR)
-
-# GDP CAGR between start_year and MAX_YEAR (based on filtered years)
-gdp_cagr = np.nan
-gdp_start_val = np.nan
-gdp_end_val = np.nan
-if not gdp.empty:
-    gdp_sorted = gdp.sort_values("year")
-    if (gdp_sorted["year"] == start_year).any():
-        gdp_start_val = float(gdp_sorted.loc[gdp_sorted["year"] == start_year, "value"].iloc[0])
-        y0 = start_year
+# If duplicates, make them unique (A, A(2), A(3)...)
+seen = {}
+scenario_names_unique = []
+for s in scenario_names_all:
+    if s not in seen:
+        seen[s] = 1
+        scenario_names_unique.append(s)
     else:
-        gdp_start_val = float(gdp_sorted.iloc[0]["value"])
-        y0 = int(gdp_sorted.iloc[0]["year"])
+        seen[s] += 1
+        scenario_names_unique.append(f"{s} ({seen[s]})")
 
-    if (gdp_sorted["year"] == MAX_YEAR).any():
-        gdp_end_val = float(gdp_sorted.loc[gdp_sorted["year"] == MAX_YEAR, "value"].iloc[0])
-        y1 = MAX_YEAR
-    else:
-        gdp_end_val = float(gdp_sorted.iloc[-1]["value"])
-        y1 = int(gdp_sorted.iloc[-1]["year"])
+# map: scenario -> file
+scenario_to_file = dict(zip(scenario_names_unique, uploaded_files))
 
-    gdp_cagr = _cagr(gdp_start_val, gdp_end_val, int(y1 - y0))
+# selection (default 2–3)
+default_n = 3 if len(scenario_names_unique) >= 3 else len(scenario_names_unique)
+default_selected = scenario_names_unique[:default_n]
 
-# ---- FIRST DISPLAY GRAPH: POPULATION ----
-st.subheader("Türkiye Nüfus Gelişimi")
-if pop.empty:
-    st.warning("Nüfus serisi okunamadı: Scenario_Assumptions sekmesi veya 5. satır/yıl kolonları bulunamadı.")
-else:
-    pop = pop.copy()
-    pop["year"] = pd.to_numeric(pop["year"], errors="coerce")
-    pop["value"] = pd.to_numeric(pop["value"], errors="coerce")
-    pop = pop.dropna(subset=["year", "value"]).sort_values("year")
-    pop["year"] = pop["year"].astype(int)
+selected_scenarios = st.multiselect(
+    "Karşılaştırılacak senaryolar",
+    options=scenario_names_unique,
+    default=default_selected,
+)
 
-    year_values = sorted(pop["year"].unique().tolist())
+if not selected_scenarios:
+    st.info("En az 1 senaryo seçin.")
+    st.stop()
 
-    pop_line = (
-        alt.Chart(pop)
-        .mark_line()
-        .encode(
-            x=alt.X("year:O", title="Yıl", sort=year_values, axis=alt.Axis(values=year_values)),
-            y=alt.Y("value:Q", title="Nüfus (milyon)"),
-            tooltip=[
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="Nüfus (milyon)", format=",.3f"),
-            ],
-        )
+# Enforce readability rules for stacked charts
+if len(selected_scenarios) >= 4 and compare_mode != "2030/2050 snapshot":
+    st.warning("4+ senaryoda okunabilirlik için '2030/2050 snapshot' önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
+    selected_scenarios = selected_scenarios[:3]
+
+# Layout columns for 2 or 3 scenario
+def _ncols_for_selected(n: int) -> int:
+    if n <= 1:
+        return 1
+    if n == 2:
+        return 2
+    return 3
+
+# -----------------------------
+# Scenario read/compute
+# -----------------------------
+@st.cache_data(show_spinner=False)
+def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year: int):
+    blocks = read_power_generation(xlsx_file)
+    balance = blocks["electricity_balance"]
+    gross_gen = blocks["gross_generation"]
+    installed_cap = blocks["installed_capacity"]
+
+    pop = _filter_years(read_population_series(xlsx_file), start_year, max_year)
+    gdp = _filter_years(read_gdp_series(xlsx_file), start_year, max_year)
+    carbon_price = _filter_years(read_carbon_price_series(xlsx_file), start_year, max_year)
+    co2 = _filter_years(read_co2_emissions_series(xlsx_file), start_year, max_year)
+
+    primary_energy_source = _filter_years(read_primary_energy_consumption_by_source(xlsx_file), start_year, max_year)
+    dependency_ratio = _filter_years(read_energy_import_dependency_ratio(xlsx_file), start_year, max_year)
+
+    # Electricity supply (GWh) – total
+    total_supply = _filter_years(get_series_from_block(balance, TOTAL_SUPPLY_LABEL), start_year, max_year)
+
+    # Generation mix (GWh)
+    gen_mix = _filter_years(generation_mix_from_block(gross_gen), start_year, max_year)
+
+    # YE shares
+    ye_total = _filter_years(share_series_from_mix(gen_mix, total_supply, RENEWABLE_GROUPS, "Toplam YE"), start_year, max_year)
+    ye_int = _filter_years(share_series_from_mix(gen_mix, total_supply, INTERMITTENT_RE_GROUPS, "Kesintili YE"), start_year, max_year)
+    ye_both = pd.concat([ye_total, ye_int], ignore_index=True) if (not ye_total.empty or not ye_int.empty) else pd.DataFrame(columns=["year","series","value"])
+
+    # Installed capacity total (GW) – Row79 - (Row102 + Row106)
+    cap_total = _filter_years(
+        total_capacity_series_from_rows(
+            raw=blocks["_raw"],
+            year_cols_idx=blocks["_year_cols_idx"],
+            years=blocks["_years"],
+        ),
+        start_year,
+        max_year,
     )
 
-    pop_points = (
-        alt.Chart(pop)
-        .mark_point(filled=True, size=60)
-        .encode(
-            x=alt.X("year:O", sort=year_values, axis=alt.Axis(values=year_values)),
-            y=alt.Y("value:Q"),
-            tooltip=[
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="Nüfus (milyon)", format=",.3f"),
-            ],
-        )
+    # Storage & PTX (GW)
+    cap_storage = _filter_years(storage_series_capacity(installed_cap), start_year, max_year)
+    cap_ptx = _filter_years(ptx_series_capacity(installed_cap), start_year, max_year)
+    storage_ptx = pd.concat([cap_storage, cap_ptx], ignore_index=True)
+    storage_ptx = storage_ptx.rename(columns={"category": "group"})
+
+    # Capacity mix excluding storage & PTX (GW)
+    cap_mix = _filter_years(
+        capacity_mix_excl_storage_ptx(
+            installed_cap,
+            cap_total,
+            cap_storage.rename(columns={"group": "category"}, errors="ignore"),
+            cap_ptx.rename(columns={"group": "category"}, errors="ignore"),
+        ),
+        start_year,
+        max_year,
     )
 
-    st.altair_chart((pop_line + pop_points).properties(height=300), use_container_width=True)
+    # Per-capita electricity (kWh/kişi): total_supply[GWh] * 1e6 / population[person]
+    per_capita = pd.DataFrame(columns=["year", "value"])
+    if (not total_supply.empty) and (not pop.empty):
+        ts = total_supply.copy()
+        pp = pop.copy()
+        ts["year"] = pd.to_numeric(ts["year"], errors="coerce").astype("Int64")
+        pp["year"] = pd.to_numeric(pp["year"], errors="coerce").astype("Int64")
+        ts = ts.dropna(subset=["year", "value"])
+        pp = pp.dropna(subset=["year", "value"])
+        ts["year"] = ts["year"].astype(int)
+        pp["year"] = pp["year"].astype(int)
 
-# ---- SECOND DISPLAY GRAPH: GSYH ----
-st.subheader("GSYH (Milyar ABD Doları, 2015 fiyatlarıyla)")
-if gdp.empty:
-    st.warning("GSYH serisi okunamadı: Scenario_Assumptions sekmesi veya 6. satır/yıl kolonları bulunamadı.")
-else:
-    gd = gdp.copy()
-    gd["year"] = pd.to_numeric(gd["year"], errors="coerce")
-    gd["value"] = pd.to_numeric(gd["value"], errors="coerce")
-    gd = gd.dropna(subset=["year", "value"]).sort_values("year")
-    gd["year"] = gd["year"].astype(int)
+        # pop unit heuristic: if median < 1000 assume "million"
+        pop_median = float(pp["value"].median()) if len(pp) else np.nan
+        pop_multiplier = 1e6 if np.isfinite(pop_median) and pop_median < 1000 else 1.0
+        pp["pop_person"] = pp["value"] * pop_multiplier
 
-    gdp_year_values = sorted(gd["year"].unique().tolist())
+        merged = ts.merge(pp[["year", "pop_person"]], on="year", how="inner")
+        merged = merged[(merged["pop_person"] > 0) & merged["value"].notna()]
+        merged["value"] = (merged["value"] * 1_000_000.0) / merged["pop_person"]  # kWh/kişi
+        per_capita = merged[["year", "value"]].sort_values("year")
 
-    gdp_line = (
-        alt.Chart(gd)
-        .mark_line()
-        .encode(
-            x=alt.X("year:O", title="Yıl", sort=gdp_year_values, axis=alt.Axis(values=gdp_year_values)),
-            y=alt.Y("value:Q", title="Milyar ABD Doları (2015)"),
-            tooltip=[
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="GSYH (Milyar $)", format=",.2f"),
-            ],
+    # Add scenario column for multi-plot convenience
+    def _add_scn(df, cols_map=None):
+        if df is None:
+            return df
+        out = df.copy()
+        out["scenario"] = scenario
+        return out
+
+    bundle = {
+        "scenario": scenario,
+        "pop": _add_scn(pop),
+        "gdp": _add_scn(gdp),
+        "carbon_price": _add_scn(carbon_price),
+        "co2": _add_scn(co2),
+        "total_supply": _add_scn(total_supply),
+        "gen_mix": _add_scn(gen_mix),
+        "cap_total": _add_scn(cap_total),
+        "cap_mix": _add_scn(cap_mix),
+        "primary_energy_source": _add_scn(primary_energy_source),
+        "dependency_ratio": _add_scn(dependency_ratio),
+        "ye_both": _add_scn(ye_both),
+        "per_capita_el": _add_scn(per_capita),
+        "storage_ptx": _add_scn(storage_ptx),
+    }
+    return bundle
+
+bundles = []
+for scn in selected_scenarios:
+    f = scenario_to_file[scn]
+    bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR))
+
+# helper concat
+def _concat(key: str):
+    dfs = [b.get(key) for b in bundles if b.get(key) is not None and not b.get(key).empty]
+    if not dfs:
+        return pd.DataFrame()
+    return pd.concat(dfs, ignore_index=True)
+
+df_pop = _concat("pop")
+df_gdp = _concat("gdp")
+df_co2 = _concat("co2")
+df_cp = _concat("carbon_price")
+df_supply = _concat("total_supply")
+df_genmix = _concat("gen_mix")
+df_capmix = _concat("cap_mix")
+df_primary = _concat("primary_energy_source")
+
+# -----------------------------
+# Line charts (single axis, scenario colors)
+# -----------------------------
+def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed_series: str | None = None):
+    st.subheader(title)
+    if df is None or df.empty:
+        st.warning("Veri bulunamadı.")
+        return
+
+    dfp = df.copy()
+    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
+    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
+    dfp = dfp.dropna(subset=["year", "value", "scenario"])
+    dfp["year"] = dfp["year"].astype(int)
+
+    year_vals = sorted(dfp["year"].unique().tolist())
+
+    # Optional dashed by 'series' column if present
+    enc = {
+        "x": alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals)),
+        "y": alt.Y("value:Q", title=y_title),
+        "color": alt.Color("scenario:N", title="Senaryo"),
+        "tooltip": [
+            alt.Tooltip("scenario:N", title="Senaryo"),
+            alt.Tooltip("year:O", title="Yıl"),
+            alt.Tooltip("value:Q", title=y_title, format=value_format),
+        ],
+    }
+
+    chart = alt.Chart(dfp).mark_line(point=True).encode(**enc)
+
+    if dashed_series and ("series" in dfp.columns):
+        dash = alt.condition(
+            alt.datum.series == dashed_series,
+            alt.value([6, 4]),
+            alt.value([1, 0]),
         )
-    )
+        chart = alt.Chart(dfp).mark_line(point=True).encode(**enc, strokeDash=dash)
 
-    gdp_points = (
-        alt.Chart(gd)
-        .mark_point(filled=True, size=60)
-        .encode(
-            x=alt.X("year:O", sort=gdp_year_values, axis=alt.Axis(values=gdp_year_values)),
-            y=alt.Y("value:Q"),
-            tooltip=[
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="GSYH (Milyar $)", format=",.2f"),
-            ],
-        )
-    )
+    st.altair_chart(chart.properties(height=300), use_container_width=True)
 
-    st.altair_chart((gdp_line + gdp_points).properties(height=300), use_container_width=True)
+_line_chart(df_pop, "Türkiye Nüfus Gelişimi", "Nüfus (milyon)", value_format=",.3f")
+_line_chart(df_gdp, "GSYH (Milyar ABD Doları, 2015 fiyatlarıyla)", "Milyar ABD Doları (2015)", value_format=",.2f")
+st.divider()
+
+# Per-capita electricity (kWh/kişi)
+df_pc = _concat("per_capita_el")
+_line_chart(df_pc, "Kişi Başına Elektrik Tüketimi (kWh/kişi)", "kWh/kişi", value_format=",.0f")
+
+# -----------------------------
+# KPI row (per scenario, compact)
+# -----------------------------
+st.subheader("Özet Bilgi Kartları (Seçili Senaryolar)")
+ncols = _ncols_for_selected(len(selected_scenarios))
+cols = st.columns(ncols)
+
+def _kpi_for_bundle(b):
+    scn = b["scenario"]
+    supply = b["total_supply"]
+    ye = b["ye_both"]
+    cap_total = b["cap_total"]
+    gdp = b["gdp"]
+
+    latest_year = int(supply["year"].max()) if supply is not None and not supply.empty else None
+    latest_total = float(supply.loc[supply["year"] == latest_year, "value"].iloc[0]) if latest_year else np.nan
+
+    latest_ye_total = np.nan
+    latest_ye_int = np.nan
+    if latest_year and ye is not None and not ye.empty and (ye["year"] == latest_year).any():
+        tmp = ye[ye["year"] == latest_year].set_index("series")["value"].to_dict()
+        latest_ye_total = float(tmp.get("Toplam YE", np.nan))
+        latest_ye_int = float(tmp.get("Kesintili YE", np.nan))
+
+    latest_cap = np.nan
+    if latest_year and cap_total is not None and not cap_total.empty and (cap_total["year"] == latest_year).any():
+        latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
+
+    # GDP CAGR in-range
+    gdp_cagr = np.nan
+    if gdp is not None and not gdp.empty:
+        g = gdp.sort_values("year")
+        y0 = int(g.iloc[0]["year"])
+        y1 = int(g.iloc[-1]["year"])
+        v0 = float(g.iloc[0]["value"])
+        v1 = float(g.iloc[-1]["value"])
+        gdp_cagr = _cagr(v0, v1, int(y1 - y0))
+
+    return {
+        "scenario": scn,
+        "latest_year": latest_year,
+        "total_supply": latest_total,
+        "ye_total": latest_ye_total,
+        "ye_int": latest_ye_int,
+        "cap_total": latest_cap,
+        "gdp_cagr": gdp_cagr,
+    }
+
+kpis = [_kpi_for_bundle(b) for b in bundles]
+
+for i, kpi in enumerate(kpis[:ncols]):
+    with cols[i]:
+        st.markdown(f"**{kpi['scenario']}**")
+        st.metric("GSYH CAGR (%)", f"{kpi['gdp_cagr']*100:.2f}%" if np.isfinite(kpi["gdp_cagr"]) else "—")
+        st.metric(f"Toplam Arz (GWh) – {kpi['latest_year'] or ''}", f"{kpi['total_supply']:,.0f}" if np.isfinite(kpi["total_supply"]) else "—")
+        st.metric("YE Payı (%)", f"{kpi['ye_total']:.1f}% / {kpi['ye_int']:.1f}%" if np.isfinite(kpi["ye_total"]) else "—")
+        st.metric("Elektrik Kurulu Gücü (GW)", f"{kpi['cap_total']:,.3f}" if np.isfinite(kpi["cap_total"]) else "—")
+
+if len(kpis) > ncols:
+    with st.expander("Diğer seçili senaryoların KPI’ları"):
+        for kpi in kpis[ncols:]:
+            st.markdown(f"**{kpi['scenario']}** — GSYH CAGR: {(kpi['gdp_cagr']*100):.2f}% | Toplam Arz: {kpi['total_supply']:,.0f} GWh | YE Payı: {kpi['ye_total']:.1f}%/{kpi['ye_int']:.1f}% | KG: {kpi['cap_total']:,.3f} GW")
 
 st.divider()
 
-# Electricity supply (GWh)
-total_supply = get_series_from_block(balance, TOTAL_SUPPLY_LABEL)
-total_supply = _filter_years(total_supply, start_year, MAX_YEAR)
-
 # -----------------------------
-# Kişi Başına Elektrik Tüketimi (GWh/Kişi)
-# Formül: Elektrik Tüketimi (Total Domestic Power Generation - Gross, 17. satır) / Nüfus (Scenario_Assumptions 5. satır)
-# Yıllar: Scenario_Assumptions 3. satır (2018, 2020, 2025, ...)
+# Stacked charts helpers (3 modes)
 # -----------------------------
-per_capita_el = pd.DataFrame(columns=["year", "value"])
-if (not total_supply.empty) and (not pop.empty):
-    ts = total_supply.copy()
-    pp = pop.copy()
-    ts["year"] = pd.to_numeric(ts["year"], errors="coerce").astype("Int64")
-    pp["year"] = pd.to_numeric(pp["year"], errors="coerce").astype("Int64")
-    ts = ts.dropna(subset=["year", "value"])
-    pp = pp.dropna(subset=["year", "value"])
-    ts["year"] = ts["year"].astype(int)
-    pp["year"] = pp["year"].astype(int)
+def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None):
+    st.subheader(title)
+    if df is None or df.empty:
+        st.warning("Veri bulunamadı.")
+        return
 
-    # Nüfus birimi: çoğu dosyada "milyon" olduğu için, <1000 ise milyon kabul edip 1e6 ile çarpıyoruz.
-    pop_median = float(pp["value"].median()) if len(pp) else np.nan
-    pop_multiplier = 1e6 if np.isfinite(pop_median) and pop_median < 1000 else 1.0
-    pp["pop_person"] = pp["value"] * pop_multiplier
+    dfp = df.copy()
+    dfp["year"] = dfp["year"].astype(int)
 
-    merged = ts.merge(pp[["year", "pop_person"]], on="year", how="inner")
-    merged = merged[(merged["pop_person"] > 0) & merged["value"].notna()]
-    merged["value"] = merged["value"] / merged["pop_person"]  # GWh / kişi
-    per_capita_el = merged[["year", "value"]].sort_values("year")
+    # enforce order
+    if order is not None:
+        dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
+        dfp = dfp.sort_values(["scenario", "year", stack_field])
 
-st.subheader("Kişi Başına Elektrik Tüketimi (GWh/Kişi)")
-if per_capita_el.empty:
-    st.warning("Kişi başına elektrik tüketimi serisi üretilemedi (Toplam arz veya nüfus serisi boş).")
-else:
-    years_pc = sorted(per_capita_el["year"].unique().tolist())
-    pc_chart = (
-        alt.Chart(per_capita_el)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("year:O", title="Yıl", sort=years_pc, axis=alt.Axis(values=years_pc)),
-            y=alt.Y("value:Q", title="GWh/Kişi"),
-            tooltip=[
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="GWh/Kişi", format=",.6f"),
-            ],
-        )
-        .properties(height=300)
-    )
-    st.altair_chart(pc_chart, use_container_width=True)
+    # global max for same scale
+    ymax = float(dfp.groupby(["scenario","year"])["value"].sum().max()) if len(dfp) else None
+    yscale = alt.Scale(domain=[0, ymax]) if ymax and np.isfinite(ymax) else alt.Undefined
 
-# Generation mix (GWh)
-gen_mix = generation_mix_from_block(gross_gen)
-gen_mix = _filter_years(gen_mix, start_year, MAX_YEAR)
+    n = len(selected_scenarios)
+    ncols = _ncols_for_selected(n)
+    cols = st.columns(ncols)
 
-# YE share: total RE + intermittent (RES+GES)
-ye_total = share_series_from_mix(gen_mix, total_supply, RENEWABLE_GROUPS, "Toplam YE")
-ye_int = share_series_from_mix(gen_mix, total_supply, INTERMITTENT_RE_GROUPS, "Kesintili YE")
-ye_both = pd.concat([ye_total, ye_int], ignore_index=True)
-ye_both = _filter_years(ye_both, start_year, MAX_YEAR)
+    for idx, scn in enumerate(selected_scenarios):
+        sub = dfp[dfp["scenario"] == scn]
+        if sub.empty:
+            continue
+        c = cols[idx % ncols]
+        with c:
+            st.markdown(f"**{scn}**")
+            chart = (
+                alt.Chart(sub)
+                .mark_bar()
+                .encode(
+                    x=alt.X(f"{x_field}:O", title="Yıl"),
+                    y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
+                    color=alt.Color(f"{stack_field}:N", title=category_title),
+                    tooltip=[
+                        alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                        alt.Tooltip(f"{stack_field}:N", title=category_title),
+                        alt.Tooltip("value:Q", title=y_title, format=value_format),
+                    ],
+                )
+                .properties(height=380)
+            )
+            st.altair_chart(chart, use_container_width=True)
 
-# Installed capacity total (GW) – Row79 - (Row102 + Row106)
-cap_total = total_capacity_series_from_rows(
-    raw=blocks["_raw"],
-    year_cols_idx=blocks["_year_cols_idx"],
-    years=blocks["_years"],
-)
-cap_total = _filter_years(cap_total, start_year, MAX_YEAR)
+def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None):
+    st.subheader(title)
+    if df is None or df.empty:
+        st.warning("Veri bulunamadı.")
+        return
 
-# Storage & PTX (GW) – separate chart
-cap_storage = storage_series_capacity(installed_cap)
-cap_ptx = ptx_series_capacity(installed_cap)
-cap_storage = _filter_years(cap_storage, start_year, MAX_YEAR)
-cap_ptx = _filter_years(cap_ptx, start_year, MAX_YEAR)
+    dfp = df.copy()
+    dfp["year"] = dfp["year"].astype(int)
+    if order is not None:
+        dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
+        dfp = dfp.sort_values(["year", "scenario", stack_field])
 
-storage_ptx = pd.concat([cap_storage, cap_ptx], ignore_index=True)
-storage_ptx = storage_ptx.rename(columns={"category": "group"})
-
-# Capacity mix excluding storage & PTX (GW)
-cap_mix = capacity_mix_excl_storage_ptx(
-    installed_cap,
-    cap_total,
-    cap_storage.rename(columns={"group": "category"}, errors="ignore"),
-    cap_ptx.rename(columns={"group": "category"}, errors="ignore"),
-)
-cap_mix = _filter_years(cap_mix, start_year, MAX_YEAR)
-
-# -----------------------------
-# KPI row (GSYH CAGR FIRST)
-# -----------------------------
-st.subheader("Özet Bilgi Kartları")
-k0, k1, k2, k3, k4, k5 = st.columns(6)
-
-latest_year = int(total_supply["year"].max()) if not total_supply.empty else None
-latest_total = float(total_supply.loc[total_supply["year"] == latest_year, "value"].iloc[0]) if latest_year else np.nan
-
-latest_ye_total = np.nan
-latest_ye_int = np.nan
-if latest_year and not ye_both.empty and (ye_both["year"] == latest_year).any():
-    tmp = ye_both[ye_both["year"] == latest_year].set_index("series")["value"].to_dict()
-    latest_ye_total = float(tmp.get("Toplam YE", np.nan))
-    latest_ye_int = float(tmp.get("Kesintili YE", np.nan))
-
-latest_ren = np.nan
-if latest_year and not gen_mix.empty:
-    latest_ren = float(gen_mix[(gen_mix["year"] == latest_year) & (gen_mix["group"].isin(RENEWABLE_GROUPS))]["value"].sum())
-
-latest_cap = np.nan
-if latest_year and not cap_total.empty and (cap_total["year"] == latest_year).any():
-    latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
-
-cagr_label = f"GSYH Yıllık Büyüme (CAGR, %) – {start_year}–{MAX_YEAR}"
-k0.metric(cagr_label, f"{(gdp_cagr*100):.2f}%" if np.isfinite(gdp_cagr) else "—")
-
-k1.metric("Senaryo", scenario_name)
-k2.metric(f"Toplam Arz (GWh) – {latest_year if latest_year else ''}", f"{latest_total:,.0f}" if np.isfinite(latest_total) else "—")
-k3.metric(f"YE Üretimi (GWh) – {latest_year if latest_year else ''}", f"{latest_ren:,.0f}" if np.isfinite(latest_ren) else "—")
-k4.metric(
-    f"YE Payı (%) – {latest_year if latest_year else ''}",
-    f"{latest_ye_total:,.1f}% / {latest_ye_int:,.1f}%" if np.isfinite(latest_ye_total) else "—"
-)
-k5.metric(f"Elektrik Kurulu Gücü (GW) – {latest_year if latest_year else ''}", f"{latest_cap:,.3f}" if np.isfinite(latest_cap) else "—")
-
-st.divider()
-
-# -----------------------------
-# Birincil Enerji Talebi (GWh) – Summary&Indicators (rows 33–42)
-# -----------------------------
-st.subheader("Birincil Enerji Talebi (GWh)")
-
-if primary_energy_source.empty:
-    st.warning("Birincil Enerji Talebi verisi bulunamadı (Summary&Indicators: yıllar 3. satır, satırlar 33–42).")
-else:
-    pes = primary_energy_source.copy()
-    pes["year"] = pes["year"].astype(int)
-    year_vals = sorted(pes["year"].unique().tolist())
-
-    src_order = (
-        pes.groupby("source", as_index=False)["value"].sum()
-        .sort_values("value", ascending=False)["source"]
-        .tolist()
-    )
-
-    pes["source"] = pd.Categorical(pes["source"], categories=src_order, ordered=True)
-    pes = pes.sort_values(["year", "source"])
-
-    pes_chart = (
-        alt.Chart(pes)
+    chart = (
+        alt.Chart(dfp)
         .mark_bar()
         .encode(
-            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals)),
-            y=alt.Y("value:Q", title="GWh", stack=True),
-            color=alt.Color("source:N", title="Kaynak"),
+            x=alt.X(f"{x_field}:O", title="Yıl"),
+            xOffset=alt.XOffset("scenario:N"),
+            y=alt.Y("value:Q", title=y_title, stack=True),
+            color=alt.Color(f"{stack_field}:N", title=category_title),
             tooltip=[
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("source:N", title="Kaynak"),
-                alt.Tooltip("value:Q", title="GWh", format=",.0f"),
+                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                alt.Tooltip(f"{stack_field}:N", title=category_title),
+                alt.Tooltip("value:Q", title=y_title, format=value_format),
             ],
         )
         .properties(height=420)
     )
+    st.altair_chart(chart, use_container_width=True)
 
-    st.altair_chart(pes_chart, use_container_width=True)
+def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2030, 2050), order=None):
+    st.subheader(title)
+    if df is None or df.empty:
+        st.warning("Veri bulunamadı.")
+        return
+    dfp = df.copy()
+    dfp["year"] = dfp["year"].astype(int)
+    dfp = dfp[dfp["year"].isin(list(years))]
+    if dfp.empty:
+        st.warning("Seçilen yıllar için veri yok (2030/2050).")
+        return
+    if order is not None:
+        dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
+        dfp = dfp.sort_values(["year", "scenario", stack_field])
 
-# -----------------------------
-# Dışa Bağımlılık Oranı (%) – Summary&Indicators (1 - Row14/Row32) * 100
-# -----------------------------
-st.subheader("Dışa Bağımlılık Oranı (%)")
-
-if dependency_ratio.empty:
-    st.warning("Dışa Bağımlılık Oranı serisi üretilemedi (Summary&Indicators: yıllar 3. satır; satır 14 ve 32 gerekli).")
-else:
-    dr = dependency_ratio.copy()
-    dr["year"] = dr["year"].astype(int)
-    year_vals = sorted(dr["year"].unique().tolist())
-
-    dr_chart = (
-        alt.Chart(dr)
-        .mark_line(point=True)
+    chart = (
+        alt.Chart(dfp)
+        .mark_bar()
         .encode(
-            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals)),
-            y=alt.Y("value:Q", title="%"),
+            x=alt.X(f"{x_field}:O", title="Yıl"),
+            xOffset=alt.XOffset("scenario:N"),
+            y=alt.Y("value:Q", title=y_title, stack=True),
+            color=alt.Color(f"{stack_field}:N", title=category_title),
             tooltip=[
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="%", format=",.2f"),
+                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                alt.Tooltip(f"{stack_field}:N", title=category_title),
+                alt.Tooltip("value:Q", title=y_title, format=value_format),
             ],
         )
-        .properties(height=320)
+        .properties(height=420)
     )
-    st.altair_chart(dr_chart, use_container_width=True)
+    st.altair_chart(chart, use_container_width=True)
 
-# -----------------------------
-# Charts: Supply + YE share
-# -----------------------------
-left, right = st.columns([2, 1])
-
-with left:
-    st.subheader("Toplam Elektrik Arzı Trend (GWh)")
-    if total_supply.empty:
-        st.error(f"'{TOTAL_SUPPLY_LABEL}' satırı bulunamadı (Electricity Balance bloğunda).")
+def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None):
+    if compare_mode == "Small multiples (önerilen)":
+        _stacked_small_multiples(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
+    elif compare_mode == "Yıl içinde yan yana (clustered)":
+        _stacked_clustered(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
     else:
-        st.altair_chart(
-            alt.Chart(total_supply)
-            .mark_line()
-            .encode(x=alt.X("year:O", title="Yıl"), y=alt.Y("value:Q", title="GWh"))
-            .properties(height=320),
-            use_container_width=True,
-        )
-
-with right:
-    st.subheader("YE Payı (%) – Toplam ve RES+GES")
-    if ye_both.empty:
-        st.warning("YE payı hesaplanamadı (mix veya total boş).")
-    else:
-        dash = alt.condition(
-            alt.datum.series == "Kesintili YE",
-            alt.value([6, 4]),
-            alt.value([1, 0]),
-        )
-        st.altair_chart(
-            alt.Chart(ye_both)
-            .mark_line()
-            .encode(
-                x=alt.X("year:O", title="Yıl"),
-                y=alt.Y("value:Q", title="%"),
-                color=alt.Color("series:N", title="Seri"),
-                strokeDash=dash,
-            )
-            .properties(height=320),
-            use_container_width=True,
-        )
-
-st.divider()
+        _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
 
 # -----------------------------
-# Charts: Generation mix (GWh)
+# 1) Elektrik üretim karması (stacked)
 # -----------------------------
-st.subheader("Kaynaklarına Göre Elektrik Üretimi (GWh)")
-st.caption("Not: Renewables/Combustion Plants ara-toplamları hariç. Depolama tek kalem: 'Total Storage'. Gas = 'Natural gas' (5 satır toplamı).")
-
-if gen_mix.empty:
-    st.warning("Gross generation bloğundan teknoloji karması çıkarılamadı.")
-else:
-    order_gen = [
-        "Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables",
-        "Natural gas", "Coal", "Lignite", "Nuclear",
-        "Total Storage", "Other"
-    ]
-    gen_mix["group"] = pd.Categorical(gen_mix["group"], categories=order_gen, ordered=True)
-    gen_mix = gen_mix.sort_values(["year", "group"])
-
-    st.altair_chart(
-        alt.Chart(gen_mix)
-        .mark_bar()
-        .encode(
-            x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title="GWh", stack=True),
-            color=alt.Color("group:N", title="Teknoloji"),
-            tooltip=["year:O", "group:N", alt.Tooltip("value:Q", format=",.0f")],
-        )
-        .properties(height=420),
-        use_container_width=True,
-    )
-
-st.divider()
-
-# -----------------------------
-# Capacity section
-# -----------------------------
-st.subheader("Elektrik Kurulu Gücü (GW)")
-st.caption("KG toplamı: Row79 − (Row102 + Row106). KG karması depolama & PTX hariç; depolama ve PTX ayrı grafikte verilir.")
-
-c_left, c_right = st.columns([2, 1])
-
-with c_left:
-    st.markdown("### Toplam Kurulu Güç Trend (GW)")
-    if cap_total.empty:
-        st.warning("Toplam kurulu güç serisi üretilemedi (satır bazlı okuma başarısız).")
-    else:
-        st.altair_chart(
-            alt.Chart(cap_total)
-            .mark_line()
-            .encode(x=alt.X("year:O", title="Yıl"), y=alt.Y("value:Q", title="GW"))
-            .properties(height=320),
-            use_container_width=True,
-        )
-
-with c_right:
-    st.markdown("### KG – Son Yıl (GW)")
-    if latest_year and np.isfinite(latest_cap):
-        st.metric(str(latest_year), f"{latest_cap:,.3f} GW")
-    else:
-        st.metric("—", "—")
-
-st.markdown("### Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç")
-
-if cap_mix.empty:
-    st.warning("Kurulu güç karması çıkarılamadı.")
-else:
-    order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
-    cap_mix["group"] = pd.Categorical(cap_mix["group"], categories=order_cap, ordered=True)
-    cap_mix = cap_mix.sort_values(["year", "group"])
-
-    st.altair_chart(
-        alt.Chart(cap_mix)
-        .mark_bar()
-        .encode(
-            x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title="GW", stack=True),
-            color=alt.Color("group:N", title="Teknoloji"),
-            tooltip=["year:O", "group:N", alt.Tooltip("value:Q", format=",.2f")],
-        )
-        .properties(height=420),
-        use_container_width=True,
-    )
-
-st.markdown("### Depolama ve Power-to-X (GW)")
-
-if storage_ptx.empty:
-    st.warning("Depolama/PTX serileri bulunamadı (Total Storage / Total Power to X yok ve bileşenler de bulunamadı).")
-else:
-    st.altair_chart(
-        alt.Chart(storage_ptx)
-        .mark_bar()
-        .encode(
-            x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title="GW", stack=True),
-            color=alt.Color("group:N", title="Kategori"),
-            tooltip=["year:O", "group:N", alt.Tooltip("value:Q", format=",.2f")],
-        )
-        .properties(height=320),
-        use_container_width=True,
-    )
-
-st.divider()
-
-# -----------------------------
-# CO2 chart (separate)
-# -----------------------------
-st.subheader("CO2 Emisyonları (ktn CO2)")
-if co2.empty:
-    st.warning("CO2 serisi okunamadı: PowerGeneration-Indicators sekmesi veya 30. satır/yıl kolonları bulunamadı.")
-else:
-    co2_plot = co2.copy()
-    co2_plot["year"] = co2_plot["year"].astype(int)
-    co2_plot = co2_plot.sort_values("year")
-    st.altair_chart(
-        alt.Chart(co2_plot)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title="CO2 Emisyonları (ktn CO2)"),
-            tooltip=["year:O", alt.Tooltip("value:Q", format=",.0f")],
-        )
-        .properties(height=300),
-        use_container_width=True,
-    )
-
-
-# -----------------------------
-# Karbon Fiyatı (Varsayım) – Scenario_Assumptions (Carbon price ETS sectors, US$ '15/tnCO2)
-# -----------------------------
-st.subheader("Karbon Fiyatı (Varsayım) -2015 ABD doları")
-if carbon_price.empty:
-    st.warning("Karbon fiyatı serisi okunamadı: Scenario_Assumptions sekmesi veya 15. satır/yıl kolonları bulunamadı.")
-else:
-    cp = carbon_price.copy()
-    cp["year"] = pd.to_numeric(cp["year"], errors="coerce")
-    cp["value"] = pd.to_numeric(cp["value"], errors="coerce")
-    cp = cp.dropna(subset=["year", "value"]).sort_values("year")
-    cp["year"] = cp["year"].astype(int)
-
-    cp_years = sorted(cp["year"].unique().tolist())
-
-    cp_chart = (
-        alt.Chart(cp)
-        .mark_line(point=True, strokeDash=[6, 4])
-        .encode(
-            x=alt.X("year:O", title="Yıl", sort=cp_years, axis=alt.Axis(values=cp_years)),
-            y=alt.Y("value:Q", title="ABD Doları (2015) / tCO₂"),
-            tooltip=[
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="ABD Doları (2015) / tCO₂", format=",.2f"),
-            ],
-        )
-        .properties(height=300)
-    )
-    st.altair_chart(cp_chart, use_container_width=True)
-
-
-st.subheader("Veri Kontrolü")
-tab_pop, tab_gdp, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab_co2, tab_pe, tab_pes, tab_dr = st.tabs(
-    [
-        "Nüfus",
-        "GSYH",
-        "Electricity Balance",
-        "Gross Generation",
-        "Mix (generation)",
-        "Installed Capacity",
-        "KG Total (rows)",
-        "KG Mix excl. S&PTX",
-        "Storage+PTX",
-        "CO2",
-        "Primary Energy",
-        "Birincil Enerji Talebi (Kaynak)",
-        "Dışa Bağımlılık",
-    ]
+order_gen = [
+    "Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables",
+    "Natural gas", "Coal", "Lignite", "Nuclear",
+    "Total Storage", "Other"
+]
+_render_stacked(
+    df_genmix.rename(columns={"group": "category"}),
+    title="Kaynaklarına Göre Elektrik Üretimi (GWh)",
+    x_field="year",
+    stack_field="category",
+    y_title="GWh",
+    category_title="Kaynak/Teknoloji",
+    value_format=",.0f",
+    order=order_gen,
 )
 
-with tab_pop:
-    st.dataframe(pop, use_container_width=True)
-with tab_gdp:
-    st.dataframe(gdp, use_container_width=True)
-with tab2:
-    st.dataframe(balance, use_container_width=True)
-with tab3:
-    st.dataframe(gross_gen, use_container_width=True)
-with tab4:
-    st.dataframe(gen_mix, use_container_width=True)
-with tab5:
-    st.dataframe(installed_cap, use_container_width=True)
-with tab6:
-    st.dataframe(cap_total, use_container_width=True)
-with tab7:
-    st.dataframe(cap_mix, use_container_width=True)
-with tab8:
-    st.dataframe(storage_ptx, use_container_width=True)
-with tab_co2:
-    st.dataframe(co2, use_container_width=True)
-with tab_pe:
-    st.dataframe(primary_energy, use_container_width=True)
-with tab_pes:
-    st.dataframe(primary_energy_source, use_container_width=True)
-with tab_dr:
-    st.dataframe(dependency_ratio, use_container_width=True)
+st.divider()
 
+# -----------------------------
+# 2) Kurulu güç karması (stacked, storage & PTX hariç)
+# -----------------------------
+order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
+_render_stacked(
+    df_capmix.rename(columns={"group": "category"}),
+    title="Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç",
+    x_field="year",
+    stack_field="category",
+    y_title="GW",
+    category_title="Teknoloji",
+    value_format=",.2f",
+    order=order_cap,
+)
+
+st.divider()
+
+# -----------------------------
+# 3) Birincil enerji talebi (stacked)
+# -----------------------------
+_render_stacked(
+    df_primary.rename(columns={"source": "category"}),
+    title="Birincil Enerji Talebi (GWh)",
+    x_field="year",
+    stack_field="category",
+    y_title="GWh",
+    category_title="Kaynak",
+    value_format=",.0f",
+)
+
+st.divider()
+
+# -----------------------------
+# Remaining line charts (multi-scenario)
+# -----------------------------
+_line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
+_line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
+
+# -----------------------------
+# Run hint
+# -----------------------------
 with st.expander("Çalıştırma"):
     st.code("pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py", language="bash")
