@@ -616,41 +616,49 @@ if not gdp.empty:
 
     gdp_cagr = _cagr(gdp_start_val, gdp_end_val, int(y1 - y0))
 
+
 # ---- FIRST DISPLAY GRAPH: POPULATION ----
 st.subheader("Türkiye Nüfus Gelişimi")
 if pop.empty:
     st.warning("Nüfus serisi okunamadı: Scenario_Assumptions sekmesi veya 5. satır/yıl kolonları bulunamadı.")
 else:
-    st.altair_chart(
+    # Yıllar sadece Scenario_Assumptions (3. satır) üzerinden gelsin:
+    pop = pop.copy()
+    pop["year"] = pd.to_numeric(pop["year"], errors="coerce")
+    pop["value"] = pd.to_numeric(pop["value"], errors="coerce")
+    pop = pop.dropna(subset=["year", "value"]).sort_values("year")
+    pop["year"] = pop["year"].astype(int)
+
+    year_values = sorted(pop["year"].unique().tolist())
+
+    # Çizgiyi net göstermek için nokta + çizgi (üst üste binme yok, tek chart)
+    pop_line = (
         alt.Chart(pop)
         .mark_line()
         .encode(
-            x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title="Nüfus", scale=alt.Scale(domainMin=60000000)),
-            tooltip=["year:O", alt.Tooltip("value:Q", format=",.0f")],
+            x=alt.X("year:O", title="Yıl", sort=year_values, axis=alt.Axis(values=year_values)),
+            y=alt.Y("value:Q", title="Nüfus (milyon)"),
+            tooltip=[
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="Nüfus (milyon)", format=",.3f"),
+            ],
         )
-        .properties(height=300),
-        use_container_width=True,
     )
 
-st.divider()
-
-# ---- SECOND DISPLAY GRAPH: GDP ----
-st.subheader("GDP (Scenario Assumption) – Trend")
-if gdp.empty:
-    st.warning("GDP serisi okunamadı: Scenario_Assumptions sekmesi veya 6. satır/yıl kolonları bulunamadı.")
-else:
-    st.altair_chart(
-        alt.Chart(gdp)
-        .mark_line()
+    pop_points = (
+        alt.Chart(pop)
+        .mark_point(filled=True, size=60)
         .encode(
-            x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title="GDP"),
-            tooltip=["year:O", alt.Tooltip("value:Q", format=",.3f")],
+            x=alt.X("year:O", sort=year_values, axis=alt.Axis(values=year_values)),
+            y=alt.Y("value:Q"),
+            tooltip=[
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="Nüfus (milyon)", format=",.3f"),
+            ],
         )
-        .properties(height=300),
-        use_container_width=True,
     )
+
+    st.altair_chart((pop_line + pop_points).properties(height=300), use_container_width=True)
 
 st.divider()
 
