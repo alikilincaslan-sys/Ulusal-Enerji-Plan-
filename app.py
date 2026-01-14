@@ -856,7 +856,7 @@ gen_mix = generation_mix_from_block(gross_gen)
 gen_mix = _filter_years(gen_mix, start_year, MAX_YEAR)
 
 # YE share: total RE + intermittent (RES+GES)
-ye_total = share_series_from_mix(gen_mix, total_supply, RENEWABLE_GROUPS, "Yeninebilir Enerji")
+ye_total = share_series_from_mix(gen_mix, total_supply, RENEWABLE_GROUPS, "Toplam YE")
 ye_int = share_series_from_mix(gen_mix, total_supply, INTERMITTENT_RE_GROUPS, "Kesintili YE")
 ye_both = pd.concat([ye_total, ye_int], ignore_index=True)
 ye_both = _filter_years(ye_both, start_year, MAX_YEAR)
@@ -900,7 +900,7 @@ latest_ye_total = np.nan
 latest_ye_int = np.nan
 if latest_year and not ye_both.empty and (ye_both["year"] == latest_year).any():
     tmp = ye_both[ye_both["year"] == latest_year].set_index("series")["value"].to_dict()
-    latest_ye_total = float(tmp.get("Yeninebilir Enerji", np.nan))
+    latest_ye_total = float(tmp.get("Toplam YE", np.nan))
     latest_ye_int = float(tmp.get("Kesintili YE", np.nan))
 
 latest_ren = np.nan
