@@ -30,7 +30,7 @@ KG_SUB_ROW_1IDX_1 = 102
 KG_SUB_ROW_1IDX_2 = 106
 
 # --- GDP RULE (Excel 1-indexed row in Scenario assumption sheet) ---
-GDP_ROW_1IDX = 6  # Scenario_Assumptions sekmesinde 6. satır (GDP)
+GDP_ROW_1IDX = 6  # Scenario_Assumptions sekmesinde 6. satır (GSYH)
 POP_ROW_1IDX = 5  # Scenario_Assumptions sekmesinde 5. satır (Nüfus)
 SCENARIO_ASSUMP_YEARS_ROW_1IDX = 3  # Scenario_Assumptions sekmesinde 3. satır (Yıllar)
 
@@ -236,13 +236,12 @@ def _is_natural_gas_item(item: str) -> bool:
 
 
 # -----------------------------
-# Reading: Scenario assumption (GDP)
+# Reading: Scenario assumptions (Nüfus & GSYH)
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def _read_scenario_assumptions_row(xlsx_file, value_row_1idx: int, series_name: str) -> pd.DataFrame:
     """
     Scenario_Assumptions sekmesinden tek bir satırı seri olarak okur.
-
     - Yıllar: 3. satır (SCENARIO_ASSUMP_YEARS_ROW_1IDX)
     - Değerler: value_row_1idx (Excel 1-indexed)
     """
@@ -297,7 +296,6 @@ def _read_scenario_assumptions_row(xlsx_file, value_row_1idx: int, series_name: 
     return df
 
 
-
 @st.cache_data(show_spinner=False)
 def _read_fixed_row_sheet(xlsx_file, sheet_name: str, years_row_1idx: int, value_row_1idx: int, series_name: str) -> pd.DataFrame:
     """
@@ -315,7 +313,6 @@ def _read_fixed_row_sheet(xlsx_file, sheet_name: str, years_row_1idx: int, value
     if yr_r0 < 0 or val_r0 < 0 or yr_r0 >= len(raw) or val_r0 >= len(raw):
         return pd.DataFrame(columns=["year", "value", "series", "sheet"])
 
-    # years are detected by scanning the whole row
     row_year = raw.iloc[yr_r0, :].tolist()
     years, year_cols_idx = [], []
     for j, v in enumerate(row_year):
@@ -347,7 +344,7 @@ def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
         sheet_name="PowerGeneration-Indicators",
         years_row_1idx=3,
         value_row_1idx=30,
-        series_name="CO2 Emissions (ktn CO2)",
+        series_name="CO2 Emisyonları (ktn CO2)",
     )
 
 
@@ -358,9 +355,9 @@ def read_primary_energy_production_series(xlsx_file) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame(columns=["year", "value", "series", "sheet"])
 
-    YEARS_ROW_1IDX = 3   # years are in row 3
-    VALUE_ROW_1IDX = 14  # values start at C14 row
-    START_COL_IDX = 2    # column C
+    YEARS_ROW_1IDX = 3
+    VALUE_ROW_1IDX = 14
+    START_COL_IDX = 2
 
     yr_r0 = YEARS_ROW_1IDX - 1
     val_r0 = VALUE_ROW_1IDX - 1
@@ -391,7 +388,7 @@ def read_primary_energy_production_series(xlsx_file) -> pd.DataFrame:
 
 
 def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
-    """Summary&Indicators: Gross Inland Consumption – satır 15-23 (yığılmış)."""
+    """Summary&Indicators: Birincil Enerji Talebi – satır 33-42 (yığılmış)."""
     try:
         raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
     except Exception:
@@ -441,7 +438,7 @@ def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
         return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
 
     df = df.sort_values(["year", "source"])
-    df["series"] = "Gross Inland Consumption"
+    df["series"] = "Birincil Enerji Talebi"
     df["sheet"] = "Summary&Indicators"
     return df
 
@@ -493,15 +490,15 @@ def read_energy_import_dependency_ratio(xlsx_file) -> pd.DataFrame:
     df["sheet"] = "Summary&Indicators"
     return df
 
+
 def read_gdp_series(xlsx_file) -> pd.DataFrame:
-    """GDP serisi: Scenario_Assumptions 6. satır."""
-    return _read_scenario_assumptions_row(xlsx_file, GDP_ROW_1IDX, "GDP")
+    """GSYH serisi: Scenario_Assumptions 6. satır."""
+    return _read_scenario_assumptions_row(xlsx_file, GDP_ROW_1IDX, "GSYH")
 
 
 def read_population_series(xlsx_file) -> pd.DataFrame:
     """Nüfus serisi: Scenario_Assumptions 5. satır."""
     return _read_scenario_assumptions_row(xlsx_file, POP_ROW_1IDX, "Nüfus")
-
 
 
 # -----------------------------
@@ -725,11 +722,11 @@ balance = blocks["electricity_balance"]
 gross_gen = blocks["gross_generation"]
 installed_cap = blocks["installed_capacity"]
 
-# Scenario_Assumptions (Nüfus & GDP)
+# Scenario_Assumptions (Nüfus & GSYH)
 pop = read_population_series(uploaded)
 pop = _filter_years(pop, start_year, MAX_YEAR)
 
-gdp = read_gdp_series(uploaded)
+gdp = read_gdp_series(uploaded)  # GSYH
 gdp = _filter_years(gdp, start_year, MAX_YEAR)
 
 co2 = read_co2_emissions_series(uploaded)
@@ -744,22 +741,19 @@ primary_energy_source = _filter_years(primary_energy_source, start_year, MAX_YEA
 dependency_ratio = read_energy_import_dependency_ratio(uploaded)
 dependency_ratio = _filter_years(dependency_ratio, start_year, MAX_YEAR)
 
-
 # GDP CAGR between start_year and MAX_YEAR (based on filtered years)
 gdp_cagr = np.nan
 gdp_start_val = np.nan
 gdp_end_val = np.nan
 if not gdp.empty:
-    # Prefer exact boundary years if present; else use nearest inside range
     gdp_sorted = gdp.sort_values("year")
-    # start
     if (gdp_sorted["year"] == start_year).any():
         gdp_start_val = float(gdp_sorted.loc[gdp_sorted["year"] == start_year, "value"].iloc[0])
         y0 = start_year
     else:
         gdp_start_val = float(gdp_sorted.iloc[0]["value"])
         y0 = int(gdp_sorted.iloc[0]["year"])
-    # end
+
     if (gdp_sorted["year"] == MAX_YEAR).any():
         gdp_end_val = float(gdp_sorted.loc[gdp_sorted["year"] == MAX_YEAR, "value"].iloc[0])
         y1 = MAX_YEAR
@@ -769,13 +763,11 @@ if not gdp.empty:
 
     gdp_cagr = _cagr(gdp_start_val, gdp_end_val, int(y1 - y0))
 
-
 # ---- FIRST DISPLAY GRAPH: POPULATION ----
 st.subheader("Türkiye Nüfus Gelişimi")
 if pop.empty:
     st.warning("Nüfus serisi okunamadı: Scenario_Assumptions sekmesi veya 5. satır/yıl kolonları bulunamadı.")
 else:
-    # Yıllar sadece Scenario_Assumptions (3. satır) üzerinden gelsin:
     pop = pop.copy()
     pop["year"] = pd.to_numeric(pop["year"], errors="coerce")
     pop["value"] = pd.to_numeric(pop["value"], errors="coerce")
@@ -784,7 +776,6 @@ else:
 
     year_values = sorted(pop["year"].unique().tolist())
 
-    # Çizgiyi net göstermek için nokta + çizgi (üst üste binme yok, tek chart)
     pop_line = (
         alt.Chart(pop)
         .mark_line()
@@ -812,6 +803,47 @@ else:
     )
 
     st.altair_chart((pop_line + pop_points).properties(height=300), use_container_width=True)
+
+# ---- SECOND DISPLAY GRAPH: GSYH ----
+st.subheader("GSYH (Milyar ABD Doları, 2015 fiyatlarıyla)")
+if gdp.empty:
+    st.warning("GSYH serisi okunamadı: Scenario_Assumptions sekmesi veya 6. satır/yıl kolonları bulunamadı.")
+else:
+    gd = gdp.copy()
+    gd["year"] = pd.to_numeric(gd["year"], errors="coerce")
+    gd["value"] = pd.to_numeric(gd["value"], errors="coerce")
+    gd = gd.dropna(subset=["year", "value"]).sort_values("year")
+    gd["year"] = gd["year"].astype(int)
+
+    gdp_year_values = sorted(gd["year"].unique().tolist())
+
+    gdp_line = (
+        alt.Chart(gd)
+        .mark_line()
+        .encode(
+            x=alt.X("year:O", title="Yıl", sort=gdp_year_values, axis=alt.Axis(values=gdp_year_values)),
+            y=alt.Y("value:Q", title="Milyar ABD Doları (2015)"),
+            tooltip=[
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="GSYH (Milyar $)", format=",.2f"),
+            ],
+        )
+    )
+
+    gdp_points = (
+        alt.Chart(gd)
+        .mark_point(filled=True, size=60)
+        .encode(
+            x=alt.X("year:O", sort=gdp_year_values, axis=alt.Axis(values=gdp_year_values)),
+            y=alt.Y("value:Q"),
+            tooltip=[
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="GSYH (Milyar $)", format=",.2f"),
+            ],
+        )
+    )
+
+    st.altair_chart((gdp_line + gdp_points).properties(height=300), use_container_width=True)
 
 st.divider()
 
@@ -856,7 +888,7 @@ cap_mix = capacity_mix_excl_storage_ptx(
 cap_mix = _filter_years(cap_mix, start_year, MAX_YEAR)
 
 # -----------------------------
-# KPI row (GDP CAGR FIRST)
+# KPI row (GSYH CAGR FIRST)
 # -----------------------------
 st.subheader("Özet KPI’lar")
 k0, k1, k2, k3, k4, k5 = st.columns(6)
@@ -879,8 +911,7 @@ latest_cap = np.nan
 if latest_year and not cap_total.empty and (cap_total["year"] == latest_year).any():
     latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
 
-# KPI: GDP CAGR between start_year and MAX_YEAR (or nearest available inside range)
-cagr_label = f"GDP CAGR (%) – {start_year}–{MAX_YEAR}"
+cagr_label = f"GSYH Yıllık Büyüme (CAGR, %) – {start_year}–{MAX_YEAR}"
 k0.metric(cagr_label, f"{(gdp_cagr*100):.2f}%" if np.isfinite(gdp_cagr) else "—")
 
 k1.metric("Senaryo", scenario_name)
@@ -894,20 +925,18 @@ k5.metric(f"Kurulu Güç (GW) – {latest_year if latest_year else ''}", f"{late
 
 st.divider()
 
-
 # -----------------------------
-# Gross Inland Consumption (GWh) – Summary&Indicators (rows 15–23)
+# Birincil Enerji Talebi (GWh) – Summary&Indicators (rows 33–42)
 # -----------------------------
-st.subheader("Gross Inland Consumption (in GWh)")
+st.subheader("Birincil Enerji Talebi (GWh)")
 
 if primary_energy_source.empty:
-    st.warning("Gross Inland Consumption verisi bulunamadı (Summary&Indicators: yıllar 3. satır, satırlar 15–23).")
+    st.warning("Birincil Enerji Talebi verisi bulunamadı (Summary&Indicators: yıllar 3. satır, satırlar 33–42).")
 else:
     pes = primary_energy_source.copy()
     pes["year"] = pes["year"].astype(int)
     year_vals = sorted(pes["year"].unique().tolist())
 
-    # Keep a stable legend order by total over all years
     src_order = (
         pes.groupby("source", as_index=False)["value"].sum()
         .sort_values("value", ascending=False)["source"]
@@ -935,7 +964,6 @@ else:
 
     st.altair_chart(pes_chart, use_container_width=True)
 
-
 # -----------------------------
 # Dışa Bağımlılık Oranı (%) – Summary&Indicators (1 - Row14/Row32) * 100
 # -----------------------------
@@ -962,7 +990,6 @@ else:
         .properties(height=320)
     )
     st.altair_chart(dr_chart, use_container_width=True)
-
 
 # -----------------------------
 # Charts: Supply + YE share
@@ -1010,7 +1037,7 @@ st.divider()
 # -----------------------------
 # Charts: Generation mix (GWh)
 # -----------------------------
-st.subheader("Üretim Karması (Gross, GWh) – Teknoloji Bazında")
+st.subheader("Kaynaklarına Göre Elektrik Üretimi (GWh)")
 st.caption("Not: Renewables/Combustion Plants ara-toplamları hariç. Depolama tek kalem: 'Total Storage'. Gas = 'Natural gas' (5 satır toplamı).")
 
 if gen_mix.empty:
@@ -1067,7 +1094,7 @@ with c_right:
     else:
         st.metric("—", "—")
 
-st.markdown("### Kurulu Güç Karması (GW) – Depolama & PTX Hariç")
+st.markdown("### Kurulu Güç (GW) – Depolama & PTX Hariç")
 
 if cap_mix.empty:
     st.warning("Kurulu güç karması çıkarılamadı.")
@@ -1110,21 +1137,12 @@ else:
 st.divider()
 
 # -----------------------------
-# Data tabs (debug/control)
+# CO2 chart (separate)
 # -----------------------------
-st.divider()
-
-# -----------------------------
-# Data tabs (debug/control)
-# -----------------------------
-
-st.divider()
-
-st.subheader("CO2 Emissions (ktn CO2)")
+st.subheader("CO2 Emisyonları (ktn CO2)")
 if co2.empty:
     st.warning("CO2 serisi okunamadı: PowerGeneration-Indicators sekmesi veya 30. satır/yıl kolonları bulunamadı.")
 else:
-    # X ekseninde sadece dosyadan gelen yılları göster (2018, 2020, 2025, ... gibi)
     co2_plot = co2.copy()
     co2_plot["year"] = co2_plot["year"].astype(int)
     co2_plot = co2_plot.sort_values("year")
@@ -1133,16 +1151,32 @@ else:
         .mark_line(point=True)
         .encode(
             x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title="CO2 Emissions (ktn CO2)"),
+            y=alt.Y("value:Q", title="CO2 Emisyonları (ktn CO2)"),
             tooltip=["year:O", alt.Tooltip("value:Q", format=",.0f")],
         )
         .properties(height=300),
         use_container_width=True,
     )
+
 st.subheader("Veri Kontrolü")
 tab_pop, tab_gdp, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab_co2, tab_pe, tab_pes, tab_dr = st.tabs(
-    ["Nüfus", "GDP", "Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX", "CO2 Emissions", "Primary Energy", "Primary Energy Cons. Source", "Dışa Bağımlılık"]
+    [
+        "Nüfus",
+        "GSYH",
+        "Electricity Balance",
+        "Gross Generation",
+        "Mix (generation)",
+        "Installed Capacity",
+        "KG Total (rows)",
+        "KG Mix excl. S&PTX",
+        "Storage+PTX",
+        "CO2",
+        "Primary Energy",
+        "Birincil Enerji Talebi (Kaynak)",
+        "Dışa Bağımlılık",
+    ]
 )
+
 with tab_pop:
     st.dataframe(pop, use_container_width=True)
 with tab_gdp:
@@ -1163,20 +1197,12 @@ with tab8:
     st.dataframe(storage_ptx, use_container_width=True)
 with tab_co2:
     st.dataframe(co2, use_container_width=True)
-
-
 with tab_pe:
     st.dataframe(primary_energy, use_container_width=True)
-
-
 with tab_pes:
     st.dataframe(primary_energy_source, use_container_width=True)
-
-
 with tab_dr:
     st.dataframe(dependency_ratio, use_container_width=True)
 
-
 with st.expander("Çalıştırma"):
-
     st.code("pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py", language="bash")
