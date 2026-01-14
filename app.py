@@ -1219,7 +1219,7 @@ else:
 # -----------------------------
 # Karbon Fiyatı (Varsayım) – Scenario_Assumptions (Carbon price ETS sectors, US$ '15/tnCO2)
 # -----------------------------
-st.subheader("Karbon Fiyatı (Varsayım) -$")
+st.subheader("Karbon Fiyatı (Varsayım) -2015 ABD doları")
 if carbon_price.empty:
     st.warning("Karbon fiyatı serisi okunamadı: Scenario_Assumptions sekmesi veya 15. satır/yıl kolonları bulunamadı.")
 else:
