@@ -33,6 +33,7 @@ KG_SUB_ROW_1IDX_2 = 106
 GDP_ROW_1IDX = 6  # Scenario_Assumptions sekmesinde 6. satır (GSYH)
 POP_ROW_1IDX = 5  # Scenario_Assumptions sekmesinde 5. satır (Nüfus)
 SCENARIO_ASSUMP_YEARS_ROW_1IDX = 3  # Scenario_Assumptions sekmesinde 3. satır (Yıllar)
+CARBON_PRICE_ROW_1IDX = 15  # Scenario_Assumptions sekmesinde 15. satır (Carbon price ETS sectors, US$ '15/tnCO2)
 
 # Exclude headers/subtotals – installed capacity
 # NOTE: we DO NOT exclude Total Storage / Total Power to X, because we use them as totals.
@@ -496,6 +497,13 @@ def read_gdp_series(xlsx_file) -> pd.DataFrame:
     return _read_scenario_assumptions_row(xlsx_file, GDP_ROW_1IDX, "GSYH")
 
 
+def read_carbon_price_series(xlsx_file) -> pd.DataFrame:
+    """Karbon fiyatı (varsayım): Scenario_Assumptions 15. satır."""
+    return _read_scenario_assumptions_row(xlsx_file, CARBON_PRICE_ROW_1IDX, "Karbon Fiyatı (Varsayım)")
+
+
+
+
 def read_population_series(xlsx_file) -> pd.DataFrame:
     """Nüfus serisi: Scenario_Assumptions 5. satır."""
     return _read_scenario_assumptions_row(xlsx_file, POP_ROW_1IDX, "Nüfus")
@@ -729,6 +737,9 @@ pop = _filter_years(pop, start_year, MAX_YEAR)
 gdp = read_gdp_series(uploaded)  # GSYH
 gdp = _filter_years(gdp, start_year, MAX_YEAR)
 
+carbon_price = read_carbon_price_series(uploaded)
+carbon_price = _filter_years(carbon_price, start_year, MAX_YEAR)
+
 co2 = read_co2_emissions_series(uploaded)
 co2 = _filter_years(co2, start_year, MAX_YEAR)
 
@@ -852,7 +863,7 @@ total_supply = get_series_from_block(balance, TOTAL_SUPPLY_LABEL)
 total_supply = _filter_years(total_supply, start_year, MAX_YEAR)
 
 # -----------------------------
-# Kişi Başına Elektrik Tüketimi (kWh/kişi)
+# Kişi Başına Elektrik Tüketimi (GWh/Kişi)
 # Formül: Elektrik Tüketimi (Total Domestic Power Generation - Gross, 17. satır) / Nüfus (Scenario_Assumptions 5. satır)
 # Yıllar: Scenario_Assumptions 3. satır (2018, 2020, 2025, ...)
 # -----------------------------
@@ -874,10 +885,10 @@ if (not total_supply.empty) and (not pop.empty):
 
     merged = ts.merge(pp[["year", "pop_person"]], on="year", how="inner")
     merged = merged[(merged["pop_person"] > 0) & merged["value"].notna()]
-    merged["value"] = (merged["value"] * 1_000_000) / merged["pop_person"]  # kWh / kişi
+    merged["value"] = merged["value"] / merged["pop_person"]  # GWh / kişi
     per_capita_el = merged[["year", "value"]].sort_values("year")
 
-st.subheader("Kişi Başına Elektrik Tüketimi (kWh/kişi)")
+st.subheader("Kişi Başına Elektrik Tüketimi (GWh/Kişi)")
 if per_capita_el.empty:
     st.warning("Kişi başına elektrik tüketimi serisi üretilemedi (Toplam arz veya nüfus serisi boş).")
 else:
@@ -887,10 +898,10 @@ else:
         .mark_line(point=True)
         .encode(
             x=alt.X("year:O", title="Yıl", sort=years_pc, axis=alt.Axis(values=years_pc)),
-            y=alt.Y("value:Q", title="kWh/kişi"),
+            y=alt.Y("value:Q", title="GWh/Kişi"),
             tooltip=[
                 alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="kWh/kişi", format=",.6f"),
+                alt.Tooltip("value:Q", title="GWh/Kişi", format=",.6f"),
             ],
         )
         .properties(height=300)
@@ -1203,6 +1214,38 @@ else:
         .properties(height=300),
         use_container_width=True,
     )
+
+
+# -----------------------------
+# Karbon Fiyatı (Varsayım) – Scenario_Assumptions (Carbon price ETS sectors, US$ '15/tnCO2)
+# -----------------------------
+st.subheader("Karbon Fiyatı (Varsayım) -$")
+if carbon_price.empty:
+    st.warning("Karbon fiyatı serisi okunamadı: Scenario_Assumptions sekmesi veya 15. satır/yıl kolonları bulunamadı.")
+else:
+    cp = carbon_price.copy()
+    cp["year"] = pd.to_numeric(cp["year"], errors="coerce")
+    cp["value"] = pd.to_numeric(cp["value"], errors="coerce")
+    cp = cp.dropna(subset=["year", "value"]).sort_values("year")
+    cp["year"] = cp["year"].astype(int)
+
+    cp_years = sorted(cp["year"].unique().tolist())
+
+    cp_chart = (
+        alt.Chart(cp)
+        .mark_line(point=True, strokeDash=[6, 4])
+        .encode(
+            x=alt.X("year:O", title="Yıl", sort=cp_years, axis=alt.Axis(values=cp_years)),
+            y=alt.Y("value:Q", title="ABD Doları (2015) / tCO₂"),
+            tooltip=[
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="ABD Doları (2015) / tCO₂", format=",.2f"),
+            ],
+        )
+        .properties(height=300)
+    )
+    st.altair_chart(cp_chart, use_container_width=True)
+
 
 st.subheader("Veri Kontrolü")
 tab_pop, tab_gdp, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab_co2, tab_pe, tab_pes, tab_dr = st.tabs(
