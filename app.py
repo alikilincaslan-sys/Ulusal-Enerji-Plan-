@@ -851,6 +851,52 @@ st.divider()
 total_supply = get_series_from_block(balance, TOTAL_SUPPLY_LABEL)
 total_supply = _filter_years(total_supply, start_year, MAX_YEAR)
 
+# -----------------------------
+# Kişi Başına Elektrik Tüketimi (GWh/Kişi)
+# Formül: Elektrik Tüketimi (Total Domestic Power Generation - Gross, 17. satır) / Nüfus (Scenario_Assumptions 5. satır)
+# Yıllar: Scenario_Assumptions 3. satır (2018, 2020, 2025, ...)
+# -----------------------------
+per_capita_el = pd.DataFrame(columns=["year", "value"])
+if (not total_supply.empty) and (not pop.empty):
+    ts = total_supply.copy()
+    pp = pop.copy()
+    ts["year"] = pd.to_numeric(ts["year"], errors="coerce").astype("Int64")
+    pp["year"] = pd.to_numeric(pp["year"], errors="coerce").astype("Int64")
+    ts = ts.dropna(subset=["year", "value"])
+    pp = pp.dropna(subset=["year", "value"])
+    ts["year"] = ts["year"].astype(int)
+    pp["year"] = pp["year"].astype(int)
+
+    # Nüfus birimi: çoğu dosyada "milyon" olduğu için, <1000 ise milyon kabul edip 1e6 ile çarpıyoruz.
+    pop_median = float(pp["value"].median()) if len(pp) else np.nan
+    pop_multiplier = 1e6 if np.isfinite(pop_median) and pop_median < 1000 else 1.0
+    pp["pop_person"] = pp["value"] * pop_multiplier
+
+    merged = ts.merge(pp[["year", "pop_person"]], on="year", how="inner")
+    merged = merged[(merged["pop_person"] > 0) & merged["value"].notna()]
+    merged["value"] = merged["value"] / merged["pop_person"]  # GWh / kişi
+    per_capita_el = merged[["year", "value"]].sort_values("year")
+
+st.subheader("Kişi Başına Elektrik Tüketimi (GWh/Kişi)")
+if per_capita_el.empty:
+    st.warning("Kişi başına elektrik tüketimi serisi üretilemedi (Toplam arz veya nüfus serisi boş).")
+else:
+    years_pc = sorted(per_capita_el["year"].unique().tolist())
+    pc_chart = (
+        alt.Chart(per_capita_el)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("year:O", title="Yıl", sort=years_pc, axis=alt.Axis(values=years_pc)),
+            y=alt.Y("value:Q", title="GWh/Kişi"),
+            tooltip=[
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="GWh/Kişi", format=",.6f"),
+            ],
+        )
+        .properties(height=300)
+    )
+    st.altair_chart(pc_chart, use_container_width=True)
+
 # Generation mix (GWh)
 gen_mix = generation_mix_from_block(gross_gen)
 gen_mix = _filter_years(gen_mix, start_year, MAX_YEAR)
