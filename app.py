@@ -389,6 +389,62 @@ def read_primary_energy_production_series(xlsx_file) -> pd.DataFrame:
     df["sheet"] = "Summary&Indicators"
     return df
 
+
+def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
+    """Summary&Indicators: Gross Inland Consumption – satır 15-23 (yığılmış)."""
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
+
+    YEARS_ROW_1IDX = 3
+    START_COL_IDX = 2  # column C
+    ROW_START_1IDX = 33
+    ROW_END_1IDX = 42
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    if yr_r0 < 0 or yr_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
+
+    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+
+    years = []
+    for y_cell in years_row:
+        y = _as_int_year(y_cell)
+        if y is not None and int(y) <= MAX_YEAR:
+            years.append(int(y))
+        else:
+            years.append(None)
+
+    records = []
+    for r1 in range(ROW_START_1IDX, ROW_END_1IDX + 1):
+        r0 = r1 - 1
+        if r0 < 0 or r0 >= len(raw):
+            continue
+
+        label = raw.iloc[r0, 0]
+        label = "" if pd.isna(label) else str(label).strip()
+        if label == "" or label.lower() == "nan":
+            continue
+
+        vals_row = raw.iloc[r0, START_COL_IDX : START_COL_IDX + len(years)].tolist()
+        for y, v_cell in zip(years, vals_row):
+            if y is None:
+                continue
+            v = pd.to_numeric(v_cell, errors="coerce")
+            if pd.isna(v):
+                continue
+            records.append({"year": int(y), "source": label, "value": float(v)})
+
+    df = pd.DataFrame(records)
+    if df.empty:
+        return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
+
+    df = df.sort_values(["year", "source"])
+    df["series"] = "Gross Inland Consumption"
+    df["sheet"] = "Summary&Indicators"
+    return df
+
 def read_gdp_series(xlsx_file) -> pd.DataFrame:
     """GDP serisi: Scenario_Assumptions 6. satır."""
     return _read_scenario_assumptions_row(xlsx_file, GDP_ROW_1IDX, "GDP")
@@ -634,6 +690,9 @@ co2 = _filter_years(co2, start_year, MAX_YEAR)
 primary_energy = read_primary_energy_production_series(uploaded)
 primary_energy = _filter_years(primary_energy, start_year, MAX_YEAR)
 
+primary_energy_source = read_primary_energy_consumption_by_source(uploaded)
+primary_energy_source = _filter_years(primary_energy_source, start_year, MAX_YEAR)
+
 # GDP CAGR between start_year and MAX_YEAR (based on filtered years)
 gdp_cagr = np.nan
 gdp_start_val = np.nan
@@ -809,6 +868,49 @@ else:
         .properties(height=300)
     )
     st.altair_chart(pe_chart, use_container_width=True)
+
+
+st.divider()
+
+# -----------------------------
+# Gross Inland Consumption (GWh) – Summary&Indicators (rows 15–23)
+# -----------------------------
+st.subheader("Gross Inland Consumption (in GWh)")
+
+if primary_energy_source.empty:
+    st.warning("Gross Inland Consumption verisi bulunamadı (Summary&Indicators: yıllar 3. satır, satırlar 15–23).")
+else:
+    pes = primary_energy_source.copy()
+    pes["year"] = pes["year"].astype(int)
+    year_vals = sorted(pes["year"].unique().tolist())
+
+    # Keep a stable legend order by total over all years
+    src_order = (
+        pes.groupby("source", as_index=False)["value"].sum()
+        .sort_values("value", ascending=False)["source"]
+        .tolist()
+    )
+
+    pes["source"] = pd.Categorical(pes["source"], categories=src_order, ordered=True)
+    pes = pes.sort_values(["year", "source"])
+
+    pes_chart = (
+        alt.Chart(pes)
+        .mark_bar()
+        .encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals)),
+            y=alt.Y("value:Q", title="GWh", stack=True),
+            color=alt.Color("source:N", title="Kaynak"),
+            tooltip=[
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("source:N", title="Kaynak"),
+                alt.Tooltip("value:Q", title="GWh", format=",.0f"),
+            ],
+        )
+        .properties(height=420)
+    )
+
+    st.altair_chart(pes_chart, use_container_width=True)
 
 # -----------------------------
 # Charts: Supply + YE share
@@ -986,8 +1088,8 @@ else:
         use_container_width=True,
     )
 st.subheader("Veri Kontrolü")
-tab_pop, tab_gdp, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab_co2, tab_pe = st.tabs(
-    ["Nüfus", "GDP", "Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX", "CO2 Emissions", "Primary Energy"]
+tab_pop, tab_gdp, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab_co2, tab_pe, tab_pes = st.tabs(
+    ["Nüfus", "GDP", "Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX", "CO2 Emissions", "Primary Energy", "Primary Energy Cons. Source"]
 )
 with tab_pop:
     st.dataframe(pop, use_container_width=True)
@@ -1013,6 +1115,10 @@ with tab_co2:
 
 with tab_pe:
     st.dataframe(primary_energy, use_container_width=True)
+
+
+with tab_pes:
+    st.dataframe(primary_energy_source, use_container_width=True)
 
 
 with st.expander("Çalıştırma"):
