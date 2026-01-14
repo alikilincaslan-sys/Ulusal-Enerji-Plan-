@@ -852,7 +852,7 @@ total_supply = get_series_from_block(balance, TOTAL_SUPPLY_LABEL)
 total_supply = _filter_years(total_supply, start_year, MAX_YEAR)
 
 # -----------------------------
-# Kişi Başına Elektrik Tüketimi (GWh/Kişi)
+# Kişi Başına Elektrik Tüketimi (kWh/Kişi)
 # Formül: Elektrik Tüketimi (Total Domestic Power Generation - Gross, 17. satır) / Nüfus (Scenario_Assumptions 5. satır)
 # Yıllar: Scenario_Assumptions 3. satır (2018, 2020, 2025, ...)
 # -----------------------------
@@ -887,10 +887,10 @@ else:
         .mark_line(point=True)
         .encode(
             x=alt.X("year:O", title="Yıl", sort=years_pc, axis=alt.Axis(values=years_pc)),
-            y=alt.Y("value:Q", title="GWh/Kişi"),
+            y=alt.Y("value:Q", title="kWh/Kişi"),
             tooltip=[
                 alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="GWh/Kişi", format=",.6f"),
+                alt.Tooltip("value:Q", title="kWh/Kişi", format=",.6f"),
             ],
         )
         .properties(height=300)
