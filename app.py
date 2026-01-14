@@ -874,10 +874,10 @@ if (not total_supply.empty) and (not pop.empty):
 
     merged = ts.merge(pp[["year", "pop_person"]], on="year", how="inner")
     merged = merged[(merged["pop_person"] > 0) & merged["value"].notna()]
-    merged["value"] = merged["value"] / merged["pop_person"]  # GWh / kişi
+    merged["value"] = (merged["value"] * 1_000_000) / merged["pop_person"]  # kWh / kişi
     per_capita_el = merged[["year", "value"]].sort_values("year")
 
-st.subheader("Kişi Başına Elektrik Tüketimi (GWh/Kişi)")
+st.subheader("Kişi Başına Elektrik Tüketimi (kWh/kişi)")
 if per_capita_el.empty:
     st.warning("Kişi başına elektrik tüketimi serisi üretilemedi (Toplam arz veya nüfus serisi boş).")
 else:
