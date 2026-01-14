@@ -445,6 +445,54 @@ def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     df["sheet"] = "Summary&Indicators"
     return df
 
+
+def read_energy_import_dependency_ratio(xlsx_file) -> pd.DataFrame:
+    """Summary&Indicators: Dışa Bağımlılık Oranı (%) = (1 - (Row14 / Row32)) * 100, yıllar 3. satır."""
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    YEARS_ROW_1IDX = 3
+    START_COL_IDX = 2  # column C
+    NUM_ROW_1IDX = 14  # numerator: row 14
+    DEN_ROW_1IDX = 32  # denominator: row 32
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    num_r0 = NUM_ROW_1IDX - 1
+    den_r0 = DEN_ROW_1IDX - 1
+
+    if any(r < 0 for r in [yr_r0, num_r0, den_r0]) or yr_r0 >= len(raw) or num_r0 >= len(raw) or den_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+    num_row = raw.iloc[num_r0, START_COL_IDX:].tolist()
+    den_row = raw.iloc[den_r0, START_COL_IDX:].tolist()
+
+    years = []
+    for y_cell in years_row:
+        y = _as_int_year(y_cell)
+        years.append(int(y) if y is not None and int(y) <= MAX_YEAR else None)
+
+    recs = []
+    for y, n_cell, d_cell in zip(years, num_row, den_row):
+        if y is None:
+            continue
+        n = pd.to_numeric(n_cell, errors="coerce")
+        d = pd.to_numeric(d_cell, errors="coerce")
+        if pd.isna(n) or pd.isna(d) or d == 0:
+            continue
+        val = (1.0 - (float(n) / float(d))) * 100.0
+        recs.append({"year": int(y), "value": float(val)})
+
+    df = pd.DataFrame(recs)
+    if df.empty:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+    df = df.sort_values("year")
+    df["series"] = "Dışa Bağımlılık Oranı (%)"
+    df["sheet"] = "Summary&Indicators"
+    return df
+
 def read_gdp_series(xlsx_file) -> pd.DataFrame:
     """GDP serisi: Scenario_Assumptions 6. satır."""
     return _read_scenario_assumptions_row(xlsx_file, GDP_ROW_1IDX, "GDP")
@@ -693,6 +741,10 @@ primary_energy = _filter_years(primary_energy, start_year, MAX_YEAR)
 primary_energy_source = read_primary_energy_consumption_by_source(uploaded)
 primary_energy_source = _filter_years(primary_energy_source, start_year, MAX_YEAR)
 
+dependency_ratio = read_energy_import_dependency_ratio(uploaded)
+dependency_ratio = _filter_years(dependency_ratio, start_year, MAX_YEAR)
+
+
 # GDP CAGR between start_year and MAX_YEAR (based on filtered years)
 gdp_cagr = np.nan
 gdp_start_val = np.nan
@@ -883,6 +935,35 @@ else:
 
     st.altair_chart(pes_chart, use_container_width=True)
 
+
+# -----------------------------
+# Dışa Bağımlılık Oranı (%) – Summary&Indicators (1 - Row14/Row32) * 100
+# -----------------------------
+st.subheader("Dışa Bağımlılık Oranı (%)")
+
+if dependency_ratio.empty:
+    st.warning("Dışa Bağımlılık Oranı serisi üretilemedi (Summary&Indicators: yıllar 3. satır; satır 14 ve 32 gerekli).")
+else:
+    dr = dependency_ratio.copy()
+    dr["year"] = dr["year"].astype(int)
+    year_vals = sorted(dr["year"].unique().tolist())
+
+    dr_chart = (
+        alt.Chart(dr)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals)),
+            y=alt.Y("value:Q", title="%"),
+            tooltip=[
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="%", format=",.2f"),
+            ],
+        )
+        .properties(height=320)
+    )
+    st.altair_chart(dr_chart, use_container_width=True)
+
+
 # -----------------------------
 # Charts: Supply + YE share
 # -----------------------------
@@ -1059,8 +1140,8 @@ else:
         use_container_width=True,
     )
 st.subheader("Veri Kontrolü")
-tab_pop, tab_gdp, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab_co2, tab_pe, tab_pes = st.tabs(
-    ["Nüfus", "GDP", "Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX", "CO2 Emissions", "Primary Energy", "Primary Energy Cons. Source"]
+tab_pop, tab_gdp, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab_co2, tab_pe, tab_pes, tab_dr = st.tabs(
+    ["Nüfus", "GDP", "Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX", "CO2 Emissions", "Primary Energy", "Primary Energy Cons. Source", "Dışa Bağımlılık"]
 )
 with tab_pop:
     st.dataframe(pop, use_container_width=True)
@@ -1090,6 +1171,10 @@ with tab_pe:
 
 with tab_pes:
     st.dataframe(primary_energy_source, use_container_width=True)
+
+
+with tab_dr:
+    st.dataframe(dependency_ratio, use_container_width=True)
 
 
 with st.expander("Çalıştırma"):
