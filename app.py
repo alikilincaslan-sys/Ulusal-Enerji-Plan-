@@ -857,7 +857,7 @@ gen_mix = _filter_years(gen_mix, start_year, MAX_YEAR)
 
 # YE share: total RE + intermittent (RES+GES)
 ye_total = share_series_from_mix(gen_mix, total_supply, RENEWABLE_GROUPS, "YE Payı (Toplam)")
-ye_int = share_series_from_mix(gen_mix, total_supply, INTERMITTENT_RE_GROUPS, "YE Payı (RES+GES)")
+ye_int = share_series_from_mix(gen_mix, total_supply, INTERMITTENT_RE_GROUPS, "Kesintili YE")
 ye_both = pd.concat([ye_total, ye_int], ignore_index=True)
 ye_both = _filter_years(ye_both, start_year, MAX_YEAR)
 
@@ -901,7 +901,7 @@ latest_ye_int = np.nan
 if latest_year and not ye_both.empty and (ye_both["year"] == latest_year).any():
     tmp = ye_both[ye_both["year"] == latest_year].set_index("series")["value"].to_dict()
     latest_ye_total = float(tmp.get("YE Payı (Toplam)", np.nan))
-    latest_ye_int = float(tmp.get("YE Payı (RES+GES)", np.nan))
+    latest_ye_int = float(tmp.get("Kesintili YE", np.nan))
 
 latest_ren = np.nan
 if latest_year and not gen_mix.empty:
@@ -1015,7 +1015,7 @@ with right:
         st.warning("YE payı hesaplanamadı (mix veya total boş).")
     else:
         dash = alt.condition(
-            alt.datum.series == "YE Payı (RES+GES)",
+            alt.datum.series == "Kesintili YE",
             alt.value([6, 4]),
             alt.value([1, 0]),
         )
