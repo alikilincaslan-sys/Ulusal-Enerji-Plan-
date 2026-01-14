@@ -35,6 +35,10 @@ POP_ROW_1IDX = 5  # Scenario_Assumptions sekmesinde 5. satır (Nüfus)
 SCENARIO_ASSUMP_YEARS_ROW_1IDX = 3  # Scenario_Assumptions sekmesinde 3. satır (Yıllar)
 CARBON_PRICE_ROW_1IDX = 15  # Scenario_Assumptions sekmesinde 15. satır (Carbon price ETS sectors, US$ '15/tnCO2)
 
+# --- Unit conversion ---
+GWH_PER_MTEP = 11630.0  # 1 Mtep = 11.63 TWh = 11,630 GWh
+
+
 # Exclude headers/subtotals – installed capacity
 # NOTE: we DO NOT exclude Total Storage / Total Power to X, because we use them as totals.
 CAPACITY_EXCLUDE_EXACT = {
