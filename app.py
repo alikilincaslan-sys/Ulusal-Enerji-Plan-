@@ -561,7 +561,7 @@ if not gdp.empty:
     gdp_cagr = _cagr(gdp_start_val, gdp_end_val, int(y1 - y0))
 
 # ---- FIRST DISPLAY GRAPH: POPULATION ----
-st.subheader("Türkiye Nüfus Gelişimi (Milyon)")
+st.subheader("Türkiye Nüfus Gelişimi")
 if pop.empty:
     st.warning("Nüfus serisi okunamadı: Scenario_Assumptions sekmesi veya 5. satır/yıl kolonları bulunamadı.")
 else:
