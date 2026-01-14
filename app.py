@@ -842,35 +842,6 @@ k5.metric(f"Kurulu Güç (GW) – {latest_year if latest_year else ''}", f"{late
 
 st.divider()
 
-# -----------------------------
-# Primary Energy Production (GWh) – Summary&Indicators (C14)
-# -----------------------------
-st.subheader("Primary Energy Production (in GWh)")
-
-if primary_energy.empty:
-    st.warning("Primary Energy Production verisi bulunamadı (Summary&Indicators: yıllar 3. satır, değerler C14).")
-else:
-    pe = primary_energy.copy()
-    pe["year"] = pe["year"].astype(int)
-    year_vals = sorted(pe["year"].unique().tolist())
-
-    pe_chart = (
-        alt.Chart(pe)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals)),
-            y=alt.Y("value:Q", title="GWh"),
-            tooltip=[
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="GWh", format=",.0f"),
-            ],
-        )
-        .properties(height=300)
-    )
-    st.altair_chart(pe_chart, use_container_width=True)
-
-
-st.divider()
 
 # -----------------------------
 # Gross Inland Consumption (GWh) – Summary&Indicators (rows 15–23)
