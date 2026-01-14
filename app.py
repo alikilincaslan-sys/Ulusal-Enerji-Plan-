@@ -691,7 +691,7 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
 # -----------------------------
 # UI
 # -----------------------------
-st.title("Power_Generation Dashboard")
+st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü")
 
 with st.sidebar:
     st.header("Dosya")
