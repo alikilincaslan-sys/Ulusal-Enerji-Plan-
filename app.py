@@ -921,7 +921,7 @@ k4.metric(
     f"YE Payı (%) – {latest_year if latest_year else ''}",
     f"{latest_ye_total:,.1f}% / {latest_ye_int:,.1f}%" if np.isfinite(latest_ye_total) else "—"
 )
-k5.metric(f"Kurulu Güç (GW) – {latest_year if latest_year else ''}", f"{latest_cap:,.3f}" if np.isfinite(latest_cap) else "—")
+k5.metric(f"Elektrik Kurulu Gücü (GW) – {latest_year if latest_year else ''}", f"{latest_cap:,.3f}" if np.isfinite(latest_cap) else "—")
 
 st.divider()
 
@@ -1069,7 +1069,7 @@ st.divider()
 # -----------------------------
 # Capacity section
 # -----------------------------
-st.subheader("Kurulu Güç (GW)")
+st.subheader("Elektrik Kurulu Gücü (GW)")
 st.caption("KG toplamı: Row79 − (Row102 + Row106). KG karması depolama & PTX hariç; depolama ve PTX ayrı grafikte verilir.")
 
 c_left, c_right = st.columns([2, 1])
@@ -1094,7 +1094,7 @@ with c_right:
     else:
         st.metric("—", "—")
 
-st.markdown("### Kurulu Güç (GW) – Depolama & PTX Hariç")
+st.markdown("### Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç")
 
 if cap_mix.empty:
     st.warning("Kurulu güç karması çıkarılamadı.")
