@@ -351,6 +351,44 @@ def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
     )
 
 
+def read_primary_energy_production_series(xlsx_file) -> pd.DataFrame:
+    """Summary&Indicators: Primary Energy Production (in GWh) – C14 satırından yatay seri."""
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    YEARS_ROW_1IDX = 3   # years are in row 3
+    VALUE_ROW_1IDX = 14  # values start at C14 row
+    START_COL_IDX = 2    # column C
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    val_r0 = VALUE_ROW_1IDX - 1
+
+    if yr_r0 < 0 or val_r0 < 0 or yr_r0 >= len(raw) or val_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+    vals_row = raw.iloc[val_r0, START_COL_IDX:].tolist()
+
+    out_years, out_vals = [], []
+    for y_cell, v_cell in zip(years_row, vals_row):
+        y = _as_int_year(y_cell)
+        if y is None:
+            continue
+        y = int(y)
+        if y <= MAX_YEAR:
+            v = pd.to_numeric(v_cell, errors="coerce")
+            if not pd.isna(v):
+                out_years.append(y)
+                out_vals.append(float(v))
+
+    df = pd.DataFrame({"year": out_years, "value": out_vals})
+    df = df.dropna(subset=["value"]).sort_values("year")
+    df["series"] = "Primary Energy Production (GWh)"
+    df["sheet"] = "Summary&Indicators"
+    return df
+
 
 def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     """Summary&Indicators: Gross Inland Consumption – satır 15-23 (yığılmış)."""
