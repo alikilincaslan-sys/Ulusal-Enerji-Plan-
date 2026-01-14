@@ -34,6 +34,11 @@ GDP_ROW_1IDX = 6  # Scenario_Assumptions sekmesinde 6. satır (GDP)
 POP_ROW_1IDX = 5  # Scenario_Assumptions sekmesinde 5. satır (Nüfus)
 SCENARIO_ASSUMP_YEARS_ROW_1IDX = 3  # Scenario_Assumptions sekmesinde 3. satır (Yıllar)
 
+# PowerGeneration-Indicators sekmesi (CO2)
+INDICATORS_SHEET_NAME = "PowerGeneration-Indicators"
+INDICATORS_YEARS_ROW_1IDX = 3  # aynı mantık: 3. satır yıllar
+CO2_ROW_1IDX = 30  # CO2 Emissions (in ktn CO2) - sabit satır
+
 # Exclude headers/subtotals – installed capacity
 # NOTE: we DO NOT exclude Total Storage / Total Power to X, because we use them as totals.
 CAPACITY_EXCLUDE_EXACT = {
@@ -297,6 +302,55 @@ def _read_scenario_assumptions_row(xlsx_file, value_row_1idx: int, series_name: 
     return df
 
 
+def _read_powergeneration_indicators_row(xlsx_file, value_row_1idx: int, series_name: str) -> pd.DataFrame:
+    """PowerGeneration-Indicators sekmesinden tek bir satırı seri olarak okur.
+
+    - Yıllar: 3. satır (INDICATORS_YEARS_ROW_1IDX)
+    - Değerler: value_row_1idx (Excel 1-indexed)
+    """
+    candidates = [
+        INDICATORS_SHEET_NAME,
+        "PowerGeneration_Indicators",
+        "PowerGeneration Indicators",
+        "PowerGeneration-Indicators ",
+    ]
+
+    raw = None
+    for sh in candidates:
+        try:
+            raw = pd.read_excel(xlsx_file, sheet_name=sh, header=None)
+            break
+        except Exception:
+            continue
+
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=["year", "value", "series"])
+
+    year_r0 = INDICATORS_YEARS_ROW_1IDX - 1
+    if year_r0 < 0 or year_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "value", "series"])
+
+    years, year_cols_idx = _extract_years(raw, year_r0)
+    if not years:
+        return pd.DataFrame(columns=["year", "value", "series"])
+
+    val_r0 = value_row_1idx - 1
+    if val_r0 < 0 or val_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "value", "series"])
+
+    vals = []
+    for c in year_cols_idx:
+        vals.append(pd.to_numeric(raw.iloc[val_r0, c], errors="coerce"))
+
+    df = pd.DataFrame({"year": years, "value": vals})
+    df = df.dropna(subset=["value"]).copy()
+    df["year"] = pd.to_numeric(df["year"], errors="coerce").astype(int)
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+    df = df.sort_values("year")
+    df["series"] = series_name
+    return df
+
+
 def read_gdp_series(xlsx_file) -> pd.DataFrame:
     """GDP serisi: Scenario_Assumptions 6. satır."""
     return _read_scenario_assumptions_row(xlsx_file, GDP_ROW_1IDX, "GDP")
@@ -305,6 +359,11 @@ def read_gdp_series(xlsx_file) -> pd.DataFrame:
 def read_population_series(xlsx_file) -> pd.DataFrame:
     """Nüfus serisi: Scenario_Assumptions 5. satır."""
     return _read_scenario_assumptions_row(xlsx_file, POP_ROW_1IDX, "Nüfus")
+
+
+def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
+    """CO2 Emissions serisi: PowerGeneration-Indicators 30. satır (ktn CO2)."""
+    return _read_powergeneration_indicators_row(xlsx_file, CO2_ROW_1IDX, "CO2 Emissions")
 
 
 
@@ -535,6 +594,9 @@ pop = _filter_years(pop, start_year, MAX_YEAR)
 
 gdp = read_gdp_series(uploaded)
 gdp = _filter_years(gdp, start_year, MAX_YEAR)
+
+co2 = read_co2_emissions_series(uploaded)
+co2 = _filter_years(co2, start_year, MAX_YEAR)
 
 # GDP CAGR between start_year and MAX_YEAR (based on filtered years)
 gdp_cagr = np.nan
