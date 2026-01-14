@@ -350,6 +350,45 @@ def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
         series_name="CO2 Emissions (ktn CO2)",
     )
 
+
+def read_primary_energy_production_series(xlsx_file) -> pd.DataFrame:
+    """Summary&Indicators: Primary Energy Production (in GWh) – C14 satırından yatay seri."""
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    YEARS_ROW_1IDX = 3   # years are in row 3
+    VALUE_ROW_1IDX = 14  # values start at C14 row
+    START_COL_IDX = 2    # column C
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    val_r0 = VALUE_ROW_1IDX - 1
+
+    if yr_r0 < 0 or val_r0 < 0 or yr_r0 >= len(raw) or val_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+    vals_row = raw.iloc[val_r0, START_COL_IDX:].tolist()
+
+    out_years, out_vals = [], []
+    for y_cell, v_cell in zip(years_row, vals_row):
+        y = _as_int_year(y_cell)
+        if y is None:
+            continue
+        y = int(y)
+        if y <= MAX_YEAR:
+            v = pd.to_numeric(v_cell, errors="coerce")
+            if not pd.isna(v):
+                out_years.append(y)
+                out_vals.append(float(v))
+
+    df = pd.DataFrame({"year": out_years, "value": out_vals})
+    df = df.dropna(subset=["value"]).sort_values("year")
+    df["series"] = "Primary Energy Production (GWh)"
+    df["sheet"] = "Summary&Indicators"
+    return df
+
 def read_gdp_series(xlsx_file) -> pd.DataFrame:
     """GDP serisi: Scenario_Assumptions 6. satır."""
     return _read_scenario_assumptions_row(xlsx_file, GDP_ROW_1IDX, "GDP")
@@ -592,6 +631,9 @@ gdp = _filter_years(gdp, start_year, MAX_YEAR)
 co2 = read_co2_emissions_series(uploaded)
 co2 = _filter_years(co2, start_year, MAX_YEAR)
 
+primary_energy = read_primary_energy_production_series(uploaded)
+primary_energy = _filter_years(primary_energy, start_year, MAX_YEAR)
+
 # GDP CAGR between start_year and MAX_YEAR (based on filtered years)
 gdp_cagr = np.nan
 gdp_start_val = np.nan
@@ -740,6 +782,33 @@ k4.metric(
 k5.metric(f"Kurulu Güç (GW) – {latest_year if latest_year else ''}", f"{latest_cap:,.3f}" if np.isfinite(latest_cap) else "—")
 
 st.divider()
+
+# -----------------------------
+# Primary Energy Production (GWh) – Summary&Indicators (C14)
+# -----------------------------
+st.subheader("Primary Energy Production (in GWh)")
+
+if primary_energy.empty:
+    st.warning("Primary Energy Production verisi bulunamadı (Summary&Indicators: yıllar 3. satır, değerler C14).")
+else:
+    pe = primary_energy.copy()
+    pe["year"] = pe["year"].astype(int)
+    year_vals = sorted(pe["year"].unique().tolist())
+
+    pe_chart = (
+        alt.Chart(pe)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals)),
+            y=alt.Y("value:Q", title="GWh"),
+            tooltip=[
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="GWh", format=",.0f"),
+            ],
+        )
+        .properties(height=300)
+    )
+    st.altair_chart(pe_chart, use_container_width=True)
 
 # -----------------------------
 # Charts: Supply + YE share
@@ -917,8 +986,8 @@ else:
         use_container_width=True,
     )
 st.subheader("Veri Kontrolü")
-tab_pop, tab_gdp, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab_co2 = st.tabs(
-    ["Nüfus", "GDP", "Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX", "CO2 Emissions"]
+tab_pop, tab_gdp, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab_co2, tab_pe = st.tabs(
+    ["Nüfus", "GDP", "Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX", "CO2 Emissions", "Primary Energy"]
 )
 with tab_pop:
     st.dataframe(pop, use_container_width=True)
@@ -940,6 +1009,10 @@ with tab8:
     st.dataframe(storage_ptx, use_container_width=True)
 with tab_co2:
     st.dataframe(co2, use_container_width=True)
+
+
+with tab_pe:
+    st.dataframe(primary_energy, use_container_width=True)
 
 
 with st.expander("Çalıştırma"):
