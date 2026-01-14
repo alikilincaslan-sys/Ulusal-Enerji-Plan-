@@ -565,26 +565,44 @@ st.subheader("Türkiye Nüfus Gelişimi")
 if pop.empty:
     st.warning("Nüfus serisi okunamadı: Scenario_Assumptions sekmesi veya 5. satır/yıl kolonları bulunamadı.")
 else:
-    # Tip/format sorunları Altair'de çizgiyi bozabildiği için yıl ve değerleri netleştiriyoruz
+    # Yıllar sadece Scenario_Assumptions (3. satır) üzerinden gelsin:
     pop = pop.copy()
     pop["year"] = pd.to_numeric(pop["year"], errors="coerce")
     pop["value"] = pd.to_numeric(pop["value"], errors="coerce")
     pop = pop.dropna(subset=["year", "value"]).sort_values("year")
     pop["year"] = pop["year"].astype(int)
 
-    st.altair_chart(
+    year_values = sorted(pop["year"].unique().tolist())
+
+    # Çizgiyi net göstermek için nokta + çizgi (üst üste binme yok, tek chart)
+    pop_line = (
         alt.Chart(pop)
         .mark_line()
         .encode(
-            x=alt.X("year:Q", title="Yıl"),
-            y=alt.Y("value:Q", title="Nüfus"),
-            tooltip=[alt.Tooltip("year:Q", title="Yıl", format=".0f"),
-                     alt.Tooltip("value:Q", title="Nüfus", format=",.0f")],
-            order=alt.Order("year:Q"),
+            x=alt.X("year:O", title="Yıl", sort=year_values, axis=alt.Axis(values=year_values)),
+            y=alt.Y("value:Q", title="Nüfus (milyon)"),
+            tooltip=[
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="Nüfus (milyon)", format=",.3f"),
+            ],
         )
-        .properties(height=300),
-        use_container_width=True,
     )
+
+    pop_points = (
+        alt.Chart(pop)
+        .mark_point(filled=True, size=60)
+        .encode(
+            x=alt.X("year:O", sort=year_values, axis=alt.Axis(values=year_values)),
+            y=alt.Y("value:Q"),
+            tooltip=[
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="Nüfus (milyon)", format=",.3f"),
+            ],
+        )
+    )
+
+    st.altair_chart((pop_line + pop_points).properties(height=300), use_container_width=True)
+
 st.divider()
 
 # ---- SECOND DISPLAY GRAPH: GDP ----
