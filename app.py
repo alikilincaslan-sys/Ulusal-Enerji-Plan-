@@ -769,6 +769,13 @@ selected_scenarios = st.multiselect(
     default=default_selected,
 )
 
+# Selected scenarios: show full names under selector (sidebar)
+with st.sidebar:
+    st.markdown("**Karşılaştırılan senaryolar (tam ad):**")
+    for i, scn in enumerate(selected_scenarios, 1):
+        st.markdown(f"{i}. {scn}")
+
+
 if not selected_scenarios:
     st.info("En az 1 senaryo seçin.")
     st.stop()
