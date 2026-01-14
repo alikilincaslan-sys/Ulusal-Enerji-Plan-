@@ -565,18 +565,26 @@ st.subheader("Türkiye Nüfus Gelişimi")
 if pop.empty:
     st.warning("Nüfus serisi okunamadı: Scenario_Assumptions sekmesi veya 5. satır/yıl kolonları bulunamadı.")
 else:
+    # Tip/format sorunları Altair'de çizgiyi bozabildiği için yıl ve değerleri netleştiriyoruz
+    pop = pop.copy()
+    pop["year"] = pd.to_numeric(pop["year"], errors="coerce")
+    pop["value"] = pd.to_numeric(pop["value"], errors="coerce")
+    pop = pop.dropna(subset=["year", "value"]).sort_values("year")
+    pop["year"] = pop["year"].astype(int)
+
     st.altair_chart(
         alt.Chart(pop)
         .mark_line()
         .encode(
-            x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title="Nüfus", scale=alt.Scale(domainMin=60000000)),
-            tooltip=["year:O", alt.Tooltip("value:Q", format=",.0f")],
+            x=alt.X("year:Q", title="Yıl"),
+            y=alt.Y("value:Q", title="Nüfus"),
+            tooltip=[alt.Tooltip("year:Q", title="Yıl", format=".0f"),
+                     alt.Tooltip("value:Q", title="Nüfus", format=",.0f")],
+            order=alt.Order("year:Q"),
         )
         .properties(height=300),
         use_container_width=True,
     )
-
 st.divider()
 
 # ---- SECOND DISPLAY GRAPH: GDP ----
