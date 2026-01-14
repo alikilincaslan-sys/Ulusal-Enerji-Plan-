@@ -890,7 +890,7 @@ cap_mix = _filter_years(cap_mix, start_year, MAX_YEAR)
 # -----------------------------
 # KPI row (GSYH CAGR FIRST)
 # -----------------------------
-st.subheader("Özet KPI’lar")
+st.subheader("Özet Bilgi Kartları")
 k0, k1, k2, k3, k4, k5 = st.columns(6)
 
 latest_year = int(total_supply["year"].max()) if not total_supply.empty else None
