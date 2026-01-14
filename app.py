@@ -34,11 +34,6 @@ GDP_ROW_1IDX = 6  # Scenario_Assumptions sekmesinde 6. satır (GDP)
 POP_ROW_1IDX = 5  # Scenario_Assumptions sekmesinde 5. satır (Nüfus)
 SCENARIO_ASSUMP_YEARS_ROW_1IDX = 3  # Scenario_Assumptions sekmesinde 3. satır (Yıllar)
 
-# PowerGeneration-Indicators sekmesi (CO2)
-INDICATORS_SHEET_NAME = "PowerGeneration-Indicators"
-INDICATORS_YEARS_ROW_1IDX = 3  # aynı mantık: 3. satır yıllar
-CO2_ROW_1IDX = 30  # CO2 Emissions (in ktn CO2) - sabit satır
-
 # Exclude headers/subtotals – installed capacity
 # NOTE: we DO NOT exclude Total Storage / Total Power to X, because we use them as totals.
 CAPACITY_EXCLUDE_EXACT = {
@@ -302,54 +297,58 @@ def _read_scenario_assumptions_row(xlsx_file, value_row_1idx: int, series_name: 
     return df
 
 
-def _read_powergeneration_indicators_row(xlsx_file, value_row_1idx: int, series_name: str) -> pd.DataFrame:
-    """PowerGeneration-Indicators sekmesinden tek bir satırı seri olarak okur.
 
-    - Yıllar: 3. satır (INDICATORS_YEARS_ROW_1IDX)
+@st.cache_data(show_spinner=False)
+def _read_fixed_row_sheet(xlsx_file, sheet_name: str, years_row_1idx: int, value_row_1idx: int, series_name: str) -> pd.DataFrame:
+    """
+    Belirli bir sekmeden sabit satır/yıl satırı ile seri okur.
+    - Yıllar: years_row_1idx (Excel 1-indexed)
     - Değerler: value_row_1idx (Excel 1-indexed)
     """
-    candidates = [
-        INDICATORS_SHEET_NAME,
-        "PowerGeneration_Indicators",
-        "PowerGeneration Indicators",
-        "PowerGeneration-Indicators ",
-    ]
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name=sheet_name, header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
 
-    raw = None
-    for sh in candidates:
-        try:
-            raw = pd.read_excel(xlsx_file, sheet_name=sh, header=None)
-            break
-        except Exception:
-            continue
-
-    if raw is None or raw.empty:
-        return pd.DataFrame(columns=["year", "value", "series"])
-
-    year_r0 = INDICATORS_YEARS_ROW_1IDX - 1
-    if year_r0 < 0 or year_r0 >= len(raw):
-        return pd.DataFrame(columns=["year", "value", "series"])
-
-    years, year_cols_idx = _extract_years(raw, year_r0)
-    if not years:
-        return pd.DataFrame(columns=["year", "value", "series"])
-
+    yr_r0 = years_row_1idx - 1
     val_r0 = value_row_1idx - 1
-    if val_r0 < 0 or val_r0 >= len(raw):
-        return pd.DataFrame(columns=["year", "value", "series"])
+    if yr_r0 < 0 or val_r0 < 0 or yr_r0 >= len(raw) or val_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
 
-    vals = []
-    for c in year_cols_idx:
-        vals.append(pd.to_numeric(raw.iloc[val_r0, c], errors="coerce"))
+    # years are detected by scanning the whole row
+    row_year = raw.iloc[yr_r0, :].tolist()
+    years, year_cols_idx = [], []
+    for j, v in enumerate(row_year):
+        y = _as_int_year(v)
+        if y is not None:
+            years.append(int(y))
+            year_cols_idx.append(j)
+    if len(years) == 0:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
 
-    df = pd.DataFrame({"year": years, "value": vals})
-    df = df.dropna(subset=["value"]).copy()
-    df["year"] = pd.to_numeric(df["year"], errors="coerce").astype(int)
+    out_years, out_vals = [], []
+    for y, c in zip(years, year_cols_idx):
+        if y <= MAX_YEAR:
+            out_years.append(int(y))
+            out_vals.append(pd.to_numeric(raw.iloc[val_r0, c], errors="coerce"))
+
+    df = pd.DataFrame({"year": out_years, "value": out_vals})
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
-    df = df.sort_values("year")
+    df = df.dropna(subset=["value"]).sort_values("year")
     df["series"] = series_name
+    df["sheet"] = sheet_name
     return df
 
+
+def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
+    """PowerGeneration-Indicators: CO2 Emissions (in ktn CO2) – 30. satır."""
+    return _read_fixed_row_sheet(
+        xlsx_file,
+        sheet_name="PowerGeneration-Indicators",
+        years_row_1idx=3,
+        value_row_1idx=30,
+        series_name="CO2 Emissions (ktn CO2)",
+    )
 
 def read_gdp_series(xlsx_file) -> pd.DataFrame:
     """GDP serisi: Scenario_Assumptions 6. satır."""
@@ -359,11 +358,6 @@ def read_gdp_series(xlsx_file) -> pd.DataFrame:
 def read_population_series(xlsx_file) -> pd.DataFrame:
     """Nüfus serisi: Scenario_Assumptions 5. satır."""
     return _read_scenario_assumptions_row(xlsx_file, POP_ROW_1IDX, "Nüfus")
-
-
-def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
-    """CO2 Emissions serisi: PowerGeneration-Indicators 30. satır (ktn CO2)."""
-    return _read_powergeneration_indicators_row(xlsx_file, CO2_ROW_1IDX, "CO2 Emissions")
 
 
 
@@ -627,43 +621,17 @@ st.subheader("Türkiye Nüfus Gelişimi")
 if pop.empty:
     st.warning("Nüfus serisi okunamadı: Scenario_Assumptions sekmesi veya 5. satır/yıl kolonları bulunamadı.")
 else:
-    # Yıllar sadece Scenario_Assumptions (3. satır) üzerinden gelsin:
-    pop = pop.copy()
-    pop["year"] = pd.to_numeric(pop["year"], errors="coerce")
-    pop["value"] = pd.to_numeric(pop["value"], errors="coerce")
-    pop = pop.dropna(subset=["year", "value"]).sort_values("year")
-    pop["year"] = pop["year"].astype(int)
-
-    year_values = sorted(pop["year"].unique().tolist())
-
-    # Çizgiyi net göstermek için nokta + çizgi (üst üste binme yok, tek chart)
-    pop_line = (
+    st.altair_chart(
         alt.Chart(pop)
         .mark_line()
         .encode(
-            x=alt.X("year:O", title="Yıl", sort=year_values, axis=alt.Axis(values=year_values)),
-            y=alt.Y("value:Q", title="Nüfus (milyon)"),
-            tooltip=[
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="Nüfus (milyon)", format=",.3f"),
-            ],
+            x=alt.X("year:O", title="Yıl"),
+            y=alt.Y("value:Q", title="Nüfus", scale=alt.Scale(domainMin=60000000)),
+            tooltip=["year:O", alt.Tooltip("value:Q", format=",.0f")],
         )
+        .properties(height=300),
+        use_container_width=True,
     )
-
-    pop_points = (
-        alt.Chart(pop)
-        .mark_point(filled=True, size=60)
-        .encode(
-            x=alt.X("year:O", sort=year_values, axis=alt.Axis(values=year_values)),
-            y=alt.Y("value:Q"),
-            tooltip=[
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="Nüfus (milyon)", format=",.3f"),
-            ],
-        )
-    )
-
-    st.altair_chart((pop_line + pop_points).properties(height=300), use_container_width=True)
 
 st.divider()
 
@@ -918,9 +886,31 @@ st.divider()
 # -----------------------------
 # Data tabs (debug/control)
 # -----------------------------
+
+st.divider()
+
+st.subheader("CO2 Emissions (ktn CO2)")
+if co2.empty:
+    st.warning("CO2 serisi okunamadı: PowerGeneration-Indicators sekmesi veya 30. satır/yıl kolonları bulunamadı.")
+else:
+    # X ekseninde sadece dosyadan gelen yılları göster (2018, 2020, 2025, ... gibi)
+    co2_plot = co2.copy()
+    co2_plot["year"] = co2_plot["year"].astype(int)
+    co2_plot = co2_plot.sort_values("year")
+    st.altair_chart(
+        alt.Chart(co2_plot)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("year:O", title="Yıl"),
+            y=alt.Y("value:Q", title="CO2 Emissions (ktn CO2)"),
+            tooltip=["year:O", alt.Tooltip("value:Q", format=",.0f")],
+        )
+        .properties(height=300),
+        use_container_width=True,
+    )
 st.subheader("Veri Kontrolü")
-tab_pop, tab_gdp, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
-    ["Nüfus", "GDP", "Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX"]
+tab_pop, tab_gdp, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab_co2 = st.tabs(
+    ["Nüfus", "GDP", "Electricity Balance", "Gross Generation", "Mix (generation)", "Installed Capacity", "KG Total (rows)", "KG Mix excl. S&PTX", "Storage+PTX", "CO2 Emissions"]
 )
 with tab_pop:
     st.dataframe(pop, use_container_width=True)
@@ -940,6 +930,9 @@ with tab7:
     st.dataframe(cap_mix, use_container_width=True)
 with tab8:
     st.dataframe(storage_ptx, use_container_width=True)
+with tab_co2:
+    st.dataframe(co2, use_container_width=True)
+
 
 with st.expander("Çalıştırma"):
 
