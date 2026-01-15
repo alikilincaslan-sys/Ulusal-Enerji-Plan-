@@ -1119,6 +1119,7 @@ else:
         "per_capita_el": _add_scn(per_capita),
         "storage_ptx": _add_scn(storage_ptx),
     }
+    
     return bundle
 
 bundles = []
