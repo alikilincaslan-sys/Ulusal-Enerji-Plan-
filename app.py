@@ -717,12 +717,13 @@ with st.sidebar:
     max_year = st.selectbox("Maksimum yıl", [2050, 2045, 2040, 2035], index=0)
     MAX_YEAR = int(max_year)
 
-start_year_options = [2018, 2020, 2025, 2030, 2035, 2040, 2045]
-start_year = st.selectbox(
-    "Başlangıç yılı",
-    start_year_options,
-    index=start_year_options.index(2025) if 2025 in start_year_options else 0,
-)
+    # Başlangıç yılı (default 2025)
+    start_year_options = [2018, 2020, 2025, 2030, 2035, 2040, 2045]
+    start_year = st.selectbox(
+        "Başlangıç yılı",
+        start_year_options,
+        index=start_year_options.index(2025) if 2025 in start_year_options else 0,
+    )
 
     st.divider()
     st.header("Karşılaştırma modu")
