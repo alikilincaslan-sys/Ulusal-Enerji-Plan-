@@ -1315,6 +1315,21 @@ _render_stacked(
 st.divider()
 
 # -----------------------------
+# 2.1) Sektörlere Göre Elektrik Tüketimi (stacked)
+# -----------------------------
+_render_stacked(
+    df_sector_el.rename(columns={"sector": "category"}),
+    title="Sektörlere Göre Elektrik Tüketimi (GWh)",
+    x_field="year",
+    stack_field="category",
+    y_title="GWh",
+    category_title="Sektör",
+    value_format=", .0f".replace(" ",""),
+)
+
+st.divider()
+
+# -----------------------------
 # 3) Birincil enerji talebi (stacked)
 # -----------------------------
 _render_stacked(
