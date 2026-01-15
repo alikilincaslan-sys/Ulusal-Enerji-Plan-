@@ -839,12 +839,11 @@ with st.sidebar:
     MAX_YEAR = int(max_year)
 
     # Başlangıç yılı (default 2025)
-    # Varsayılan olarak serileri 2018'den başlat (istek: 2018, 2020, 2025, ... 2050)
     start_year_options = [2018, 2020, 2025, 2030, 2035, 2040, 2045]
     start_year = st.selectbox(
         "Başlangıç yılı",
         start_year_options,
-        index=start_year_options.index(2018) if 2018 in start_year_options else 0,
+        index=start_year_options.index(2025) if 2025 in start_year_options else 0,
     )
 
     st.divider()
@@ -1069,6 +1068,9 @@ def _expected_year_ticks(start_year: int, end_year: int) -> list[int]:
 
 
 def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed_series: str | None = None):
+    """Çizgi yerine gruplanmış bar grafik.
+    Not: start_year/filtre nedeniyle veri olmayan yıllar eksende gösterilmez.
+    """
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1080,42 +1082,29 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
     dfp["year"] = dfp["year"].astype(int)
 
-    # Eksen tick'leri (okuma hatası/boşluk olsa bile 2050'ye kadar eksen görünsün)
-    # Eksenin solda 2018/2020'yi de gösterebilmesi için (veri gelmese bile)
-    miny = int(min(2018, dfp["year"].min()))
-    # Kullanıcının seçtiği MAX_YEAR'a kadar eksen göster
-    maxy = int(MAX_YEAR) if 'MAX_YEAR' in globals() else int(dfp["year"].max())
-    ticks = _expected_year_ticks(miny, maxy)
-    if not ticks:
-        ticks = sorted(dfp["year"].unique().tolist())
+    year_vals = sorted(dfp["year"].unique().tolist())
 
-    enc = {
-        "x": alt.X(
-            "year:Q",
-            title="Yıl",
-            axis=alt.Axis(values=ticks, format="d", labelAngle=0),
-            scale=alt.Scale(domain=[min(ticks), max(ticks)]),
-        ),
-        "y": alt.Y("value:Q", title=y_title),
-        "color": alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
-        "tooltip": [
-            alt.Tooltip("scenario:N", title="Senaryo"),
-            alt.Tooltip("year:Q", title="Yıl", format="d"),
-            alt.Tooltip("value:Q", title=y_title, format=value_format),
-        ],
-    }
-
-    chart = alt.Chart(dfp).mark_line(point=True).encode(**enc)
-
-    if dashed_series and ("series" in dfp.columns):
-        dash = alt.condition(
-            alt.datum.series == dashed_series,
-            alt.value([6, 4]),
-            alt.value([1, 0]),
+    chart = (
+        alt.Chart(dfp)
+        .mark_bar()
+        .encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
+            xOffset=alt.XOffset("scenario:N"),
+            y=alt.Y("value:Q", title=y_title),
+            color=alt.Color(
+                "scenario:N",
+                title="Senaryo",
+                legend=alt.Legend(labelLimit=0, titleLimit=0),
+            ),
+            tooltip=[
+                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title=y_title, format=value_format),
+            ],
         )
-        chart = alt.Chart(dfp).mark_line(point=True).encode(**enc, strokeDash=dash)
+    )
 
-    st.altair_chart(chart.properties(height=300), use_container_width=True)
+    st.altair_chart(chart.properties(height=320), use_container_width=True)
 
 _line_chart(df_pop, "Türkiye Nüfus Gelişimi", "Nüfus (milyon)", value_format=",.3f")
 _line_chart(df_gdp, "GSYH (Milyar ABD Doları, 2015 fiyatlarıyla)", "Milyar ABD Doları (2015)", value_format=",.2f")
