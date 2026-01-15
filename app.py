@@ -94,25 +94,10 @@ INTERMITTENT_RE_GROUPS = {"Wind (RES)", "Solar (GES)"}
 # Helpers
 # -----------------------------
 def _as_int_year(x):
-    """Yıl hücresini mümkün olduğunca sağlam parse et.
-    - Sayı / float / numpy türleri
-    - '2025E', 'Year 2030', '2035*' gibi stringlerde 4 haneli yılı yakala
-    """
     try:
         v = int(float(x))
         if 1900 <= v <= 2100:
             return v
-    except Exception:
-        pass
-
-    # string içinden 4 haneli yıl yakala
-    try:
-        sx = str(x)
-        m = re.search(r"(19\d{2}|20\d{2}|2100)", sx)
-        if m:
-            v = int(m.group(1))
-            if 1900 <= v <= 2100:
-                return v
     except Exception:
         pass
     return None
@@ -839,12 +824,11 @@ with st.sidebar:
     MAX_YEAR = int(max_year)
 
     # Başlangıç yılı (default 2025)
-    # Varsayılan olarak serileri 2018'den başlat (istek: 2018, 2020, 2025, ... 2050)
     start_year_options = [2018, 2020, 2025, 2030, 2035, 2040, 2045]
     start_year = st.selectbox(
         "Başlangıç yılı",
         start_year_options,
-        index=start_year_options.index(2018) if 2018 in start_year_options else 0,
+        index=start_year_options.index(2025) if 2025 in start_year_options else 0,
     )
 
     st.divider()
@@ -1056,18 +1040,10 @@ df_capmix = _concat("cap_mix")
 df_primary = _concat("primary_energy_source")
 df_sector_el = _concat("electricity_by_sector")
 df_final = _concat("final_energy_source")
-df_storage_ptx = _concat("storage_ptx")
 
 # -----------------------------
 # Line charts (single axis, scenario colors)
 # -----------------------------
-def _expected_year_ticks(start_year: int, end_year: int) -> list[int]:
-    """Grafik ekseninde görünmesini istediğimiz standart yıl seti.
-    İstek: 2018, 2020, 2025, 2030, 2035, 2040, 2045, 2050 (aralık kırpılır)."""
-    ticks = [2018, 2020] + list(range(2025, 2101, 5))
-    return [y for y in ticks if start_year <= y <= end_year]
-
-
 def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed_series: str | None = None):
     st.subheader(title)
     if df is None or df.empty:
@@ -1080,27 +1056,16 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
     dfp["year"] = dfp["year"].astype(int)
 
-    # Eksen tick'leri (okuma hatası/boşluk olsa bile 2050'ye kadar eksen görünsün)
-    # Eksenin solda 2018/2020'yi de gösterebilmesi için (veri gelmese bile)
-    miny = int(min(2018, dfp["year"].min()))
-    # Kullanıcının seçtiği MAX_YEAR'a kadar eksen göster
-    maxy = int(MAX_YEAR) if 'MAX_YEAR' in globals() else int(dfp["year"].max())
-    ticks = _expected_year_ticks(miny, maxy)
-    if not ticks:
-        ticks = sorted(dfp["year"].unique().tolist())
+    year_vals = sorted(dfp["year"].unique().tolist())
 
+    # Optional dashed by 'series' column if present
     enc = {
-        "x": alt.X(
-            "year:Q",
-            title="Yıl",
-            axis=alt.Axis(values=ticks, format="d", labelAngle=0),
-            scale=alt.Scale(domain=[min(ticks), max(ticks)]),
-        ),
+        "x": alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals)),
         "y": alt.Y("value:Q", title=y_title),
-        "color": alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
+        "color": alt.Color("scenario:N", title="Senaryo"),
         "tooltip": [
             alt.Tooltip("scenario:N", title="Senaryo"),
-            alt.Tooltip("year:Q", title="Yıl", format="d"),
+            alt.Tooltip("year:O", title="Yıl"),
             alt.Tooltip("value:Q", title=y_title, format=value_format),
         ],
     }
@@ -1363,22 +1328,6 @@ _render_stacked(
     y_title="GWh",
     category_title="Sektör",
     value_format=", .0f".replace(" ",""),
-)
-
-
-# -----------------------------
-# 2) Depolama & PTX Kurulu Gücü (GW)
-# -----------------------------
-order_storage_ptx = ["Total Storage", "Power to X"]
-_render_stacked(
-    df_storage_ptx.rename(columns={"group": "category"}),
-    title="Depolama & PTX Kurulu Gücü (GW)",
-    x_field="year",
-    stack_field="category",
-    y_title="GW",
-    category_title="Kategori",
-    value_format=",.3f",
-    order=order_storage_ptx,
 )
 
 st.divider()
