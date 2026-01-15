@@ -1230,7 +1230,8 @@ _stacked(
     y_title=_stack_unit,
     category_title="Kaynak",
     value_format=_fmt,
-)st.divider()
+)
+st.divider()
 
 # -----------------------------
 # Remaining line charts (multi-scenario)
