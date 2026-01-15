@@ -839,11 +839,12 @@ with st.sidebar:
     MAX_YEAR = int(max_year)
 
     # Başlangıç yılı (default 2025)
+    # Varsayılan olarak serileri 2018'den başlat (istek: 2018, 2020, 2025, ... 2050)
     start_year_options = [2018, 2020, 2025, 2030, 2035, 2040, 2045]
     start_year = st.selectbox(
         "Başlangıç yılı",
         start_year_options,
-        index=start_year_options.index(2025) if 2025 in start_year_options else 0,
+        index=start_year_options.index(2018) if 2018 in start_year_options else 0,
     )
 
     st.divider()
@@ -1080,7 +1081,8 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed
     dfp["year"] = dfp["year"].astype(int)
 
     # Eksen tick'leri (okuma hatası/boşluk olsa bile 2050'ye kadar eksen görünsün)
-    miny = int(dfp["year"].min())
+    # Eksenin solda 2018/2020'yi de gösterebilmesi için (veri gelmese bile)
+    miny = int(min(2018, dfp["year"].min()))
     # Kullanıcının seçtiği MAX_YEAR'a kadar eksen göster
     maxy = int(MAX_YEAR) if 'MAX_YEAR' in globals() else int(dfp["year"].max())
     ticks = _expected_year_ticks(miny, maxy)
