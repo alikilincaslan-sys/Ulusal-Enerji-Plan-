@@ -566,6 +566,55 @@ def read_population_series(xlsx_file) -> pd.DataFrame:
     return _read_scenario_assumptions_row(xlsx_file, POP_ROW_1IDX, "Nüfus")
 
 
+
+
+def read_electricity_consumption_by_sector(xlsx_file) -> pd.DataFrame:
+    '''Power_Generation: Sektörlere Göre Elektrik Tüketimi (GWh) - satır 6-10, yıllar 3. satır.'''
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name='Power_Generation', header=None)
+    except Exception:
+        return pd.DataFrame(columns=['year', 'sector', 'value', 'series', 'sheet'])
+
+    YEARS_ROW_1IDX = 3
+    yr_r0 = YEARS_ROW_1IDX - 1
+    if yr_r0 < 0 or yr_r0 >= len(raw):
+        return pd.DataFrame(columns=['year', 'sector', 'value', 'series', 'sheet'])
+
+    years, year_cols_idx = _extract_years(raw, yr_r0)
+    if not years:
+        return pd.DataFrame(columns=['year', 'sector', 'value', 'series', 'sheet'])
+
+    ROW_START_1IDX = 6
+    ROW_END_1IDX = 10
+
+    records = []
+    for r1 in range(ROW_START_1IDX, ROW_END_1IDX + 1):
+        r0 = r1 - 1
+        if r0 < 0 or r0 >= len(raw):
+            continue
+
+        label = raw.iloc[r0, 0]
+        label = '' if pd.isna(label) else str(label).strip()
+        if label == '' or label.lower() == 'nan':
+            continue
+
+        for y, c in zip(years, year_cols_idx):
+            if int(y) > MAX_YEAR:
+                continue
+            v = pd.to_numeric(raw.iloc[r0, c], errors='coerce')
+            if pd.isna(v):
+                continue
+            records.append({'year': int(y), 'sector': label, 'value': float(v)})
+
+    df = pd.DataFrame(records)
+    if df.empty:
+        return pd.DataFrame(columns=['year', 'sector', 'value', 'series', 'sheet'])
+
+    df = df.sort_values(['year', 'sector'])
+    df['series'] = 'Sektörlere Göre Elektrik Tüketimi'
+    df['sheet'] = 'Power_Generation'
+    return df
+
 # -----------------------------
 # Generation (GWh) – Mix
 # -----------------------------
@@ -914,6 +963,9 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         start_year,
         max_year,
     )
+    # Electricity consumption by sector (GWh) - Power_Generation rows 6-10
+    electricity_by_sector = _filter_years(read_electricity_consumption_by_sector(xlsx_file), start_year, max_year)
+
 
     # Per-capita electricity (kWh/kişi): total_supply[GWh] * 1e6 / population[person]
     per_capita = pd.DataFrame(columns=["year", "value"])
@@ -955,6 +1007,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "gen_mix": _add_scn(gen_mix),
         "cap_total": _add_scn(cap_total),
         "cap_mix": _add_scn(cap_mix),
+        "electricity_by_sector": _add_scn(electricity_by_sector),
         "primary_energy_source": _add_scn(primary_energy_source),
         "final_energy_source": _add_scn(final_energy_source),
         "dependency_ratio": _add_scn(dependency_ratio),
@@ -984,6 +1037,7 @@ df_supply = _concat("total_supply")
 df_genmix = _concat("gen_mix")
 df_capmix = _concat("cap_mix")
 df_primary = _concat("primary_energy_source")
+df_sector_el = _concat("electricity_by_sector")
 df_final = _concat("final_energy_source")
 
 # -----------------------------
