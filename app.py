@@ -444,6 +444,63 @@ def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     return df
 
 
+
+def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
+    """Summary&Indicators: Nihai Enerji Tüketimi – satır 47-52 (yığılmış)."""
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
+
+    YEARS_ROW_1IDX = 3
+    START_COL_IDX = 2  # column C
+    ROW_START_1IDX = 47
+    ROW_END_1IDX = 52
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    if yr_r0 < 0 or yr_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
+
+    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+
+    years = []
+    for y_cell in years_row:
+        y = _as_int_year(y_cell)
+        if y is not None and int(y) <= MAX_YEAR:
+            years.append(int(y))
+        else:
+            years.append(None)
+
+    records = []
+    for r1 in range(ROW_START_1IDX, ROW_END_1IDX + 1):
+        r0 = r1 - 1
+        if r0 < 0 or r0 >= len(raw):
+            continue
+
+        label = raw.iloc[r0, 0]
+        label = "" if pd.isna(label) else str(label).strip()
+        if label == "" or label.lower() == "nan":
+            continue
+
+        vals_row = raw.iloc[r0, START_COL_IDX : START_COL_IDX + len(years)].tolist()
+        for y, v_cell in zip(years, vals_row):
+            if y is None:
+                continue
+            v = pd.to_numeric(v_cell, errors="coerce")
+            if pd.isna(v):
+                continue
+            records.append({"year": int(y), "source": label, "value": float(v)})
+
+    df = pd.DataFrame(records)
+    if df.empty:
+        return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
+
+    df = df.sort_values(["year", "source"])
+    df["series"] = "Nihai Enerji Tüketimi"
+    df["sheet"] = "Summary&Indicators"
+    return df
+
+
 def read_energy_import_dependency_ratio(xlsx_file) -> pd.DataFrame:
     """Summary&Indicators: Dışa Bağımlılık Oranı (%) = (1 - (Row14 / Row32)) * 100, yıllar 3. satır."""
     try:
@@ -815,6 +872,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     co2 = _filter_years(read_co2_emissions_series(xlsx_file), start_year, max_year)
 
     primary_energy_source = _filter_years(read_primary_energy_consumption_by_source(xlsx_file), start_year, max_year)
+    final_energy_source = _filter_years(read_final_energy_consumption_by_source(xlsx_file), start_year, max_year)
     dependency_ratio = _filter_years(read_energy_import_dependency_ratio(xlsx_file), start_year, max_year)
 
     # Electricity supply (GWh) – total
@@ -898,6 +956,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "cap_total": _add_scn(cap_total),
         "cap_mix": _add_scn(cap_mix),
         "primary_energy_source": _add_scn(primary_energy_source),
+        "final_energy_source": _add_scn(final_energy_source),
         "dependency_ratio": _add_scn(dependency_ratio),
         "ye_both": _add_scn(ye_both),
         "per_capita_el": _add_scn(per_capita),
@@ -925,6 +984,7 @@ df_supply = _concat("total_supply")
 df_genmix = _concat("gen_mix")
 df_capmix = _concat("cap_mix")
 df_primary = _concat("primary_energy_source")
+df_final = _concat("final_energy_source")
 
 # -----------------------------
 # Line charts (single axis, scenario colors)
@@ -1206,6 +1266,20 @@ st.divider()
 _render_stacked(
     df_primary.rename(columns={"source": "category"}),
     title="Birincil Enerji Talebi (GWh)",
+    x_field="year",
+    stack_field="category",
+    y_title="GWh",
+    category_title="Kaynak",
+    value_format=",.0f",
+)
+
+
+# -----------------------------
+# 4) Nihai enerji tüketimi (stacked)
+# -----------------------------
+_render_stacked(
+    df_final.rename(columns={"source": "category"}),
+    title="Kaynaklarına Göre Nihai Enerji Tüketimi (GWh)",
     x_field="year",
     stack_field="category",
     y_title="GWh",
