@@ -516,6 +516,64 @@ def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     return df
 
 
+
+def read_final_energy_electrification_ratio(xlsx_file) -> pd.DataFrame:
+    """Nihai Enerjide Elektrifikasyon Oranı (%).
+
+    Sekme: Summary&Indicators
+    Formül (Excel 1-indexed satırlar):
+      Elektrifikasyon (%) = (Row 50 / Row 46) * 100
+    Yıllar: 3. satır (C sütunundan itibaren)
+
+    Not: Yıl hücreleri bazen '2035E', '2040*' gibi gelebilir; _as_int_year ile parse edilir.
+    """
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    YEARS_ROW_1IDX = 3
+    START_COL_IDX = 2  # C sütunu
+    TOTAL_FINAL_ROW_1IDX = 46
+    ELECTRICITY_ROW_1IDX = 50
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    tot_r0 = TOTAL_FINAL_ROW_1IDX - 1
+    elc_r0 = ELECTRICITY_ROW_1IDX - 1
+
+    if any(r < 0 for r in [yr_r0, tot_r0, elc_r0]) or yr_r0 >= len(raw) or tot_r0 >= len(raw) or elc_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+    tot_row = raw.iloc[tot_r0, START_COL_IDX:].tolist()
+    elc_row = raw.iloc[elc_r0, START_COL_IDX:].tolist()
+
+    recs = []
+    for y_cell, t_cell, e_cell in zip(years_row, tot_row, elc_row):
+        y = _as_int_year(y_cell)
+        if y is None:
+            continue
+        y = int(y)
+        if y > MAX_YEAR:
+            continue
+
+        t = pd.to_numeric(t_cell, errors="coerce")
+        e = pd.to_numeric(e_cell, errors="coerce")
+        if pd.isna(t) or pd.isna(e) or float(t) == 0.0:
+            continue
+
+        recs.append({"year": y, "value": float(e) / float(t) * 100.0})
+
+    df = pd.DataFrame(recs)
+    if df.empty:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    df = df.sort_values("year")
+    df["series"] = "Elektrifikasyon Oranı (%)"
+    df["sheet"] = "Summary&Indicators"
+    return df
+
+
 def read_energy_import_dependency_ratio(xlsx_file) -> pd.DataFrame:
     """Summary&Indicators: Dışa Bağımlılık Oranı (%) = (1 - (Row14 / Row32)) * 100, yıllar 3. satır."""
     try:
@@ -850,9 +908,16 @@ with st.sidebar:
     st.header("Karşılaştırma modu")
     compare_mode = st.radio(
         "Stacked grafikler",
-        ["Small multiples (önerilen)", "Yıl içinde yan yana (clustered)", "2035/2050 snapshot", "2025/2035 snapshot"],
+        ["Small multiples (önerilen)", "Yıl içinde yan yana (clustered)", "2030/2050 snapshot", "2025/2035 snapshot"],
         index=0,
     )
+
+    # Snapshot yılları (yıl aralığından bağımsız)
+    SNAPSHOT_YEARS = None
+    if compare_mode == "2025/2035 snapshot":
+        SNAPSHOT_YEARS = (2025, 2035)
+    elif compare_mode == "2030/2050 snapshot":
+        SNAPSHOT_YEARS = (2030, 2050)
 
 if not uploaded_files:
     st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
@@ -909,7 +974,7 @@ if not selected_scenarios:
 
 # Enforce readability rules for stacked charts
 # Enforce readability rules for stacked charts
-if len(selected_scenarios) >= 4 and compare_mode not in {"2035/2050 snapshot", "2025/2035 snapshot"}:
+if len(selected_scenarios) >= 4 and compare_mode not in {"2030/2050 snapshot", "2025/2035 snapshot"}:
     st.warning("4+ senaryoda okunabilirlik için snapshot modları önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
 
@@ -939,6 +1004,8 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     primary_energy_source = _filter_years(read_primary_energy_consumption_by_source(xlsx_file), start_year, max_year)
     final_energy_source = _filter_years(read_final_energy_consumption_by_source(xlsx_file), start_year, max_year)
     dependency_ratio = _filter_years(read_energy_import_dependency_ratio(xlsx_file), start_year, max_year)
+
+    electrification_ratio = _filter_years(read_final_energy_electrification_ratio(xlsx_file), start_year, max_year)
 
     # Electricity supply (GWh) – total
     total_supply = _filter_years(get_series_from_block(balance, TOTAL_SUPPLY_LABEL), start_year, max_year)
@@ -1027,6 +1094,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "primary_energy_source": _add_scn(primary_energy_source),
         "final_energy_source": _add_scn(final_energy_source),
         "dependency_ratio": _add_scn(dependency_ratio),
+        "electrification_ratio": _add_scn(electrification_ratio),
         "ye_both": _add_scn(ye_both),
         "per_capita_el": _add_scn(per_capita),
         "storage_ptx": _add_scn(storage_ptx),
@@ -1034,9 +1102,16 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     return bundle
 
 bundles = []
+
+# Snapshot modunda (2025/2035 veya 2030/2050) yıl filtresi bağımsız olmalı:
+# start_year çok ileri seçilse bile snapshot yılları okunabilsin.
+effective_start_year = start_year
+if 'SNAPSHOT_YEARS' in globals() and SNAPSHOT_YEARS:
+    effective_start_year = min(start_year, min(SNAPSHOT_YEARS))
+
 for scn in selected_scenarios:
     f = scenario_to_file[scn]
-    bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR))
+    bundles.append(compute_scenario_bundle(f, scn, effective_start_year, MAX_YEAR))
 
 # helper concat
 def _concat(key: str):
@@ -1055,6 +1130,7 @@ df_capmix = _concat("cap_mix")
 df_primary = _concat("primary_energy_source")
 df_sector_el = _concat("electricity_by_sector")
 df_final = _concat("final_energy_source")
+df_electrification = _concat("electrification_ratio")
 df_storage_ptx = _concat("storage_ptx")
 
 # -----------------------------
@@ -1081,6 +1157,15 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed
     dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
     dfp["year"] = dfp["year"].astype(int)
+
+    # Snapshot modunda sadece seçili 2 yılı göster (start_year'dan bağımsız)
+    snapshot_years = globals().get("SNAPSHOT_YEARS", None)
+    if snapshot_years:
+        snapshot_years = tuple(int(y) for y in snapshot_years)
+        dfp = dfp[dfp["year"].isin(snapshot_years)].copy()
+        if dfp.empty:
+            st.warning("Seçili snapshot yılları için veri bulunamadı.")
+            return
 
     year_vals = sorted(dfp["year"].unique().tolist())
 
@@ -1113,6 +1198,9 @@ st.divider()
 # Per-capita electricity (kWh/kişi)
 df_pc = _concat("per_capita_el")
 _line_chart(df_pc, "Kişi Başına Elektrik Tüketimi (kWh/kişi)", "kWh/kişi", value_format=",.0f")
+
+# Elektrifikasyon Oranı (%)
+_line_chart(df_electrification, "Nihai Enerjide Elektrifikasyon Oranı (%)", "%", value_format=",.1f")
 
 # -----------------------------
 # KPI row (per scenario, compact)
@@ -1264,6 +1352,11 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
+
+    # Maksimum yıl seçimi snapshot yılını dışarıda bırakıyorsa otomatik kırp
+    max_year = globals().get("MAX_YEAR", None)
+    if max_year is not None:
+        years = tuple(y for y in years if y <= int(max_year))
     dfp = df.copy()
     dfp["year"] = dfp["year"].astype(int)
     dfp = dfp[dfp["year"].isin(list(years))]
@@ -1298,8 +1391,8 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
         _stacked_small_multiples(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
     elif compare_mode == "Yıl içinde yan yana (clustered)":
         _stacked_clustered(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
-    elif compare_mode == "2035/2050 snapshot":
-        _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, years=(2035, 2050), order=order)
+    elif compare_mode == "2030/2050 snapshot":
+        _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, years=(2030, 2050), order=order)
     else:  # "2025/2035 snapshot"
         _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, years=(2025, 2035), order=order)
 
