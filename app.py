@@ -444,7 +444,6 @@ def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     return df
 
 
-
 def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     """Summary&Indicators: Nihai Enerji Tüketimi – satır 47-52 (yığılmış)."""
     try:
@@ -497,6 +496,63 @@ def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
 
     df = df.sort_values(["year", "source"])
     df["series"] = "Nihai Enerji Tüketimi"
+    df["sheet"] = "Summary&Indicators"
+    return df
+
+
+# =============================
+# NEW: Electrification ratio (%)
+# Summary&Indicators:
+#   - Total final energy: Row 46
+#   - Electricity:       Row 50
+# Formula: (50 / 46) * 100
+# Years: 3rd row, values from column C onwards
+# =============================
+def read_final_energy_electrification_ratio(xlsx_file) -> pd.DataFrame:
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    YEARS_ROW_1IDX = 3
+    START_COL_IDX = 2  # column C
+    TOTAL_FINAL_ROW_1IDX = 46
+    ELECTRICITY_ROW_1IDX = 50
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    tot_r0 = TOTAL_FINAL_ROW_1IDX - 1
+    elc_r0 = ELECTRICITY_ROW_1IDX - 1
+
+    if any(r < 0 for r in [yr_r0, tot_r0, elc_r0]) or yr_r0 >= len(raw) or tot_r0 >= len(raw) or elc_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+    total_row = raw.iloc[tot_r0, START_COL_IDX:].tolist()
+    elec_row = raw.iloc[elc_r0, START_COL_IDX:].tolist()
+
+    recs = []
+    for y_cell, tot_cell, elc_cell in zip(years_row, total_row, elec_row):
+        y = _as_int_year(y_cell)
+        if y is None:
+            continue
+        y = int(y)
+        if y > MAX_YEAR:
+            continue
+
+        tot = pd.to_numeric(tot_cell, errors="coerce")
+        elc = pd.to_numeric(elc_cell, errors="coerce")
+        if pd.isna(tot) or pd.isna(elc) or float(tot) == 0:
+            continue
+
+        val = (float(elc) / float(tot)) * 100.0
+        recs.append({"year": y, "value": val})
+
+    df = pd.DataFrame(recs)
+    if df.empty:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    df = df.sort_values("year")
+    df["series"] = "Elektrifikasyon Oranı (%)"
     df["sheet"] = "Summary&Indicators"
     return df
 
@@ -559,30 +615,26 @@ def read_carbon_price_series(xlsx_file) -> pd.DataFrame:
     return _read_scenario_assumptions_row(xlsx_file, CARBON_PRICE_ROW_1IDX, "Karbon Fiyatı (Varsayım)")
 
 
-
-
 def read_population_series(xlsx_file) -> pd.DataFrame:
     """Nüfus serisi: Scenario_Assumptions 5. satır."""
     return _read_scenario_assumptions_row(xlsx_file, POP_ROW_1IDX, "Nüfus")
 
 
-
-
 def read_electricity_consumption_by_sector(xlsx_file) -> pd.DataFrame:
-    '''Power_Generation: Sektörlere Göre Elektrik Tüketimi (GWh) - satır 6-10, yıllar 3. satır.'''
+    """Power_Generation: Sektörlere Göre Elektrik Tüketimi (GWh) - satır 6-10, yıllar 3. satır."""
     try:
-        raw = pd.read_excel(xlsx_file, sheet_name='Power_Generation', header=None)
+        raw = pd.read_excel(xlsx_file, sheet_name="Power_Generation", header=None)
     except Exception:
-        return pd.DataFrame(columns=['year', 'sector', 'value', 'series', 'sheet'])
+        return pd.DataFrame(columns=["year", "sector", "value", "series", "sheet"])
 
     YEARS_ROW_1IDX = 3
     yr_r0 = YEARS_ROW_1IDX - 1
     if yr_r0 < 0 or yr_r0 >= len(raw):
-        return pd.DataFrame(columns=['year', 'sector', 'value', 'series', 'sheet'])
+        return pd.DataFrame(columns=["year", "sector", "value", "series", "sheet"])
 
     years, year_cols_idx = _extract_years(raw, yr_r0)
     if not years:
-        return pd.DataFrame(columns=['year', 'sector', 'value', 'series', 'sheet'])
+        return pd.DataFrame(columns=["year", "sector", "value", "series", "sheet"])
 
     ROW_START_1IDX = 6
     ROW_END_1IDX = 10
@@ -594,25 +646,25 @@ def read_electricity_consumption_by_sector(xlsx_file) -> pd.DataFrame:
             continue
 
         label = raw.iloc[r0, 0]
-        label = '' if pd.isna(label) else str(label).strip()
-        if label == '' or label.lower() == 'nan':
+        label = "" if pd.isna(label) else str(label).strip()
+        if label == "" or label.lower() == "nan":
             continue
 
         for y, c in zip(years, year_cols_idx):
             if int(y) > MAX_YEAR:
                 continue
-            v = pd.to_numeric(raw.iloc[r0, c], errors='coerce')
+            v = pd.to_numeric(raw.iloc[r0, c], errors="coerce")
             if pd.isna(v):
                 continue
-            records.append({'year': int(y), 'sector': label, 'value': float(v)})
+            records.append({"year": int(y), "sector": label, "value": float(v)})
 
     df = pd.DataFrame(records)
     if df.empty:
-        return pd.DataFrame(columns=['year', 'sector', 'value', 'series', 'sheet'])
+        return pd.DataFrame(columns=["year", "sector", "value", "series", "sheet"])
 
-    df = df.sort_values(['year', 'sector'])
-    df['series'] = 'Sektörlere Göre Elektrik Tüketimi'
-    df['sheet'] = 'Power_Generation'
+    df = df.sort_values(["year", "sector"])
+    df["series"] = "Sektörlere Göre Elektrik Tüketimi"
+    df["sheet"] = "Power_Generation"
     return df
 
 # -----------------------------
@@ -847,12 +899,14 @@ if len(uploaded_files) > 12:
     st.warning("En fazla 12 dosya yükleyebilirsiniz. İlk 12 dosya alınacak.")
     uploaded_files = uploaded_files[:12]
 
+
 def _derive_scenario_name(uploaded) -> str:
     name = getattr(uploaded, "name", "Scenario")
     stem = Path(name).stem
     if stem.lower().startswith("finalreport_"):
         stem = stem[len("FinalReport_") :]
     return stem or "Scenario"
+
 
 # Scenario names (auto)
 scenario_names_all = [_derive_scenario_name(f) for f in uploaded_files]
@@ -887,24 +941,23 @@ with st.sidebar:
     for i, scn in enumerate(selected_scenarios, 1):
         st.markdown(f"{i}. {scn}")
 
-
 if not selected_scenarios:
     st.info("En az 1 senaryo seçin.")
     st.stop()
 
 # Enforce readability rules for stacked charts
-# Enforce readability rules for stacked charts
 if len(selected_scenarios) >= 4 and compare_mode not in {"2035/2050 snapshot", "2025/2035 snapshot"}:
     st.warning("4+ senaryoda okunabilirlik için snapshot modları önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
 
-# Layout columns for 2 or 3 scenario
+
 def _ncols_for_selected(n: int) -> int:
     if n <= 1:
         return 1
     if n == 2:
         return 2
     return 3
+
 
 # -----------------------------
 # Scenario read/compute
@@ -925,6 +978,9 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     final_energy_source = _filter_years(read_final_energy_consumption_by_source(xlsx_file), start_year, max_year)
     dependency_ratio = _filter_years(read_energy_import_dependency_ratio(xlsx_file), start_year, max_year)
 
+    # NEW: electrification ratio (%)
+    electrification = _filter_years(read_final_energy_electrification_ratio(xlsx_file), start_year, max_year)
+
     # Electricity supply (GWh) – total
     total_supply = _filter_years(get_series_from_block(balance, TOTAL_SUPPLY_LABEL), start_year, max_year)
 
@@ -934,7 +990,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     # YE shares
     ye_total = _filter_years(share_series_from_mix(gen_mix, total_supply, RENEWABLE_GROUPS, "Toplam YE"), start_year, max_year)
     ye_int = _filter_years(share_series_from_mix(gen_mix, total_supply, INTERMITTENT_RE_GROUPS, "Kesintili YE"), start_year, max_year)
-    ye_both = pd.concat([ye_total, ye_int], ignore_index=True) if (not ye_total.empty or not ye_int.empty) else pd.DataFrame(columns=["year","series","value"])
+    ye_both = pd.concat([ye_total, ye_int], ignore_index=True) if (not ye_total.empty or not ye_int.empty) else pd.DataFrame(columns=["year", "series", "value"])
 
     # Installed capacity total (GW) – Row79 - (Row102 + Row106)
     cap_total = _filter_years(
@@ -946,109 +1002,6 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         start_year,
         max_year,
     )
-    # ============================
-# FINAL ENERGY ELECTRIFICATION ADDON
-# (app 19 üzerine entegre)
-# ============================
-
-def read_final_energy_electrification_ratio(xlsx_file) -> pd.DataFrame:
-    """
-    Elektrifikasyon Oranı (%)
-    Formül: (Row 50 / Row 46) * 100
-    Sekme: Summary&Indicators
-    Yıllar: 3. satır
-    """
-    try:
-        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
-    except Exception:
-        return pd.DataFrame(columns=["year", "value"])
-
-    YEARS_ROW_1IDX = 3
-    START_COL_IDX = 2  # C sütunu
-    TOTAL_FINAL_ROW_1IDX = 46
-    ELECTRICITY_ROW_1IDX = 50
-
-    yr_r0 = YEARS_ROW_1IDX - 1
-    tot_r0 = TOTAL_FINAL_ROW_1IDX - 1
-    elc_r0 = ELECTRICITY_ROW_1IDX - 1
-
-    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
-    total_row = raw.iloc[tot_r0, START_COL_IDX:].tolist()
-    elec_row = raw.iloc[elc_r0, START_COL_IDX:].tolist()
-
-    records = []
-    for y_cell, tot, elc in zip(years_row, total_row, elec_row):
-        y = _as_int_year(y_cell)
-        if y is None or y > MAX_YEAR:
-            continue
-
-        tot = pd.to_numeric(tot, errors="coerce")
-        elc = pd.to_numeric(elc, errors="coerce")
-
-        if pd.isna(tot) or pd.isna(elc) or tot == 0:
-            continue
-
-        records.append({
-            "year": int(y),
-            "value": (elc / tot) * 100.0
-        })
-
-    return pd.DataFrame(records)
-
-
-# ============================
-# SCENARIO BUNDLE EXTENSION
-# ============================
-
-# compute_scenario_bundle() fonksiyonu İÇİNE EKLENİR
-# (fonksiyon gövdesinde, diğer serilerle birlikte)
-
-electrification = _filter_years(
-    read_final_energy_electrification_ratio(xlsx_file),
-    start_year,
-    max_year,
-)
-
-# bundle dict içine ekle
-bundle["electrification"] = _add_scn(electrification)
-
-
-# ============================
-# GLOBAL CONCAT
-# ============================
-
-df_electrification = _concat("electrification")
-
-
-# ============================
-# GRAFİK – FINAL ENERGY ALTINA
-# ============================
-
-st.subheader("Elektrifikasyon Oranı (%)")
-
-if df_electrification is None or df_electrification.empty:
-    st.warning("Elektrifikasyon oranı için veri bulunamadı.")
-else:
-    df_el = df_electrification.copy()
-    df_el["year"] = df_el["year"].astype(int)
-
-    chart_el = (
-        alt.Chart(df_el)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title="Elektrifikasyon Oranı (%)"),
-            color=alt.Color("scenario:N", title="Senaryo"),
-            tooltip=[
-                alt.Tooltip("scenario:N", title="Senaryo"),
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title="%", format=".1f"),
-            ],
-        )
-        .properties(height=260)
-    )
-
-    st.altair_chart(chart_el, use_container_width=True)
 
     # Storage & PTX (GW)
     cap_storage = _filter_years(storage_series_capacity(installed_cap), start_year, max_year)
@@ -1067,9 +1020,9 @@ else:
         start_year,
         max_year,
     )
+
     # Electricity consumption by sector (GWh) - Power_Generation rows 6-10
     electricity_by_sector = _filter_years(read_electricity_consumption_by_sector(xlsx_file), start_year, max_year)
-
 
     # Per-capita electricity (kWh/kişi): total_supply[GWh] * 1e6 / population[person]
     per_capita = pd.DataFrame(columns=["year", "value"])
@@ -1094,7 +1047,7 @@ else:
         per_capita = merged[["year", "value"]].sort_values("year")
 
     # Add scenario column for multi-plot convenience
-    def _add_scn(df, cols_map=None):
+    def _add_scn(df):
         if df is None:
             return df
         out = df.copy()
@@ -1114,25 +1067,27 @@ else:
         "electricity_by_sector": _add_scn(electricity_by_sector),
         "primary_energy_source": _add_scn(primary_energy_source),
         "final_energy_source": _add_scn(final_energy_source),
+        "electrification": _add_scn(electrification),  # NEW
         "dependency_ratio": _add_scn(dependency_ratio),
         "ye_both": _add_scn(ye_both),
         "per_capita_el": _add_scn(per_capita),
         "storage_ptx": _add_scn(storage_ptx),
     }
-    
     return bundle
+
 
 bundles = []
 for scn in selected_scenarios:
     f = scenario_to_file[scn]
     bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR))
 
-# helper concat
+
 def _concat(key: str):
     dfs = [b.get(key) for b in bundles if b.get(key) is not None and not b.get(key).empty]
     if not dfs:
         return pd.DataFrame()
     return pd.concat(dfs, ignore_index=True)
+
 
 df_pop = _concat("pop")
 df_gdp = _concat("gdp")
@@ -1144,6 +1099,8 @@ df_capmix = _concat("cap_mix")
 df_primary = _concat("primary_energy_source")
 df_sector_el = _concat("electricity_by_sector")
 df_final = _concat("final_energy_source")
+df_electrification = _concat("electrification")  # NEW
+
 
 # -----------------------------
 # Line charts (single axis, scenario colors)
@@ -1162,7 +1119,6 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed
 
     year_vals = sorted(dfp["year"].unique().tolist())
 
-    # Optional dashed by 'series' column if present
     enc = {
         "x": alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals)),
         "y": alt.Y("value:Q", title=y_title),
@@ -1186,13 +1142,14 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed
 
     st.altair_chart(chart.properties(height=300), use_container_width=True)
 
+
 _line_chart(df_pop, "Türkiye Nüfus Gelişimi", "Nüfus (milyon)", value_format=",.3f")
 _line_chart(df_gdp, "GSYH (Milyar ABD Doları, 2015 fiyatlarıyla)", "Milyar ABD Doları (2015)", value_format=",.2f")
 st.divider()
 
-# Per-capita electricity (kWh/kişi)
 df_pc = _concat("per_capita_el")
 _line_chart(df_pc, "Kişi Başına Elektrik Tüketimi (kWh/kişi)", "kWh/kişi", value_format=",.0f")
+
 
 # -----------------------------
 # KPI row (per scenario, compact)
@@ -1200,6 +1157,7 @@ _line_chart(df_pc, "Kişi Başına Elektrik Tüketimi (kWh/kişi)", "kWh/kişi",
 st.subheader("Özet Bilgi Kartları (Seçili Senaryolar)")
 ncols = _ncols_for_selected(len(selected_scenarios))
 cols = st.columns(ncols)
+
 
 def _kpi_for_bundle(b):
     scn = b["scenario"]
@@ -1222,7 +1180,6 @@ def _kpi_for_bundle(b):
     if latest_year and cap_total is not None and not cap_total.empty and (cap_total["year"] == latest_year).any():
         latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
 
-    # GDP CAGR in-range
     gdp_cagr = np.nan
     if gdp is not None and not gdp.empty:
         g = gdp.sort_values("year")
@@ -1242,6 +1199,7 @@ def _kpi_for_bundle(b):
         "gdp_cagr": gdp_cagr,
     }
 
+
 kpis = [_kpi_for_bundle(b) for b in bundles]
 
 for i, kpi in enumerate(kpis[:ncols]):
@@ -1255,12 +1213,18 @@ for i, kpi in enumerate(kpis[:ncols]):
 if len(kpis) > ncols:
     with st.expander("Diğer seçili senaryoların KPI’ları"):
         for kpi in kpis[ncols:]:
-            st.markdown(f"**{kpi['scenario']}** — GSYH CAGR: {(kpi['gdp_cagr']*100):.2f}% | Toplam Arz: {kpi['total_supply']:,.0f} GWh | YE Payı: {kpi['ye_total']:.1f}%/{kpi['ye_int']:.1f}% | KG: {kpi['cap_total']:,.3f} GW")
+            st.markdown(
+                f"**{kpi['scenario']}** — GSYH CAGR: {(kpi['gdp_cagr']*100):.2f}% | "
+                f"Toplam Arz: {kpi['total_supply']:,.0f} GWh | "
+                f"YE Payı: {kpi['ye_total']:.1f}%/{kpi['ye_int']:.1f}% | "
+                f"KG: {kpi['cap_total']:,.3f} GW"
+            )
 
 st.divider()
 
+
 # -----------------------------
-# Stacked charts helpers (3 modes)
+# Stacked charts helpers (modes)
 # -----------------------------
 def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None):
     st.subheader(title)
@@ -1271,13 +1235,11 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
     dfp = df.copy()
     dfp["year"] = dfp["year"].astype(int)
 
-    # enforce order
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["scenario", "year", stack_field])
 
-    # global max for same scale
-    ymax = float(dfp.groupby(["scenario","year"])["value"].sum().max()) if len(dfp) else None
+    ymax = float(dfp.groupby(["scenario", "year"])["value"].sum().max()) if len(dfp) else None
     yscale = alt.Scale(domain=[0, ymax]) if ymax and np.isfinite(ymax) else alt.Undefined
 
     n = len(selected_scenarios)
@@ -1307,6 +1269,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
                 .properties(height=380)
             )
             st.altair_chart(chart, use_container_width=True)
+
 
 def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None):
     st.subheader(title)
@@ -1338,6 +1301,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         .properties(height=420)
     )
     st.altair_chart(chart, use_container_width=True)
+
 
 def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None):
     st.subheader(title)
@@ -1373,6 +1337,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
     )
     st.altair_chart(chart, use_container_width=True)
 
+
 def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None):
     if compare_mode == "Small multiples (önerilen)":
         _stacked_small_multiples(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
@@ -1382,6 +1347,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
         _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, years=(2035, 2050), order=order)
     else:  # "2025/2035 snapshot"
         _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, years=(2025, 2035), order=order)
+
 
 # -----------------------------
 # 1) Elektrik üretim karması (stacked)
@@ -1431,7 +1397,7 @@ _render_stacked(
     stack_field="category",
     y_title="GWh",
     category_title="Sektör",
-    value_format=", .0f".replace(" ",""),
+    value_format=",.0f",
 )
 
 st.divider()
@@ -1449,6 +1415,7 @@ _render_stacked(
     value_format=",.0f",
 )
 
+st.divider()
 
 # -----------------------------
 # 4) Nihai enerji tüketimi (stacked)
@@ -1462,6 +1429,38 @@ _render_stacked(
     category_title="Kaynak",
     value_format=",.0f",
 )
+
+# -----------------------------
+# 4.1) Elektrifikasyon Oranı (%) – line chart (ikincil eksen mantığı)
+# -----------------------------
+if df_electrification is None or df_electrification.empty:
+    st.warning("Elektrifikasyon oranı için veri bulunamadı (Summary&Indicators 46 ve 50. satır kontrol edin).")
+else:
+    st.subheader("Elektrifikasyon Oranı (%) – Nihai Enerji İçinde Elektrik Payı")
+    dfp = df_electrification.copy()
+    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
+    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
+    dfp = dfp.dropna(subset=["year", "value", "scenario"])
+    dfp["year"] = dfp["year"].astype(int)
+
+    year_vals = sorted(dfp["year"].unique().tolist())
+
+    chart_el = (
+        alt.Chart(dfp)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals)),
+            y=alt.Y("value:Q", title="%", scale=alt.Scale(domain=[0, 100])),
+            color=alt.Color("scenario:N", title="Senaryo"),
+            tooltip=[
+                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="Elektrifikasyon (%)", format=".1f"),
+            ],
+        )
+        .properties(height=260)
+    )
+    st.altair_chart(chart_el, use_container_width=True)
 
 st.divider()
 
