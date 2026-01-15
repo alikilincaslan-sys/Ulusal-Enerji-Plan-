@@ -35,9 +35,6 @@ POP_ROW_1IDX = 5  # Scenario_Assumptions sekmesinde 5. satır (Nüfus)
 SCENARIO_ASSUMP_YEARS_ROW_1IDX = 3  # Scenario_Assumptions sekmesinde 3. satır (Yıllar)
 CARBON_PRICE_ROW_1IDX = 15  # Scenario_Assumptions sekmesinde 15. satır (Carbon price ETS sectors, US$ '15/tnCO2)
 
-# --- Unit conversion ---
-GWH_PER_MTEP = 11630.0  # 1 Mtep = 11.63 TWh = 11,630 GWh
-
 # Exclude headers/subtotals – installed capacity
 # NOTE: we DO NOT exclude Total Storage / Total Power to X, because we use them as totals.
 CAPACITY_EXCLUDE_EXACT = {
@@ -1200,37 +1197,16 @@ st.divider()
 # -----------------------------
 # 3) Birincil enerji talebi (stacked)
 # -----------------------------
-_render# -----------------------------
-# Birincil Enerji Talebi (GWh / Mtep) – multi-senaryo stacked
-# -----------------------------
-_title_col, _unit_col = st.columns([5, 1], vertical_alignment="center")
-with _title_col:
-    st.subheader("Birincil Enerji Talebi")
-with _unit_col:
-    pe_unit = st.radio(
-        "Birim",
-        ["GWh", "Mtep"],
-        index=0,
-        label_visibility="collapsed",
-        key="pe_unit_selector",
-    )
-
-df_primary_plot = df_primary.copy()
-if pe_unit == "Mtep" and (df_primary_plot is not None) and (not df_primary_plot.empty):
-    df_primary_plot["value"] = df_primary_plot["value"] / GWH_PER_MTEP
-
-_stack_unit = "Mtep" if pe_unit == "Mtep" else "GWh"
-_fmt = ",.2f" if pe_unit == "Mtep" else ",.0f"
-
-_stacked(
-    df_primary_plot.rename(columns={"source": "category"}),
-    title="",  # başlığı üstte özel çizdik
+_render_stacked(
+    df_primary.rename(columns={"source": "category"}),
+    title="Birincil Enerji Talebi (GWh)",
     x_field="year",
     stack_field="category",
-    y_title=_stack_unit,
+    y_title="GWh",
     category_title="Kaynak",
-    value_format=_fmt,
+    value_format=",.0f",
 )
+
 st.divider()
 
 # -----------------------------
