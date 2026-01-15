@@ -569,7 +569,7 @@ def read_population_series(xlsx_file) -> pd.DataFrame:
 
 
 def read_electricity_consumption_by_sector(xlsx_file) -> pd.DataFrame:
-    '''Power_Generation: Sektörlere Göre Nihai Elektrik Tüketimi (GWh) - satır 6-10, yıllar 3. satır.'''
+    '''Power_Generation: Sektörlere Göre Elektrik Tüketimi (GWh) - satır 6-10, yıllar 3. satır.'''
     try:
         raw = pd.read_excel(xlsx_file, sheet_name='Power_Generation', header=None)
     except Exception:
@@ -835,7 +835,7 @@ with st.sidebar:
     st.header("Karşılaştırma modu")
     compare_mode = st.radio(
         "Stacked grafikler",
-        ["Small multiples (önerilen)", "Yıl içinde yan yana (clustered)", "2030/2050 snapshot"],
+        ["Small multiples (önerilen)", "Yıl içinde yan yana (clustered)", "2035/2050 snapshot", "2025/2035 snapshot"],
         index=0,
     )
 
@@ -893,8 +893,9 @@ if not selected_scenarios:
     st.stop()
 
 # Enforce readability rules for stacked charts
-if len(selected_scenarios) >= 4 and compare_mode != "2030/2050 snapshot":
-    st.warning("4+ senaryoda okunabilirlik için '2030/2050 snapshot' önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
+# Enforce readability rules for stacked charts
+if len(selected_scenarios) >= 4 and compare_mode not in {"2035/2050 snapshot", "2025/2035 snapshot"}:
+    st.warning("4+ senaryoda okunabilirlik için snapshot modları önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
 
 # Layout columns for 2 or 3 scenario
@@ -1234,7 +1235,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
     )
     st.altair_chart(chart, use_container_width=True)
 
-def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2030, 2050), order=None):
+def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1243,7 +1244,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
     dfp["year"] = dfp["year"].astype(int)
     dfp = dfp[dfp["year"].isin(list(years))]
     if dfp.empty:
-        st.warning("Seçilen yıllar için veri yok (2030/2050).")
+        st.warning("Seçilen yıllar için veri yok (seçili snapshot yılları).")
         return
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
@@ -1273,8 +1274,10 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
         _stacked_small_multiples(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
     elif compare_mode == "Yıl içinde yan yana (clustered)":
         _stacked_clustered(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
-    else:
-        _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
+    elif compare_mode == "2035/2050 snapshot":
+        _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, years=(2035, 2050), order=order)
+    else:  # "2025/2035 snapshot"
+        _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, years=(2025, 2035), order=order)
 
 # -----------------------------
 # 1) Elektrik üretim karması (stacked)
@@ -1319,7 +1322,7 @@ st.divider()
 # -----------------------------
 _render_stacked(
     df_sector_el.rename(columns={"sector": "category"}),
-    title="Sektörlere Göre Nihai Elektrik Tüketimi (GWh)",
+    title="Sektörlere Göre Elektrik Tüketimi (GWh)",
     x_field="year",
     stack_field="category",
     y_title="GWh",
