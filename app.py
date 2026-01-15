@@ -946,6 +946,109 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         start_year,
         max_year,
     )
+    # ============================
+# FINAL ENERGY ELECTRIFICATION ADDON
+# (app 19 üzerine entegre)
+# ============================
+
+def read_final_energy_electrification_ratio(xlsx_file) -> pd.DataFrame:
+    """
+    Elektrifikasyon Oranı (%)
+    Formül: (Row 50 / Row 46) * 100
+    Sekme: Summary&Indicators
+    Yıllar: 3. satır
+    """
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "value"])
+
+    YEARS_ROW_1IDX = 3
+    START_COL_IDX = 2  # C sütunu
+    TOTAL_FINAL_ROW_1IDX = 46
+    ELECTRICITY_ROW_1IDX = 50
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    tot_r0 = TOTAL_FINAL_ROW_1IDX - 1
+    elc_r0 = ELECTRICITY_ROW_1IDX - 1
+
+    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+    total_row = raw.iloc[tot_r0, START_COL_IDX:].tolist()
+    elec_row = raw.iloc[elc_r0, START_COL_IDX:].tolist()
+
+    records = []
+    for y_cell, tot, elc in zip(years_row, total_row, elec_row):
+        y = _as_int_year(y_cell)
+        if y is None or y > MAX_YEAR:
+            continue
+
+        tot = pd.to_numeric(tot, errors="coerce")
+        elc = pd.to_numeric(elc, errors="coerce")
+
+        if pd.isna(tot) or pd.isna(elc) or tot == 0:
+            continue
+
+        records.append({
+            "year": int(y),
+            "value": (elc / tot) * 100.0
+        })
+
+    return pd.DataFrame(records)
+
+
+# ============================
+# SCENARIO BUNDLE EXTENSION
+# ============================
+
+# compute_scenario_bundle() fonksiyonu İÇİNE EKLENİR
+# (fonksiyon gövdesinde, diğer serilerle birlikte)
+
+electrification = _filter_years(
+    read_final_energy_electrification_ratio(xlsx_file),
+    start_year,
+    max_year,
+)
+
+# bundle dict içine ekle
+bundle["electrification"] = _add_scn(electrification)
+
+
+# ============================
+# GLOBAL CONCAT
+# ============================
+
+df_electrification = _concat("electrification")
+
+
+# ============================
+# GRAFİK – FINAL ENERGY ALTINA
+# ============================
+
+st.subheader("Elektrifikasyon Oranı (%)")
+
+if df_electrification is None or df_electrification.empty:
+    st.warning("Elektrifikasyon oranı için veri bulunamadı.")
+else:
+    df_el = df_electrification.copy()
+    df_el["year"] = df_el["year"].astype(int)
+
+    chart_el = (
+        alt.Chart(df_el)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("year:O", title="Yıl"),
+            y=alt.Y("value:Q", title="Elektrifikasyon Oranı (%)"),
+            color=alt.Color("scenario:N", title="Senaryo"),
+            tooltip=[
+                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title="%", format=".1f"),
+            ],
+        )
+        .properties(height=260)
+    )
+
+    st.altair_chart(chart_el, use_container_width=True)
 
     # Storage & PTX (GW)
     cap_storage = _filter_years(storage_series_capacity(installed_cap), start_year, max_year)
