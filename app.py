@@ -569,7 +569,7 @@ def read_population_series(xlsx_file) -> pd.DataFrame:
 
 
 def read_electricity_consumption_by_sector(xlsx_file) -> pd.DataFrame:
-    '''Power_Generation: Sektörlere Göre Elektrik Tüketimi (GWh) - satır 6-10, yıllar 3. satır.'''
+    '''Power_Generation: Sektörlere Göre Nihai Elektrik Tüketimi (GWh) - satır 6-10, yıllar 3. satır.'''
     try:
         raw = pd.read_excel(xlsx_file, sheet_name='Power_Generation', header=None)
     except Exception:
@@ -1319,7 +1319,7 @@ st.divider()
 # -----------------------------
 _render_stacked(
     df_sector_el.rename(columns={"sector": "category"}),
-    title="Sektörlere Göre Elektrik Tüketimi (GWh)",
+    title="Sektörlere Göre Nihai Elektrik Tüketimi (GWh)",
     x_field="year",
     stack_field="category",
     y_title="GWh",
