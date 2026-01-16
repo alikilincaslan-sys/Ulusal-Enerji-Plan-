@@ -1468,6 +1468,29 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     value_format_use = value_format
     is_percent = False
 
+    # --- 2 senaryo fark modu (A - B) — SADECE MUTLAK DEĞERLERDE ---
+    diff_on = bool(globals().get('diff_mode_enabled', False))
+    a = globals().get('diff_scn_a')
+    b = globals().get('diff_scn_b')
+    if diff_on and a and b and (globals().get('stacked_value_mode') != 'Pay (%)'):
+        d0 = df_use.copy() if df_use is not None else None
+        if d0 is not None and (not d0.empty) and ('scenario' in d0.columns):
+            sub = d0[d0['scenario'].isin([a, b])].copy()
+            # year/x_field + category (stack_field) bazında A-B farkı
+            if not sub.empty and (x_field in sub.columns) and (stack_field in sub.columns):
+                sub[x_field] = pd.to_numeric(sub[x_field], errors='coerce')
+                sub['value'] = pd.to_numeric(sub['value'], errors='coerce')
+                sub = sub.dropna(subset=[x_field, stack_field, 'value', 'scenario'])
+                sub[x_field] = sub[x_field].astype(int)
+                wide = sub.pivot_table(index=[x_field, stack_field], columns='scenario', values='value', aggfunc='sum')
+                if (a in wide.columns) and (b in wide.columns):
+                    wide = wide[[a, b]].copy()
+                    wide['value'] = wide[a] - wide[b]
+                    out = wide.reset_index()[[x_field, stack_field, 'value']]
+                    out['scenario'] = f"Fark: {a} - {b}"
+                    df_use = out
+                    title = f"{title} — Fark ({a} - {b})"
+
     if stacked_value_mode == "Pay (%)":
         df_use = _normalize_stacked_to_percent(df_use, stack_field=stack_field)
         y_title_use = "%"
@@ -1511,10 +1534,11 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
         st.markdown("**Toplam (Total) — ayrı grafik**")
 
         if compare_mode == "Small multiples (önerilen)":
-            n = len(selected_scenarios)
+            scenarios_to_show = list(dict.fromkeys(totals["scenario"].tolist()))
+            n = len(scenarios_to_show)
             ncols = _ncols_for_selected(n)
             cols = st.columns(ncols)
-            for idx, scn in enumerate(selected_scenarios):
+            for idx, scn in enumerate(scenarios_to_show):
                 sub = totals[totals["scenario"] == scn]
                 if sub.empty:
                     continue
