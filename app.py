@@ -1000,6 +1000,10 @@ with st.sidebar:
         type=["xlsx"],
         accept_multiple_files=True,
     )
+    
+st.caption(
+    "🔒 Güvenlik notu: Yüklenen dosyalar geçici olarak işlenir, sunucuda kalıcı şekilde tutulmaz ve üçüncü kişilerle paylaşılmaz."
+)
 
     st.divider()
     st.header("Ayarlar")
