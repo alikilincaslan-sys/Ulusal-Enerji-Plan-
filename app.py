@@ -1004,7 +1004,7 @@ with st.sidebar:
     # Güvenlik notu (kısa ve net)
     show_security_note = st.checkbox("Güvenlik notunu göster", value=True)
     if show_security_note:
-        st.info("Yüklediğiniz Excel dosyaları yalnızca bu uygulamanın çalışması için okunur; dosyalar uygulama içinde herkese açık olarak paylaşılmaz. Yine de hassas veri yüklemeyin.")
+        st.info("Yüklediğiniz Excel dosyaları yalnızca bu uygulamanın çalışması için okunur; dosyalar uygulama kimseye olarak paylaşılmaz.")
 
     st.divider()
     st.header("Ayarlar")
