@@ -991,7 +991,7 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
 # -----------------------------
 # UI
 # -----------------------------
-st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü v17.01.2026")
+st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü")
 
 with st.sidebar:
     st.header("Dosyalar (çoklu senaryo)")
@@ -1000,6 +1000,11 @@ with st.sidebar:
         type=["xlsx"],
         accept_multiple_files=True,
     )
+
+    # Güvenlik notu (kısa ve net)
+    show_security_note = st.checkbox("Güvenlik notunu göster", value=True)
+    if show_security_note:
+        st.info("Yüklediğiniz Excel dosyaları yalnızca bu uygulamanın çalışması için okunur; dosyalar uygulama içinde herkese açık olarak paylaşılmaz. Yine de hassas veri yüklemeyin.")
 
     st.divider()
     st.header("Ayarlar")
