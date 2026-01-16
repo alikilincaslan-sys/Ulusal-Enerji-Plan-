@@ -2058,7 +2058,7 @@ _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂
 # - Pay (%) mod: LULUCF otomatik haric (negatif oldugu icin pay yorumunu bozabilir)
 # -----------------------------
 st.divider()
-st.markdown("## Türkiye Emisyonları — Net Zero Takibi (CO₂e)")
+st.markdown("## Türkiye Seragazı Emisyonları — Net Zero Hedefi Takibi (CO₂e)")
 st.caption(
     "Bu panel, Net Zero hedefine yaklasimi izlemek amaciyla kullanilir. "
     "Enerji disi emisyonlar/SGE ve LULUCF degerleri varsayimsaldir. "
