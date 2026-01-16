@@ -419,6 +419,146 @@ def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
     )
 
 
+# -----------------------------
+# CO2 -> CO2e (CRF 2023 tabanli varsayim)
+# Summary&Indicators: 72,73,74,75,77,78,79,80,81 satirlarinda sektor bazli
+# enerji kaynakli CO2 (bin ton) yer aliyor. Bu degerleri CO2e'ye donusturmek
+# icin (CO2 / CO2e) oranlari kullanilir.
+#
+# Varsayimlar (CO2/CO2e):
+# - Elektrik (Power Generation): 0.99
+# - Ulastirma (Transport): 0.94
+# - Sanayi (Industry + Industrial Plants): 0.97
+# - Tarim: 0.01  (bu dosyada satirlar icinde yok; ileride gerekirse)
+# - Diger sektorler: 0.99
+# -----------------------------
+
+SECTOR_CO2_OVER_CO2E = {
+    "power": 0.99,
+    "transport": 0.94,
+    "industry": 0.97,
+    "agriculture": 0.01,
+    "other": 0.99,
+}
+
+
+def _sector_ratio_from_label(label: str) -> float:
+    s = (label or "").strip().lower()
+    if "transport" in s:
+        return SECTOR_CO2_OVER_CO2E["transport"]
+    if "power generation" in s or "electric" in s:
+        return SECTOR_CO2_OVER_CO2E["power"]
+    if s == "industry" or "industrial plants" in s or "industry" in s:
+        return SECTOR_CO2_OVER_CO2E["industry"]
+    if "agric" in s:
+        return SECTOR_CO2_OVER_CO2E["agriculture"]
+    return SECTOR_CO2_OVER_CO2E["other"]
+
+
+def read_energy_emissions_sectoral_co2e(xlsx_file) -> pd.DataFrame:
+    """
+    Summary&Indicators sekmesinden sektor bazli enerji kaynakli emisyonlari okur.
+    Girdi birimi: bin ton CO2 (ktn CO2)
+    Cikti birimi: bin ton CO2e (ktn CO2e)
+
+    Satirlar (1-indexed): 72,73,74,75,77,78,79,80,81
+    Yillar: 3. satir
+    """
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "sector", "value", "series", "sheet", "ratio_co2_over_co2e"])
+
+    YEARS_ROW_1IDX = 3
+    START_COL_IDX = 2  # C
+    SECTOR_ROWS_1IDX = [72, 73, 74, 75, 77, 78, 79, 80, 81]
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    if yr_r0 < 0 or yr_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "sector", "value", "series", "sheet", "ratio_co2_over_co2e"])
+
+    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+    years = []
+    for y_cell in years_row:
+        y = _as_int_year(y_cell)
+        if y is not None and int(y) <= MAX_YEAR:
+            years.append(int(y))
+        else:
+            years.append(None)
+
+    records = []
+    for r1 in SECTOR_ROWS_1IDX:
+        r0 = r1 - 1
+        if r0 < 0 or r0 >= len(raw):
+            continue
+
+        label = raw.iloc[r0, 0]
+        label = "" if pd.isna(label) else str(label).strip()
+        if label == "" or label.lower() == "nan":
+            continue
+
+        ratio = float(_sector_ratio_from_label(label))
+        vals_row = raw.iloc[r0, START_COL_IDX : START_COL_IDX + len(years)].tolist()
+        for y, v_cell in zip(years, vals_row):
+            if y is None:
+                continue
+            v_co2 = pd.to_numeric(v_cell, errors="coerce")
+            if pd.isna(v_co2):
+                continue
+            v_co2 = float(v_co2)
+            # CO2e = CO2 / (CO2/CO2e)
+            v_co2e = v_co2 / ratio if ratio and np.isfinite(ratio) else np.nan
+            if not np.isfinite(v_co2e):
+                continue
+            records.append(
+                {
+                    "year": int(y),
+                    "sector": label,
+                    "value": float(v_co2e),
+                    "ratio_co2_over_co2e": ratio,
+                }
+            )
+
+    df = pd.DataFrame(records)
+    if df.empty:
+        return pd.DataFrame(columns=["year", "sector", "value", "series", "sheet", "ratio_co2_over_co2e"])
+
+    df = df.sort_values(["year", "sector"])
+    df["series"] = "Sektorel Enerji Emisyonlari (CO2e, ktn)"
+    df["sheet"] = "Summary&Indicators"
+    return df
+
+
+def energy_share_assumption(year: int) -> float:
+    """Enerji kaynakli emisyonlarin toplam SGE icindeki payi (varsayim).
+
+    2025: %70
+    2050: %75
+    Arasi lineer.
+    """
+    if year <= 2025:
+        return 0.70
+    if year >= 2050:
+        return 0.75
+    return 0.70 + (year - 2025) * (0.75 - 0.70) / (2050 - 2025)
+
+
+def lulucf_assumption_ktn(year: int) -> float:
+    """LULUCF net yutak varsayimi (ktn CO2e).
+
+    2025: -56 MtCO2e  -> -56,000 ktn
+    2050: -100 MtCO2e -> -100,000 ktn
+    Arasi lineer.
+    """
+    y0, v0 = 2025, -56_000.0
+    y1, v1 = 2050, -100_000.0
+    if year <= y0:
+        return v0
+    if year >= y1:
+        return v1
+    return v0 + (year - y0) * (v1 - v0) / (y1 - y0)
+
+
 def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     try:
         raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
@@ -999,6 +1139,34 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     carbon_price = _filter_years(read_carbon_price_series(xlsx_file), start_year, max_year)
     co2 = _filter_years(read_co2_emissions_series(xlsx_file), start_year, max_year)
 
+    # Sektorel enerji kaynakli emisyonlar (CO2e) — Summary&Indicators (CRF 2023 varsayimi ile CO2->CO2e)
+    energy_em_sector_co2e = _filter_years(read_energy_emissions_sectoral_co2e(xlsx_file), start_year, max_year)
+    energy_em_total_co2e = pd.DataFrame(columns=["year", "value", "series"])
+    if energy_em_sector_co2e is not None and not energy_em_sector_co2e.empty:
+        energy_em_total_co2e = (
+            energy_em_sector_co2e.groupby("year", as_index=False)["value"].sum().rename(columns={"value": "value"})
+        )
+        energy_em_total_co2e["series"] = "Enerji Kaynakli Emisyonlar (CO2e, ktn)"
+
+    # Net-Zero icin toplam (tahmini) bileenleri: Enerji + Enerji Disi&SGE + LULUCF
+    co2_nz_stack = pd.DataFrame(columns=["year", "category", "value", "scenario"])
+    if energy_em_total_co2e is not None and not energy_em_total_co2e.empty:
+        recs = []
+        for _, r in energy_em_total_co2e.iterrows():
+            y = int(r["year"])
+            e = float(r["value"])
+            share = float(energy_share_assumption(y))
+            total_excl_lulucf = e / share if share > 0 else np.nan
+            other = total_excl_lulucf - e
+            lulucf = float(lulucf_assumption_ktn(y))
+            if np.isfinite(e):
+                recs.append({"year": y, "category": "Enerji Kaynakli (Model, CO2e)", "value": e, "scenario": scenario})
+            if np.isfinite(other):
+                recs.append({"year": y, "category": "Enerji Disi Emisyonlar ve Diger SGE (Tahmini)", "value": float(other), "scenario": scenario})
+            if np.isfinite(lulucf):
+                recs.append({"year": y, "category": "LULUCF (Net Yutak, Tahmini)", "value": lulucf, "scenario": scenario})
+        co2_nz_stack = pd.DataFrame(recs)
+
     primary_energy_source = _filter_years(read_primary_energy_consumption_by_source(xlsx_file), start_year, max_year)
     final_energy_source = _filter_years(read_final_energy_consumption_by_source(xlsx_file), start_year, max_year)
     dependency_ratio = _filter_years(read_energy_import_dependency_ratio(xlsx_file), start_year, max_year)
@@ -1079,6 +1247,9 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "gdp": _add_scn(gdp),
         "carbon_price": _add_scn(carbon_price),
         "co2": _add_scn(co2),
+        "energy_em_sector_co2e": _add_scn(energy_em_sector_co2e),
+        "energy_em_total_co2e": _add_scn(energy_em_total_co2e),
+        "co2_nz_stack": co2_nz_stack,
         "total_supply": _add_scn(total_supply),
         "gen_mix": _add_scn(gen_mix),
         "cap_total": _add_scn(cap_total),
@@ -1111,6 +1282,9 @@ def _concat(key: str):
 df_pop = _concat("pop")
 df_gdp = _concat("gdp")
 df_co2 = _concat("co2")
+df_energy_em_sector_co2e = _concat("energy_em_sector_co2e")
+df_energy_em_total_co2e = _concat("energy_em_total_co2e")
+df_co2_nz_stack = _concat("co2_nz_stack")
 df_cp = _concat("carbon_price")
 df_supply = _concat("total_supply")
 df_genmix = _concat("gen_mix")
@@ -1744,15 +1918,15 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
 if stacked_value_mode != "Pay (%)":  # yüzde modunda anlamsız, kapat
     st.markdown("### Yakıt/Teknoloji Bazlı Enerji Dönüşümü (Δ)")
     st.markdown(
-    """
-    <div style="display:flex; gap:18px; align-items:center; margin:6px 0 8px 0;">
-      <span><span style="display:inline-block;width:10px;height:10px;background:#2ca02c;border-radius:50%;margin-right:6px;"></span><b>Artış</b></span>
-      <span><span style="display:inline-block;width:10px;height:10px;background:#d62728;border-radius:50%;margin-right:6px;"></span><b>Azalış</b></span>
-      <span><span style="display:inline-block;width:10px;height:10px;background:#1f77b4;border-radius:50%;margin-right:6px;"></span><b>Net Değişim</b></span>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+        """
+        <div style="display:flex; gap:18px; align-items:center; margin:6px 0 8px 0;">
+          <span><span style="display:inline-block;width:10px;height:10px;background:#2ca02c;border-radius:50%;margin-right:6px;"></span><b>Artış</b></span>
+          <span><span style="display:inline-block;width:10px;height:10px;background:#d62728;border-radius:50%;margin-right:6px;"></span><b>Azalış</b></span>
+          <span><span style="display:inline-block;width:10px;height:10px;background:#1f77b4;border-radius:50%;margin-right:6px;"></span><b>Net Değişim</b></span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     st.caption(
         "Grafikler, seçili senaryoda başlangıç ve bitiş yılları (ayarlardan seçiniz) arasındaki "
@@ -1877,6 +2051,38 @@ st.divider()
 # -----------------------------
 _line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
 _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
+
+# -----------------------------
+# Net-Zero takibi icin: Emisyonlar (CO2e) — Enerji + Enerji Disi&SGE (+ LULUCF)
+# - Mutlak mod: LULUCF dahil
+# - Pay (%) mod: LULUCF otomatik haric (negatif oldugu icin pay yorumunu bozabilir)
+# -----------------------------
+st.divider()
+st.markdown("## Türkiye Emisyonları — Net Zero Takibi (CO₂e)")
+st.caption(
+    "Bu panel, Net Zero hedefine yaklasimi izlemek amaciyla kullanilir. "
+    "Enerji disi emisyonlar/SGE ve LULUCF degerleri varsayimsaldir. "
+    "CO₂→CO₂e donusumu (2023 CRF varsayimi): Elektrik 0.99, Ulastirma 0.94, Sanayi 0.97, Tarim 0.01, Diger 0.99 (CO₂/CO₂e)."
+)
+
+df_nz_plot = df_co2_nz_stack.copy() if df_co2_nz_stack is not None else pd.DataFrame()
+if not df_nz_plot.empty and stacked_value_mode == "Pay (%)":
+    df_nz_plot = df_nz_plot[df_nz_plot["category"] != "LULUCF (Net Yutak, Tahmini)"]
+
+_render_stacked(
+    df_nz_plot,
+    title="CO₂e Emisyon Bileşenleri (ktn CO₂e)",
+    x_field="year",
+    stack_field="category",
+    y_title="ktn CO₂e",
+    category_title="Bileşen",
+    value_format=",.0f",
+    order=[
+        "Enerji Kaynakli (Model, CO2e)",
+        "Enerji Disi Emisyonlar ve Diger SGE (Tahmini)",
+        "LULUCF (Net Yutak, Tahmini)",
+    ],
+)
 
 with st.expander("Çalıştırma"):
     st.code("pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py", language="bash")
