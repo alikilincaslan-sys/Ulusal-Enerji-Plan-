@@ -1485,6 +1485,8 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
                 wide = sub.pivot_table(index=[x_field, stack_field], columns='scenario', values='value', aggfunc='sum')
                 if (a in wide.columns) and (b in wide.columns):
                     wide = wide[[a, b]].copy()
+                    # Senaryolardan birinde olmayan kategori/yil kombinasyonlari NaN gelir; fark icin 0 kabul ediyoruz
+                    wide = wide.fillna(0.0)
                     wide['value'] = wide[a] - wide[b]
                     out = wide.reset_index()[[x_field, stack_field, 'value']]
                     out['scenario'] = f"Fark: {a} - {b}"
