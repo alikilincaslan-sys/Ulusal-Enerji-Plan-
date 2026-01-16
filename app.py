@@ -29,6 +29,10 @@ KG_BASE_ROW_1IDX = 79
 KG_SUB_ROW_1IDX_1 = 102
 KG_SUB_ROW_1IDX_2 = 106
 
+# --- NEW: Extra rows to add into "Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç" ---
+# Power_Generation sheet (Excel 1-indexed)
+CAPACITY_EXTRA_ROWS_1IDX = [98, 99, 100, 101]
+
 # --- GDP / POP / CARBON PRICE RULES (Scenario_Assumptions sheet) ---
 GDP_ROW_1IDX = 6  # Scenario_Assumptions sekmesinde 6. satır (GSYH)
 POP_ROW_1IDX = 5  # Scenario_Assumptions sekmesinde 5. satır (Nüfus)
@@ -258,15 +262,58 @@ def _is_natural_gas_item(item: str) -> bool:
 
 
 # -----------------------------
+# NEW: Fixed-row reading for extra capacity rows (Power_Generation)
+# -----------------------------
+def _read_power_generation_fixed_rows_as_stack(xlsx_file, value_rows_1idx: list[int]) -> pd.DataFrame:
+    """
+    Power_Generation sekmesinden sabit satırları stacked veri olarak okur.
+    - Yıl satırı: otomatik (en çok yıl bulunan satır)
+    - Etiket: satırın 1. sütunu (A sütunu); boşsa 'Ek Satır {row}'
+    Çıktı: year, group, value
+    """
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Power_Generation", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "group", "value"])
+
+    year_row = _find_year_row(raw)
+    if year_row is None:
+        return pd.DataFrame(columns=["year", "group", "value"])
+
+    years, year_cols_idx = _extract_years(raw, year_row)
+    if not years:
+        return pd.DataFrame(columns=["year", "group", "value"])
+
+    recs = []
+    for r1 in value_rows_1idx:
+        r0 = r1 - 1
+        if r0 < 0 or r0 >= len(raw):
+            continue
+
+        label = raw.iloc[r0, 0]
+        label = "" if pd.isna(label) else str(label).strip()
+        if not label:
+            label = f"Ek Satır {r1}"
+
+        for y, c in zip(years, year_cols_idx):
+            if int(y) > MAX_YEAR:
+                continue
+            v = pd.to_numeric(raw.iloc[r0, c], errors="coerce")
+            if pd.isna(v):
+                continue
+            recs.append({"year": int(y), "group": label, "value": float(v)})
+
+    df = pd.DataFrame(recs)
+    if df.empty:
+        return pd.DataFrame(columns=["year", "group", "value"])
+    return df.sort_values(["year", "group"])
+
+
+# -----------------------------
 # Reading: Scenario assumptions (Nüfus & GSYH & Karbon)
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def _read_scenario_assumptions_row(xlsx_file, value_row_1idx: int, series_name: str) -> pd.DataFrame:
-    """
-    Scenario_Assumptions sekmesinden tek bir satırı seri olarak okur.
-    - Yıllar: 3. satır (SCENARIO_ASSUMP_YEARS_ROW_1IDX)
-    - Değerler: value_row_1idx (Excel 1-indexed)
-    """
     candidates = [
         "Scenario_Assumptions",
         "Scenario_Assumption",
@@ -318,11 +365,6 @@ def _read_scenario_assumptions_row(xlsx_file, value_row_1idx: int, series_name: 
 
 @st.cache_data(show_spinner=False)
 def _read_fixed_row_sheet(xlsx_file, sheet_name: str, years_row_1idx: int, value_row_1idx: int, series_name: str) -> pd.DataFrame:
-    """
-    Belirli bir sekmeden sabit satır/yıl satırı ile seri okur.
-    - Yıllar: years_row_1idx (Excel 1-indexed)
-    - Değerler: value_row_1idx (Excel 1-indexed)
-    """
     try:
         raw = pd.read_excel(xlsx_file, sheet_name=sheet_name, header=None)
     except Exception:
@@ -358,7 +400,6 @@ def _read_fixed_row_sheet(xlsx_file, sheet_name: str, years_row_1idx: int, value
 
 
 def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
-    """PowerGeneration-Indicators: CO2 Emissions (in ktn CO2) – 30. satır."""
     return _read_fixed_row_sheet(
         xlsx_file,
         sheet_name="PowerGeneration-Indicators",
@@ -368,47 +409,7 @@ def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
     )
 
 
-def read_primary_energy_production_series(xlsx_file) -> pd.DataFrame:
-    """Summary&Indicators: Primary Energy Production (in GWh) – C14 satırından yatay seri."""
-    try:
-        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
-    except Exception:
-        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
-
-    YEARS_ROW_1IDX = 3
-    VALUE_ROW_1IDX = 14
-    START_COL_IDX = 2
-
-    yr_r0 = YEARS_ROW_1IDX - 1
-    val_r0 = VALUE_ROW_1IDX - 1
-
-    if yr_r0 < 0 or val_r0 < 0 or yr_r0 >= len(raw) or val_r0 >= len(raw):
-        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
-
-    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
-    vals_row = raw.iloc[val_r0, START_COL_IDX:].tolist()
-
-    out_years, out_vals = [], []
-    for y_cell, v_cell in zip(years_row, vals_row):
-        y = _as_int_year(y_cell)
-        if y is None:
-            continue
-        y = int(y)
-        if y <= MAX_YEAR:
-            v = pd.to_numeric(v_cell, errors="coerce")
-            if not pd.isna(v):
-                out_years.append(y)
-                out_vals.append(float(v))
-
-    df = pd.DataFrame({"year": out_years, "value": out_vals})
-    df = df.dropna(subset=["value"]).sort_values("year")
-    df["series"] = "Primary Energy Production (GWh)"
-    df["sheet"] = "Summary&Indicators"
-    return df
-
-
 def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
-    """Summary&Indicators: Birincil Enerji Talebi – satır 33-42 (yığılmış)."""
     try:
         raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
     except Exception:
@@ -464,7 +465,6 @@ def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
 
 
 def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
-    """Summary&Indicators: Nihai Enerji Tüketimi – satır 47-52 (yığılmış)."""
     try:
         raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
     except Exception:
@@ -520,12 +520,6 @@ def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
 
 
 def read_final_energy_electrification_ratio(xlsx_file) -> pd.DataFrame:
-    """Nihai Enerjide Elektrifikasyon Oranı (%).
-    Sekme: Summary&Indicators
-    Formül (Excel 1-indexed satırlar):
-      Elektrifikasyon (%) = (Row 50 / Row 46) * 100
-    Yıllar: 3. satır (C sütunundan itibaren)
-    """
     try:
         raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
     except Exception:
@@ -574,7 +568,6 @@ def read_final_energy_electrification_ratio(xlsx_file) -> pd.DataFrame:
 
 
 def read_energy_import_dependency_ratio(xlsx_file) -> pd.DataFrame:
-    """Summary&Indicators: Dışa Bağımlılık Oranı (%) = (1 - (Row14 / Row32)) * 100, yıllar 3. satır."""
     try:
         raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
     except Exception:
@@ -622,22 +615,18 @@ def read_energy_import_dependency_ratio(xlsx_file) -> pd.DataFrame:
 
 
 def read_gdp_series(xlsx_file) -> pd.DataFrame:
-    """GSYH serisi: Scenario_Assumptions 6. satır."""
     return _read_scenario_assumptions_row(xlsx_file, GDP_ROW_1IDX, "GSYH")
 
 
 def read_carbon_price_series(xlsx_file) -> pd.DataFrame:
-    """Karbon fiyatı (varsayım): Scenario_Assumptions 15. satır."""
     return _read_scenario_assumptions_row(xlsx_file, CARBON_PRICE_ROW_1IDX, "Karbon Fiyatı (Varsayım)")
 
 
 def read_population_series(xlsx_file) -> pd.DataFrame:
-    """Nüfus serisi: Scenario_Assumptions 5. satır."""
     return _read_scenario_assumptions_row(xlsx_file, POP_ROW_1IDX, "Nüfus")
 
 
 def read_electricity_consumption_by_sector(xlsx_file) -> pd.DataFrame:
-    """Power_Generation: Sektörlere Göre Elektrik Tüketimi (GWh) - satır 6-10, yıllar 3. satır."""
     try:
         raw = pd.read_excel(xlsx_file, sheet_name="Power_Generation", header=None)
     except Exception:
@@ -697,9 +686,7 @@ def _gen_is_excluded(item: str) -> bool:
 
 
 def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
-    """Gross generation mix (GWh) – Total Storage HARİÇ.
-    Amaç: Stacked toplamı, Electricity Balance içindeki TOTAL_SUPPLY_LABEL ile aynı kalsın.
-    """
+    """Gross generation mix (GWh) – Total Storage HARİÇ."""
     if gross_gen_df is None or gross_gen_df.empty:
         return pd.DataFrame(columns=["year", "group", "value"])
 
@@ -861,9 +848,6 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
 # -----------------------------
 st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü")
 
-# -----------------------------
-# Multi-scenario UI (IEA-style)
-# -----------------------------
 with st.sidebar:
     st.header("Dosyalar (çoklu senaryo)")
     uploaded_files = st.file_uploader(
@@ -1025,6 +1009,11 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         max_year,
     )
 
+    # --- NEW: add extra rows (98-101) into capacity mix (counted in totals) ---
+    extra_cap = _filter_years(_read_power_generation_fixed_rows_as_stack(xlsx_file, CAPACITY_EXTRA_ROWS_1IDX), start_year, max_year)
+    if extra_cap is not None and not extra_cap.empty:
+        cap_mix = pd.concat([cap_mix, extra_cap], ignore_index=True) if cap_mix is not None else extra_cap
+
     electricity_by_sector = _filter_years(read_electricity_consumption_by_sector(xlsx_file), start_year, max_year)
 
     per_capita = pd.DataFrame(columns=["year", "value"])
@@ -1140,7 +1129,12 @@ def _line_chart(
         chart = (
             base.mark_line(point=True)
             .encode(
-                x=alt.X("year:Q", title="Yıl", scale=alt.Scale(domain=[min(year_vals), max(year_vals)]), axis=alt.Axis(values=year_vals, format="d", labelAngle=0)),
+                x=alt.X(
+                    "year:Q",
+                    title="Yıl",
+                    scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
+                    axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
+                ),
                 y=alt.Y("value:Q", title=y_title),
             )
         )
@@ -1546,6 +1540,8 @@ st.divider()
 # -----------------------------
 # 2) Kurulu güç karması (stacked, storage & PTX hariç)
 # -----------------------------
+# Not: 98-101 satırlarının label'ları teknoloji listesinde olmayabilir.
+# Bu yüzden order listesine zorla eklemiyoruz; Altair yine de gösterecek.
 order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
 _render_stacked(
     df_capmix.rename(columns={"group": "category"}),
@@ -1628,8 +1624,5 @@ st.divider()
 _line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
 _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
 
-# -----------------------------
-# Run hint
-# -----------------------------
 with st.expander("Çalıştırma"):
     st.code("pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py", language="bash")
