@@ -991,7 +991,7 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
 # -----------------------------
 # UI
 # -----------------------------
-st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü EİGM")
+st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü")
 
 with st.sidebar:
     st.header("Dosyalar (çoklu senaryo)")
@@ -1000,10 +1000,6 @@ with st.sidebar:
         type=["xlsx"],
         accept_multiple_files=True,
     )
-    
-st.caption(
-    "🔒 Güvenlik notu: Yüklenen dosyalar geçici olarak işlenir, sunucuda kalıcı şekilde tutulmaz ve üçüncü kişilerle paylaşılmaz."
-)
 
     st.divider()
     st.header("Ayarlar")
