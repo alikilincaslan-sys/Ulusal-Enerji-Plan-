@@ -1333,6 +1333,10 @@ def _stacked_small_multiples(
         st.warning("Veri bulunamadı.")
         return
 
+    # Theme-aware label color so totals don't clash in light mode
+    _theme_base = st.get_option("theme.base")
+    _total_label_color = "black" if _theme_base == "light" else "white"
+
     dfp = df.copy()
     dfp["year"] = dfp["year"].astype(int)
 
@@ -1384,7 +1388,7 @@ def _stacked_small_multiples(
             if show_totals and not is_percent:
                 total_labels = (
                     alt.Chart(totals)
-                    .mark_text(angle=90, dy=-6)
+                    .mark_text(angle=90, dy=-6, color=_total_label_color, fontWeight="bold")
                     .encode(
                         x=alt.X(f"{x_field}:O"),
                         y=alt.Y("total:Q"),
@@ -1413,6 +1417,10 @@ def _stacked_clustered(
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
+
+    # Theme-aware label color so totals don't clash in light mode
+    _theme_base = st.get_option("theme.base")
+    _total_label_color = "black" if _theme_base == "light" else "white"
 
     dfp = df.copy()
     dfp["year"] = dfp["year"].astype(int)
@@ -1448,7 +1456,7 @@ def _stacked_clustered(
         )
         total_labels = (
             alt.Chart(totals)
-            .mark_text(angle=90, dy=-6)
+            .mark_text(angle=90, dy=-6, color=_total_label_color, fontWeight="bold")
             .encode(
                 x=alt.X(f"{x_field}:O"),
                 xOffset=alt.XOffset("scenario:N"),
@@ -1479,6 +1487,11 @@ def _stacked_snapshot(
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
+
+    # Theme-aware label color so totals don't clash in light mode
+    _theme_base = st.get_option("theme.base")
+    _total_label_color = "black" if _theme_base == "light" else "white"
+
     dfp = df.copy()
     dfp["year"] = dfp["year"].astype(int)
     dfp = dfp[dfp["year"].isin(list(years))]
@@ -1514,7 +1527,7 @@ def _stacked_snapshot(
         )
         total_labels = (
             alt.Chart(totals)
-            .mark_text(angle=90, dy=-6)
+            .mark_text(angle=90, dy=-6, color=_total_label_color, fontWeight="bold")
             .encode(
                 x=alt.X(f"{x_field}:O"),
                 xOffset=alt.XOffset("scenario:N"),
