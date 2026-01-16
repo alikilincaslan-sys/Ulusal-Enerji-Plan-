@@ -34,11 +34,12 @@ KG_SUB_ROW_1IDX_2 = 106
 CAPACITY_EXTRA_ROWS_1IDX = [98, 99, 100, 101]
 
 # NEW: bu satırlar boş geliyorsa isimleri buradan ver
+# (İstediğin gibi: Biomass and Geothermal)
 EXTRA_ROW_NAME_MAP = {
-    98: "Biomass",
-    99: "Biomass",
-    100: "Geothermal",
-    101: "Geothermal",
+    98: "Biomass and Geothermal",
+    99: "Biomass and Geothermal",
+    100: "Biomass and Geothermal",
+    101: "Biomass and Geothermal",
 }
 
 # --- GDP / POP / CARBON PRICE RULES (Scenario_Assumptions sheet) ---
@@ -113,10 +114,7 @@ INTERMITTENT_RE_GROUPS = {"Wind (RES)", "Solar (GES)"}
 # Helpers
 # -----------------------------
 def _as_int_year(x):
-    """Yıl hücresini mümkün olduğunca sağlam parse et.
-    - Sayı / float / numpy türleri
-    - '2025E', 'Year 2030', '2035*' gibi stringlerde 4 haneli yılı yakala
-    """
+    """Yıl hücresini mümkün olduğunca sağlam parse et."""
     try:
         v = int(float(x))
         if 1900 <= v <= 2100:
@@ -203,7 +201,6 @@ def _filter_years(df: pd.DataFrame, start_year: int, end_year: int) -> pd.DataFr
 
 
 def _cagr(start_value: float, end_value: float, n_years: int) -> float:
-    # returns decimal (e.g., 0.035)
     if n_years <= 0:
         return np.nan
     if start_value is None or end_value is None:
@@ -230,7 +227,6 @@ def read_power_generation(xlsx_file):
         "gross_generation": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Gross\s+Electricity\s+Generation\s+by\s+plant\s+type"),
         "net_generation": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Net\s+Electricity\s+Generation\s+by\s+plant\s+type"),
         "installed_capacity": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Gross\s+Installed\s+Capacity"),
-        # meta for fixed-row reading
         "_raw": raw,
         "_years": years,
         "_year_cols_idx": year_cols_idx,
@@ -270,13 +266,13 @@ def _is_natural_gas_item(item: str) -> bool:
 
 
 # -----------------------------
-# NEW: Fixed-row reading for extra capacity rows (Power_Generation)
+# NEW: Fixed-row reading for extra capacity rows (Power_Generation)  ✅ FIXED INDENTATION
 # -----------------------------
 def _read_power_generation_fixed_rows_as_stack(xlsx_file, value_rows_1idx: list[int]) -> pd.DataFrame:
     """
     Power_Generation sekmesinden sabit satırları stacked veri olarak okur.
     - Yıl satırı: otomatik (en çok yıl bulunan satır)
-    - Etiket: satırın 1. sütunu (A sütunu); boşsa 'Ek Satır {row}'
+    - Etiket: satırın 1. sütunu (A sütunu); boşsa EXTRA_ROW_NAME_MAP'ten doldurur
     Çıktı: year, group, value
     """
     try:
@@ -299,11 +295,10 @@ def _read_power_generation_fixed_rows_as_stack(xlsx_file, value_rows_1idx: list[
             continue
 
         label = raw.iloc[r0, 0]
-label = "" if pd.isna(label) else str(label).strip()
+        label = "" if pd.isna(label) else str(label).strip()
 
-if (not label) or (label.lower() == "nan"):
-    # önce haritadan isim ata, yoksa fallback
-    label = EXTRA_ROW_NAME_MAP.get(r1, f"Ek Satır {r1}")
+        if (not label) or (label.lower() == "nan"):
+            label = EXTRA_ROW_NAME_MAP.get(r1, f"Ek Satır {r1}")
 
         for y, c in zip(years, year_cols_idx):
             if int(y) > MAX_YEAR:
@@ -426,7 +421,7 @@ def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
         return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
 
     YEARS_ROW_1IDX = 3
-    START_COL_IDX = 2  # column C
+    START_COL_IDX = 2
     ROW_START_1IDX = 33
     ROW_END_1IDX = 42
 
@@ -439,10 +434,7 @@ def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     years = []
     for y_cell in years_row:
         y = _as_int_year(y_cell)
-        if y is not None and int(y) <= MAX_YEAR:
-            years.append(int(y))
-        else:
-            years.append(None)
+        years.append(int(y) if y is not None and int(y) <= MAX_YEAR else None)
 
     records = []
     for r1 in range(ROW_START_1IDX, ROW_END_1IDX + 1):
@@ -481,7 +473,7 @@ def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
         return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
 
     YEARS_ROW_1IDX = 3
-    START_COL_IDX = 2  # column C
+    START_COL_IDX = 2
     ROW_START_1IDX = 47
     ROW_END_1IDX = 52
 
@@ -494,10 +486,7 @@ def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     years = []
     for y_cell in years_row:
         y = _as_int_year(y_cell)
-        if y is not None and int(y) <= MAX_YEAR:
-            years.append(int(y))
-        else:
-            years.append(None)
+        years.append(int(y) if y is not None and int(y) <= MAX_YEAR else None)
 
     records = []
     for r1 in range(ROW_START_1IDX, ROW_END_1IDX + 1):
@@ -536,7 +525,7 @@ def read_final_energy_electrification_ratio(xlsx_file) -> pd.DataFrame:
         return pd.DataFrame(columns=["year", "value", "series", "sheet"])
 
     YEARS_ROW_1IDX = 3
-    START_COL_IDX = 2  # C sütunu
+    START_COL_IDX = 2
     TOTAL_FINAL_ROW_1IDX = 46
     ELECTRICITY_ROW_1IDX = 50
 
@@ -584,9 +573,9 @@ def read_energy_import_dependency_ratio(xlsx_file) -> pd.DataFrame:
         return pd.DataFrame(columns=["year", "value", "series", "sheet"])
 
     YEARS_ROW_1IDX = 3
-    START_COL_IDX = 2  # column C
-    NUM_ROW_1IDX = 14  # numerator: row 14
-    DEN_ROW_1IDX = 32  # denominator: row 32
+    START_COL_IDX = 2
+    NUM_ROW_1IDX = 14
+    DEN_ROW_1IDX = 32
 
     yr_r0 = YEARS_ROW_1IDX - 1
     num_r0 = NUM_ROW_1IDX - 1
@@ -696,25 +685,23 @@ def _gen_is_excluded(item: str) -> bool:
 
 
 def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
-    """Gross generation mix (GWh) – Total Storage HARİÇ."""
     if gross_gen_df is None or gross_gen_df.empty:
         return pd.DataFrame(columns=["year", "group", "value"])
 
     df = gross_gen_df.copy()
     df = df[~df["item"].apply(_gen_is_excluded)]
 
-    # --- Total Storage ve storage alt bileşenlerini tamamen çıkar ---
+    # Total Storage & components out
     df = df[~df["item"].astype(str).apply(lambda x: bool(STORAGE_COMPONENT_REGEX.search(x)))]
     df = df[df["item"].str.strip().ne(TOTAL_STORAGE_LABEL)]
 
-    # Natural gas: sadece belirlenen satırların toplamı
+    # Natural gas: only defined items
     natgas_rows = df[df["item"].apply(_is_natural_gas_item)]
     natgas_long = _to_long(natgas_rows, value_name="value")
     natgas_series = natgas_long.groupby("year", as_index=False)["value"].sum()
     natgas_series["group"] = "Natural gas"
     natgas_series = natgas_series[["year", "group", "value"]]
 
-    # Kalanlar teknoloji gruplarına
     df_rest = df[~df["item"].apply(_is_natural_gas_item)].copy()
     long = _to_long(df_rest, value_name="value")
     long["group"] = long["item"].apply(_strict_match_group)
@@ -814,7 +801,7 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
     df = df[~df["item"].apply(_cap_is_excluded)]
     df = df[df["item"].str.strip().ne(TOTAL_CAPACITY_LABEL)]
 
-    # storage & ptx components out
+    # storage & ptx out
     df = df[~df["item"].astype(str).apply(lambda x: bool(STORAGE_COMPONENT_REGEX.search(x)))]
     df = df[df["item"].str.strip().ne(TOTAL_STORAGE_LABEL)]
 
@@ -982,12 +969,10 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     primary_energy_source = _filter_years(read_primary_energy_consumption_by_source(xlsx_file), start_year, max_year)
     final_energy_source = _filter_years(read_final_energy_consumption_by_source(xlsx_file), start_year, max_year)
     dependency_ratio = _filter_years(read_energy_import_dependency_ratio(xlsx_file), start_year, max_year)
-
     electrification_ratio = _filter_years(read_final_energy_electrification_ratio(xlsx_file), start_year, max_year)
 
     total_supply = _filter_years(get_series_from_block(balance, TOTAL_SUPPLY_LABEL), start_year, max_year)
 
-    # Generation mix (GWh) — Total Storage HARİÇ (kritik)
     gen_mix = _filter_years(generation_mix_from_block(gross_gen), start_year, max_year)
 
     ye_total = _filter_years(share_series_from_mix(gen_mix, total_supply, RENEWABLE_GROUPS, "Toplam YE"), start_year, max_year)
@@ -1019,7 +1004,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         max_year,
     )
 
-    # --- NEW: add extra rows (98-101) into capacity mix (counted in totals) ---
+    # ✅ NEW: add extra rows (98-101) into capacity mix (counted in totals)
     extra_cap = _filter_years(_read_power_generation_fixed_rows_as_stack(xlsx_file, CAPACITY_EXTRA_ROWS_1IDX), start_year, max_year)
     if extra_cap is not None and not extra_cap.empty:
         cap_mix = pd.concat([cap_mix, extra_cap], ignore_index=True) if cap_mix is not None else extra_cap
@@ -1043,7 +1028,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
 
         merged = ts.merge(pp[["year", "pop_person"]], on="year", how="inner")
         merged = merged[(merged["pop_person"] > 0) & merged["value"].notna()]
-        merged["value"] = (merged["value"] * 1_000_000.0) / merged["pop_person"]  # kWh/kişi
+        merged["value"] = (merged["value"] * 1_000_000.0) / merged["pop_person"]
         per_capita = merged[["year", "value"]].sort_values("year")
 
     def _add_scn(df):
@@ -1139,12 +1124,7 @@ def _line_chart(
         chart = (
             base.mark_line(point=True)
             .encode(
-                x=alt.X(
-                    "year:Q",
-                    title="Yıl",
-                    scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
-                    axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
-                ),
+                x=alt.X("year:Q", title="Yıl", scale=alt.Scale(domain=[min(year_vals), max(year_vals)]), axis=alt.Axis(values=year_vals, format="d", labelAngle=0)),
                 y=alt.Y("value:Q", title=y_title),
             )
         )
@@ -1550,9 +1530,8 @@ st.divider()
 # -----------------------------
 # 2) Kurulu güç karması (stacked, storage & PTX hariç)
 # -----------------------------
-# Not: 98-101 satırlarının label'ları teknoloji listesinde olmayabilir.
-# Bu yüzden order listesine zorla eklemiyoruz; Altair yine de gösterecek.
-order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
+# ✅ Extra satır etiketi legend sırasına da girsin diye order'a ekledik
+order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Biomass and Geothermal", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
 _render_stacked(
     df_capmix.rename(columns={"group": "category"}),
     title="Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç",
