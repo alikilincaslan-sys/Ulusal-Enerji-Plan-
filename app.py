@@ -908,16 +908,25 @@ with st.sidebar:
     st.header("Karşılaştırma modu")
     compare_mode = st.radio(
         "Stacked grafikler",
-        ["Small multiples (önerilen)", "Yıl içinde yan yana (clustered)", "2030/2050 snapshot", "2025/2035 snapshot"],
+        ["Small multiples (önerilen)", "Yıl içinde yan yana (clustered)", "2035/2050 snapshot", "2025/2035 snapshot"],
         index=0,
     )
 
-    # Snapshot yılları (yıl aralığından bağımsız)
-    SNAPSHOT_YEARS = None
-    if compare_mode == "2025/2035 snapshot":
-        SNAPSHOT_YEARS = (2025, 2035)
-    elif compare_mode == "2030/2050 snapshot":
-        SNAPSHOT_YEARS = (2030, 2050)
+    stacked_value_mode = st.select_slider(
+        'Stacked gosterim',
+        options=['Mutlak', 'Pay (%)'],
+        value='Mutlak',
+        help='Stacked grafiklerde mutlak deger (GWh/GW) yerine her yil icin paylari (%) gostermek icin Pay (%) secin.',
+    )
+
+    st.divider()
+    st.header("Grafik tipi")
+    ts_chart_style = st.selectbox(
+        "Zaman serisi grafikleri",
+        ["Bar (Gruplu)", "Çizgi", "Bar (Stack)"],
+        index=0,
+        help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
+    )
 
 if not uploaded_files:
     st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
@@ -974,7 +983,7 @@ if not selected_scenarios:
 
 # Enforce readability rules for stacked charts
 # Enforce readability rules for stacked charts
-if len(selected_scenarios) >= 4 and compare_mode not in {"2030/2050 snapshot", "2025/2035 snapshot"}:
+if len(selected_scenarios) >= 4 and compare_mode not in {"2035/2050 snapshot", "2025/2035 snapshot"}:
     st.warning("4+ senaryoda okunabilirlik için snapshot modları önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
 
@@ -1102,16 +1111,9 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     return bundle
 
 bundles = []
-
-# Snapshot modunda (2025/2035 veya 2030/2050) yıl filtresi bağımsız olmalı:
-# start_year çok ileri seçilse bile snapshot yılları okunabilsin.
-effective_start_year = start_year
-if 'SNAPSHOT_YEARS' in globals() and SNAPSHOT_YEARS:
-    effective_start_year = min(start_year, min(SNAPSHOT_YEARS))
-
 for scn in selected_scenarios:
     f = scenario_to_file[scn]
-    bundles.append(compute_scenario_bundle(f, scn, effective_start_year, MAX_YEAR))
+    bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR))
 
 # helper concat
 def _concat(key: str):
@@ -1143,9 +1145,20 @@ def _expected_year_ticks(start_year: int, end_year: int) -> list[int]:
     return [y for y in ticks if start_year <= y <= end_year]
 
 
-def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed_series: str | None = None):
-    """Çizgi yerine gruplanmış bar grafik.
-    Not: start_year/filtre nedeniyle veri olmayan yıllar eksende gösterilmez.
+def _line_chart(
+    df,
+    title: str,
+    y_title: str,
+    value_format: str = ",.2f",
+    dashed_series: str | None = None,
+    chart_style: str | None = None,
+):
+    """Zaman serisi (tek değer) grafiği.
+
+    chart_style:
+      - "Bar (Gruplu)": senaryolar yan yana
+      - "Bar (Stack)": senaryolar üst üste
+      - "Çizgi": çoklu senaryo çizgi
     """
     st.subheader(title)
     if df is None or df.empty:
@@ -1158,36 +1171,56 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
     dfp["year"] = dfp["year"].astype(int)
 
-    # Snapshot modunda sadece seçili 2 yılı göster (start_year'dan bağımsız)
-    snapshot_years = globals().get("SNAPSHOT_YEARS", None)
-    if snapshot_years:
-        snapshot_years = tuple(int(y) for y in snapshot_years)
-        dfp = dfp[dfp["year"].isin(snapshot_years)].copy()
-        if dfp.empty:
-            st.warning("Seçili snapshot yılları için veri bulunamadı.")
-            return
-
     year_vals = sorted(dfp["year"].unique().tolist())
 
-    chart = (
-        alt.Chart(dfp)
-        .mark_bar()
-        .encode(
-            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
-            xOffset=alt.XOffset("scenario:N"),
-            y=alt.Y("value:Q", title=y_title),
-            color=alt.Color(
-                "scenario:N",
-                title="Senaryo",
-                legend=alt.Legend(labelLimit=0, titleLimit=0),
-            ),
-            tooltip=[
-                alt.Tooltip("scenario:N", title="Senaryo"),
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title=y_title, format=value_format),
-            ],
-        )
+    # Default: global sidebar seçimi
+    style = chart_style or globals().get("ts_chart_style", "Bar (Gruplu)")
+
+    base = alt.Chart(dfp).encode(
+        color=alt.Color(
+            "scenario:N",
+            title="Senaryo",
+            legend=alt.Legend(labelLimit=0, titleLimit=0),
+        ),
+        tooltip=[
+            alt.Tooltip("scenario:N", title="Senaryo"),
+            alt.Tooltip("year:O", title="Yıl"),
+            alt.Tooltip("value:Q", title=y_title, format=value_format),
+        ],
     )
+
+    if style == "Çizgi":
+        # Line: year numeric looks nicer
+        chart = (
+            base.mark_line(point=True)
+            .encode(
+                x=alt.X(
+                    "year:Q",
+                    title="Yıl",
+                    scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
+                    axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
+                ),
+                y=alt.Y("value:Q", title=y_title),
+            )
+        )
+    elif style == "Bar (Stack)":
+        chart = (
+            base.mark_bar()
+            .encode(
+                x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
+                y=alt.Y("value:Q", title=y_title, stack="zero"),
+            )
+        )
+    else:
+        # Bar (Gruplu)
+        chart = (
+            base.mark_bar()
+            .encode(
+                x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
+                xOffset=alt.XOffset("scenario:N"),
+                y=alt.Y("value:Q", title=y_title),
+            )
+        )
 
     st.altair_chart(chart.properties(height=320), use_container_width=True)
 
@@ -1270,7 +1303,20 @@ st.divider()
 # -----------------------------
 # Stacked charts helpers (3 modes)
 # -----------------------------
-def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None):
+def _normalize_stacked_to_percent(df: pd.DataFrame, stack_field: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    dfp = df.copy()
+    dfp['year'] = pd.to_numeric(dfp['year'], errors='coerce').astype('Int64')
+    dfp['value'] = pd.to_numeric(dfp['value'], errors='coerce')
+    dfp = dfp.dropna(subset=['scenario', 'year', stack_field, 'value'])
+    totals = dfp.groupby(['scenario', 'year'], as_index=False)['value'].sum().rename(columns={'value': 'total'})
+    dfp = dfp.merge(totals, on=['scenario', 'year'], how='left')
+    dfp['value'] = np.where(dfp['total'] > 0, (dfp['value'] / dfp['total']) * 100.0, np.nan)
+    dfp = dfp.drop(columns=['total'])
+    return dfp
+
+def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1285,7 +1331,10 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         dfp = dfp.sort_values(["scenario", "year", stack_field])
 
     # global max for same scale
-    ymax = float(dfp.groupby(["scenario","year"])["value"].sum().max()) if len(dfp) else None
+    if is_percent:
+        ymax = 100.0
+    else:
+        ymax = float(dfp.groupby(['scenario','year'])['value'].sum().max()) if len(dfp) else None
     yscale = alt.Scale(domain=[0, ymax]) if ymax and np.isfinite(ymax) else alt.Undefined
 
     n = len(selected_scenarios)
@@ -1316,7 +1365,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             )
             st.altair_chart(chart, use_container_width=True)
 
-def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None):
+def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1328,13 +1377,18 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
+
+    yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
+
+    yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
+
     chart = (
         alt.Chart(dfp)
         .mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
             xOffset=alt.XOffset("scenario:N"),
-            y=alt.Y("value:Q", title=y_title, stack=True),
+            y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=alt.Color(f"{stack_field}:N", title=category_title),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
@@ -1347,16 +1401,11 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
     )
     st.altair_chart(chart, use_container_width=True)
 
-def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None):
+def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
-
-    # Maksimum yıl seçimi snapshot yılını dışarıda bırakıyorsa otomatik kırp
-    max_year = globals().get("MAX_YEAR", None)
-    if max_year is not None:
-        years = tuple(y for y in years if y <= int(max_year))
     dfp = df.copy()
     dfp["year"] = dfp["year"].astype(int)
     dfp = dfp[dfp["year"].isin(list(years))]
@@ -1367,13 +1416,15 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
+    yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
+
     chart = (
         alt.Chart(dfp)
         .mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
             xOffset=alt.XOffset("scenario:N"),
-            y=alt.Y("value:Q", title=y_title, stack=True),
+            y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=alt.Color(f"{stack_field}:N", title=category_title),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
@@ -1387,14 +1438,30 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
     st.altair_chart(chart, use_container_width=True)
 
 def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None):
-    if compare_mode == "Small multiples (önerilen)":
-        _stacked_small_multiples(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
-    elif compare_mode == "Yıl içinde yan yana (clustered)":
-        _stacked_clustered(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
-    elif compare_mode == "2030/2050 snapshot":
-        _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, years=(2030, 2050), order=order)
-    else:  # "2025/2035 snapshot"
-        _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, years=(2025, 2035), order=order)
+    df_use = df
+    y_title_use = y_title
+    value_format_use = value_format
+    is_percent = False
+
+    # Stacked: mutlak -> pay (%)
+    if stacked_value_mode == 'Pay (%)':
+        df_use = _normalize_stacked_to_percent(df_use, stack_field=stack_field)
+        y_title_use = '%'
+        value_format_use = '.1f'
+        is_percent = True
+
+    # Baslik net olsun
+    title_use = title + (' (Pay %)' if is_percent else '')
+
+    if compare_mode == 'Small multiples (önerilen)':
+        _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
+    elif compare_mode == 'Yıl içinde yan yana (clustered)':
+        _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
+    elif compare_mode == '2035/2050 snapshot':
+        _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2035, 2050), order=order, is_percent=is_percent)
+    else:  # '2025/2035 snapshot'
+        _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2025, 2035), order=order, is_percent=is_percent)
+
 
 # -----------------------------
 # 1) Elektrik üretim karması (stacked)
