@@ -1743,10 +1743,15 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
 # =========================
 if stacked_value_mode != "Pay (%)":  # yüzde modunda anlamsız, kapat
     st.markdown("### Yakıt/Teknoloji Bazlı Enerji Dönüşümü (Δ)")
-    st.markdown(
-    "🟩 **Artış** &nbsp;&nbsp;&nbsp; "
-    "🟥 **Azalış** &nbsp;&nbsp;&nbsp; "
-    "🟦 **Net Değişim**"
+   st.markdown(
+    """
+    <div style="display:flex; gap:18px; align-items:center; margin:6px 0 8px 0;">
+      <span><span style="display:inline-block;width:10px;height:10px;background:#2ca02c;border-radius:50%;margin-right:6px;"></span><b>Artış</b></span>
+      <span><span style="display:inline-block;width:10px;height:10px;background:#d62728;border-radius:50%;margin-right:6px;"></span><b>Azalış</b></span>
+      <span><span style="display:inline-block;width:10px;height:10px;background:#1f77b4;border-radius:50%;margin-right:6px;"></span><b>Net Değişim</b></span>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
     st.caption(
