@@ -33,6 +33,14 @@ KG_SUB_ROW_1IDX_2 = 106
 # Power_Generation sheet (Excel 1-indexed)
 CAPACITY_EXTRA_ROWS_1IDX = [98, 99, 100, 101]
 
+# NEW: bu satırlar boş geliyorsa isimleri buradan ver
+EXTRA_ROW_NAME_MAP = {
+    98: "Biomass",
+    99: "Biomass",
+    100: "Geothermal",
+    101: "Geothermal",
+}
+
 # --- GDP / POP / CARBON PRICE RULES (Scenario_Assumptions sheet) ---
 GDP_ROW_1IDX = 6  # Scenario_Assumptions sekmesinde 6. satır (GSYH)
 POP_ROW_1IDX = 5  # Scenario_Assumptions sekmesinde 5. satır (Nüfus)
@@ -291,9 +299,11 @@ def _read_power_generation_fixed_rows_as_stack(xlsx_file, value_rows_1idx: list[
             continue
 
         label = raw.iloc[r0, 0]
-        label = "" if pd.isna(label) else str(label).strip()
-        if not label:
-            label = f"Ek Satır {r1}"
+    label = "" if pd.isna(label) else str(label).strip()
+    if (not label) or (label.lower() == "nan"):
+    # önce haritadan isim ata, yoksa fallback
+    label = EXTRA_ROW_NAME_MAP.get(r1, f"Ek Satır {r1}")
+
 
         for y, c in zip(years, year_cols_idx):
             if int(y) > MAX_YEAR:
