@@ -1000,18 +1000,6 @@ with st.sidebar:
         type=["xlsx"],
         accept_multiple_files=True,
     )
-# -----------------------------
-# Excel dosyası açık olma uyarısı yoksa hata veriyor
-# -----------------------------
-if uploaded_files:
-    st.warning(
-        "⚠️ **Önemli Uyarı:** Yüklediğiniz Excel dosyaları bilgisayarınızda **açık ise**, "
-        "bazı sekmeler veya hücreler **boş (null)** okunabilir.\n\n"
-        "Lütfen devam etmeden önce:\n"
-        "- Excel dosyalarını **tamamen kapatın**\n"
-        "- Gerekirse Streamlit sayfasını **yenileyip dosyaları tekrar yükleyin**",
-        icon="⚠️",
-    )
 
     st.divider()
     st.header("Ayarlar")
