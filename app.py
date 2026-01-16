@@ -511,12 +511,7 @@ def read_energy_emissions_sectoral_co2e(xlsx_file) -> pd.DataFrame:
             if not np.isfinite(v_co2e):
                 continue
             records.append(
-                {
-                    "year": int(y),
-                    "sector": label,
-                    "value": float(v_co2e),
-                    "ratio_co2_over_co2e": ratio,
-                }
+                {"year": int(y), "sector": label, "value": float(v_co2e), "ratio_co2_over_co2e": ratio}
             )
 
     df = pd.DataFrame(records)
@@ -1108,7 +1103,6 @@ if len(selected_scenarios) == 2:
         diff_scn_a = st.selectbox("İlave önlem/politika Senaryoları", options=selected_scenarios, index=0)
         diff_scn_b = st.selectbox("Referans senaryo ", options=selected_scenarios, index=1)
         if diff_scn_a == diff_scn_b:
-            # Aynı senaryo seçilirse otomatik düzelt
             diff_scn_b = selected_scenarios[1] if selected_scenarios[0] == diff_scn_a else selected_scenarios[0]
 else:
     diff_mode_enabled = False
@@ -1143,9 +1137,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     energy_em_sector_co2e = _filter_years(read_energy_emissions_sectoral_co2e(xlsx_file), start_year, max_year)
     energy_em_total_co2e = pd.DataFrame(columns=["year", "value", "series"])
     if energy_em_sector_co2e is not None and not energy_em_sector_co2e.empty:
-        energy_em_total_co2e = (
-            energy_em_sector_co2e.groupby("year", as_index=False)["value"].sum().rename(columns={"value": "value"})
-        )
+        energy_em_total_co2e = energy_em_sector_co2e.groupby("year", as_index=False)["value"].sum()
         energy_em_total_co2e["series"] = "Enerji Kaynakli Emisyonlar (CO2e, ktn)"
 
     # Net-Zero icin toplam (tahmini) bileenleri: Enerji + Enerji Disi&SGE + LULUCF
@@ -1170,7 +1162,6 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     primary_energy_source = _filter_years(read_primary_energy_consumption_by_source(xlsx_file), start_year, max_year)
     final_energy_source = _filter_years(read_final_energy_consumption_by_source(xlsx_file), start_year, max_year)
     dependency_ratio = _filter_years(read_energy_import_dependency_ratio(xlsx_file), start_year, max_year)
-
     electrification_ratio = _filter_years(read_final_energy_electrification_ratio(xlsx_file), start_year, max_year)
 
     total_supply = _filter_years(get_series_from_block(balance, TOTAL_SUPPLY_LABEL), start_year, max_year)
@@ -1643,27 +1634,24 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     is_percent = False
 
     # --- 2 senaryo fark modu (A - B) — SADECE MUTLAK DEĞERLERDE ---
-    diff_on = bool(globals().get('diff_mode_enabled', False))
-    a = globals().get('diff_scn_a')
-    b = globals().get('diff_scn_b')
-    if diff_on and a and b and (globals().get('stacked_value_mode') != 'Pay (%)'):
+    diff_on = bool(globals().get("diff_mode_enabled", False))
+    a = globals().get("diff_scn_a")
+    b = globals().get("diff_scn_b")
+    if diff_on and a and b and (globals().get("stacked_value_mode") != "Pay (%)"):
         d0 = df_use.copy() if df_use is not None else None
-        if d0 is not None and (not d0.empty) and ('scenario' in d0.columns):
-            sub = d0[d0['scenario'].isin([a, b])].copy()
-            # year/x_field + category (stack_field) bazında A-B farkı
+        if d0 is not None and (not d0.empty) and ("scenario" in d0.columns):
+            sub = d0[d0["scenario"].isin([a, b])].copy()
             if not sub.empty and (x_field in sub.columns) and (stack_field in sub.columns):
-                sub[x_field] = pd.to_numeric(sub[x_field], errors='coerce')
-                sub['value'] = pd.to_numeric(sub['value'], errors='coerce')
-                sub = sub.dropna(subset=[x_field, stack_field, 'value', 'scenario'])
+                sub[x_field] = pd.to_numeric(sub[x_field], errors="coerce")
+                sub["value"] = pd.to_numeric(sub["value"], errors="coerce")
+                sub = sub.dropna(subset=[x_field, stack_field, "value", "scenario"])
                 sub[x_field] = sub[x_field].astype(int)
-                wide = sub.pivot_table(index=[x_field, stack_field], columns='scenario', values='value', aggfunc='sum')
+                wide = sub.pivot_table(index=[x_field, stack_field], columns="scenario", values="value", aggfunc="sum")
                 if (a in wide.columns) and (b in wide.columns):
-                    wide = wide[[a, b]].copy()
-                    # Senaryolardan birinde olmayan kategori/yil kombinasyonlari NaN gelir; fark icin 0 kabul ediyoruz
-                    wide = wide.fillna(0.0)
-                    wide['value'] = wide[a] - wide[b]
-                    out = wide.reset_index()[[x_field, stack_field, 'value']]
-                    out['scenario'] = f"Fark: {a} - {b}"
+                    wide = wide[[a, b]].copy().fillna(0.0)
+                    wide["value"] = wide[a] - wide[b]
+                    out = wide.reset_index()[[x_field, stack_field, "value"]]
+                    out["scenario"] = f"Fark: {a} - {b}"
                     df_use = out
                     title = f"{title} — Fark ({a} - {b})"
 
@@ -1758,63 +1746,8 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
         _render_total()
 
 
-# -----------------------------
-# 1) Elektrik üretim karması (stacked) — TOTAL STORAGE HARİÇ
-# -----------------------------
-order_gen = [
-    "Hydro",
-    "Wind (RES)",
-    "Solar (GES)",
-    "Other Renewables",
-    "Natural gas",
-    "Coal",
-    "Lignite",
-    "Nuclear",
-    "Other",
-]
-_render_stacked(
-    df_genmix.rename(columns={"group": "category"}),
-    title="Kaynaklarına Göre Elektrik Üretimi (GWh)",
-    x_field="year",
-    stack_field="category",
-    y_title="GWh",
-    category_title="Kaynak/Teknoloji",
-    value_format=",.0f",
-    order=order_gen,
-)
-
-st.divider()
-
-# -----------------------------
-# 2) Kurulu güç karması (stacked, storage & PTX hariç)
-# -----------------------------
-# Not: 98-101 satırlarının label'ları teknoloji listesinde olmayabilir.
-# Bu yüzden order listesine zorla eklemiyoruz; Altair yine de gösterecek.
-order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
-_render_stacked(
-    df_capmix.rename(columns={"group": "category"}),
-    title="Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç",
-    x_field="year",
-    stack_field="category",
-    y_title="GW",
-    category_title="Teknoloji",
-    value_format=",.2f",
-    order=order_cap,
-)
-
-st.divider()
-
-# ============================================================
-# EKLENECEK TEK BLOK (2 PARÇA) — HİÇBİR ŞEY SİLME
-# 1) Helper fonksiyonları: _render_stacked(...) fonksiyonunun ALTINA yapıştır
-# 2) UI paneli: "Sektörlere Göre Elektrik Tüketimi (GWh)" grafiğini çizen
-#    _render_stacked(...) çağrısının HEMEN ALTINA (st.divider() öncesi) yapıştır
-# ============================================================
-
-
 # =========================
-# (1) HELPERS — BURAYI
-# _render_stacked(...) fonksiyonunun HEMEN ALTINA yapıştır
+# FIXED HELPERS: Waterfall preparation + render
 # =========================
 def prepare_yearly_transition_waterfall(
     df_mix: pd.DataFrame,
@@ -1847,7 +1780,6 @@ def prepare_yearly_transition_waterfall(
     if df.empty:
         return pd.DataFrame()
 
-    # NaN -> 0 (boş hücreleri 0 say)
     df[value_col] = df[value_col].fillna(0.0)
 
     wide = (
@@ -1859,7 +1791,6 @@ def prepare_yearly_transition_waterfall(
     if start_year not in wide.columns or end_year not in wide.columns:
         return pd.DataFrame()
 
-    # Bazı durumlarda pivot sonrası kolonlar object kalabiliyor -> bir kez daha numeric'e zorla
     wide[start_year] = pd.to_numeric(wide[start_year], errors="coerce").fillna(0.0)
     wide[end_year] = pd.to_numeric(wide[end_year], errors="coerce").fillna(0.0)
 
@@ -1875,62 +1806,7 @@ def prepare_yearly_transition_waterfall(
     for _, r in wide.iterrows():
         y0 = cumulative
         y1 = cumulative + float(r["delta"])
-        records.append(
-            {"step": str(r[group_col]), "delta": float(r["delta"]), "y0": y0, "y1": y1}
-        )
-        cumulative = y1
-
-    records.append({"step": "Net Değişim", "delta": cumulative, "y0": 0.0, "y1": cumulative})
-    return pd.DataFrame(records)
-
-    
-    df_mix: pd.DataFrame,
-    scenario: str,
-    start_year: int,
-    end_year: int,
-    value_col: str = "value",
-    group_col: str = "category",
-    pd.DataFrame:
-    """
-    Aynı senaryo içinde start_year -> end_year yakıt/teknoloji dönüşümü (Δ=end-start).
-    Çıktı: step, delta, y0, y1 (waterfall için).
-    """
-    if df_mix is None or df_mix.empty:
-        return pd.DataFrame()
-
-    df = df_mix.copy()
-    if "scenario" not in df.columns:
-        return pd.DataFrame()
-
-    df = df[(df["scenario"] == scenario) & (df["year"].isin([start_year, end_year]))]
-    if df.empty:
-        return pd.DataFrame()
-
-    wide = (
-        df.pivot_table(index=group_col, columns="year", values=value_col, aggfunc="sum")
-        .fillna(0.0)
-        .reset_index()
-    )
-
-    if start_year not in wide.columns or end_year not in wide.columns:
-        return pd.DataFrame()
-
-    wide["delta"] = wide[end_year] - wide[start_year]
-    wide = wide[wide["delta"].abs() > 1e-9]
-    if wide.empty:
-        return pd.DataFrame()
-
-    # okunabilirlik: küçükten büyüğe
-    wide = wide.sort_values("delta")
-
-    records = []
-    cumulative = 0.0
-    for _, r in wide.iterrows():
-        y0 = cumulative
-        y1 = cumulative + float(r["delta"])
-        records.append(
-            {"step": str(r[group_col]), "delta": float(r["delta"]), "y0": y0, "y1": y1}
-        )
+        records.append({"step": str(r[group_col]), "delta": float(r["delta"]), "y0": y0, "y1": y1})
         cumulative = y1
 
     records.append({"step": "Net Değişim", "delta": cumulative, "y0": 0.0, "y1": cumulative})
@@ -1958,10 +1834,7 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
             y2="y1:Q",
             color=alt.Color(
                 "color:N",
-                scale=alt.Scale(
-                    domain=["Artış", "Azalış", "Net"],
-                    range=["#2ca02c", "#d62728", "#1f77b4"],
-                ),
+                scale=alt.Scale(domain=["Artış", "Azalış", "Net"], range=["#2ca02c", "#d62728", "#1f77b4"]),
                 legend=None,
             ),
             tooltip=[
@@ -1976,12 +1849,66 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
     st.altair_chart(ch, use_container_width=True)
 
 
-# =========================
-# (2) UI PANELİ — BURAYI
-# "Sektörlere Göre Elektrik Tüketimi (GWh)" grafiğini çizen
-# _render_stacked(...) çağrısının HEMEN ALTINA yapıştır
-# (st.divider() gelmeden önce)
-# =========================
+# -----------------------------
+# 1) Elektrik üretim karması (stacked) — TOTAL STORAGE HARİÇ
+# -----------------------------
+order_gen = [
+    "Hydro",
+    "Wind (RES)",
+    "Solar (GES)",
+    "Other Renewables",
+    "Natural gas",
+    "Coal",
+    "Lignite",
+    "Nuclear",
+    "Other",
+]
+_render_stacked(
+    df_genmix.rename(columns={"group": "category"}),
+    title="Kaynaklarına Göre Elektrik Üretimi (GWh)",
+    x_field="year",
+    stack_field="category",
+    y_title="GWh",
+    category_title="Kaynak/Teknoloji",
+    value_format=",.0f",
+    order=order_gen,
+)
+
+st.divider()
+
+# -----------------------------
+# 2) Kurulu güç karması (stacked, storage & PTX hariç)
+# -----------------------------
+order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
+_render_stacked(
+    df_capmix.rename(columns={"group": "category"}),
+    title="Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç",
+    x_field="year",
+    stack_field="category",
+    y_title="GW",
+    category_title="Teknoloji",
+    value_format=",.2f",
+    order=order_cap,
+)
+
+st.divider()
+
+# -----------------------------
+# 2.1) Sektörlere Göre Elektrik Tüketimi (stacked)
+# -----------------------------
+_render_stacked(
+    df_sector_el.rename(columns={"sector": "category"}),
+    title="Sektörlere Göre Elektrik Tüketimi (GWh)",
+    x_field="year",
+    stack_field="category",
+    y_title="GWh",
+    category_title="Sektör",
+    value_format=", .0f".replace(" ", ""),
+)
+
+# -----------------------------
+# UI PANELİ: Yakıt/Teknoloji Bazlı Enerji Dönüşümü (Δ)
+# -----------------------------
 if stacked_value_mode != "Pay (%)":  # yüzde modunda anlamsız, kapat
     st.markdown("### Yakıt/Teknoloji Bazlı Enerji Dönüşümü (Δ)")
     st.markdown(
@@ -1997,11 +1924,10 @@ if stacked_value_mode != "Pay (%)":  # yüzde modunda anlamsız, kapat
 
     st.caption(
         "Grafikler, seçili senaryoda başlangıç ve bitiş yılları (ayarlardan seçiniz) arasındaki "
-        "yakıt/teknoloji bazlı elektrik üretimi ve kurulu güç değişimlerini (Δ) ifade etmektedir."
-        "Kırmızlar önceki yıla görece azalışı, Yeşiller artışı, Mavi ise kümülatif net değişmi ifade eder."
+        "yakıt/teknoloji bazlı elektrik üretimi ve kurulu güç değişimlerini (Δ) ifade etmektedir. "
+        "Kırmızılar azalışı, yeşiller artışı, mavi ise kümülatif net değişimi ifade eder."
     )
 
-    # Çoklu senaryoda karışmasın: sadece 1 senaryo analiz edelim
     if len(selected_scenarios) == 1:
         scn_tr = selected_scenarios[0]
     else:
@@ -2012,9 +1938,6 @@ if stacked_value_mode != "Pay (%)":  # yüzde modunda anlamsız, kapat
             key="transition_scn_select",
         )
 
-    # df_genmix ve df_capmix zaten mevcut:
-    # df_genmix: year, group, value, scenario
-    # df_capmix: year, group, value, scenario
     gen_for_wf = df_genmix.rename(columns={"group": "category"}).copy()
     cap_for_wf = df_capmix.rename(columns={"group": "category"}).copy()
 
@@ -2049,20 +1972,6 @@ if stacked_value_mode != "Pay (%)":  # yüzde modunda anlamsız, kapat
             title=f"Kurulu Güç Dönüşümü (GW) — {start_year} → {MAX_YEAR}",
             y_title="GW",
         )
-
-
-# -----------------------------
-# 2.1) Sektörlere Göre Elektrik Tüketimi (stacked)
-# -----------------------------
-_render_stacked(
-    df_sector_el.rename(columns={"sector": "category"}),
-    title="Sektörlere Göre Elektrik Tüketimi (GWh)",
-    x_field="year",
-    stack_field="category",
-    y_title="GWh",
-    category_title="Sektör",
-    value_format=", .0f".replace(" ", ""),
-)
 
 st.divider()
 
@@ -2122,7 +2031,7 @@ _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂
 # -----------------------------
 # Net-Zero takibi icin: Emisyonlar (CO2e) — Enerji + Enerji Disi&SGE (+ LULUCF)
 # - Mutlak mod: LULUCF dahil
-# - Pay (%) mod: LULUCF otomatik haric (negatif oldugu icin pay yorumunu bozabilir)
+# - Pay (%) mod: LULUCF otomatik haric
 # -----------------------------
 st.divider()
 st.markdown("## Türkiye Seragazı Emisyonları — Net Zero Hedefi Takibi (CO₂e)")
