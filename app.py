@@ -1105,8 +1105,8 @@ if len(selected_scenarios) == 2:
             value=False,
             help="Sadece 2 senaryo seçiliyken aktif olur. A - B farkını tek seri olarak çizer.",
         )
-        diff_scn_a = st.selectbox("Senaryo A", options=selected_scenarios, index=0)
-        diff_scn_b = st.selectbox("Senaryo B", options=selected_scenarios, index=1)
+        diff_scn_a = st.selectbox("İlave önlem/politika Senaryoları", options=selected_scenarios, index=0)
+        diff_scn_b = st.selectbox("Referans senaryo ", options=selected_scenarios, index=1)
         if diff_scn_a == diff_scn_b:
             # Aynı senaryo seçilirse otomatik düzelt
             diff_scn_b = selected_scenarios[1] if selected_scenarios[0] == diff_scn_a else selected_scenarios[0]
