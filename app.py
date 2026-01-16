@@ -1002,16 +1002,20 @@ with st.sidebar:
     )
 
     st.divider()
-    st.header("Ayarlar")
-    max_year = st.selectbox("Maksimum yıl", [2050, 2045, 2040, 2035], index=0)
-    MAX_YEAR = int(max_year)
+  st.header("Ayarlar")
 
-    start_year_options = [2018, 2020, 2025, 2030, 2035, 2040, 2045]
-    start_year = st.selectbox(
-        "Başlangıç yılı",
-        start_year_options,
-        index=start_year_options.index(2025) if 2025 in start_year_options else 0,
-    )
+# ÜSTTE: İlk Senaryo Yılı
+start_year_options = [2018, 2020, 2025, 2030, 2035, 2040, 2045]
+start_year = st.selectbox(
+    "İlk Senaryo Yılı",
+    start_year_options,
+    index=start_year_options.index(2025) if 2025 in start_year_options else 0,
+)
+
+# ALTTA: Son Senaryo Yılı (eski Maksimum yıl)
+max_year = st.selectbox("Son Senaryo Yılı", [2050, 2045, 2040, 2035], index=0)
+MAX_YEAR = int(max_year)
+
 
     st.divider()
     st.header("Karşılaştırma modu")
