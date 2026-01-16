@@ -1890,7 +1890,7 @@ def prepare_yearly_transition_waterfall(
     end_year: int,
     value_col: str = "value",
     group_col: str = "category",
-   -> pd.DataFrame:
+    pd.DataFrame:
     """
     Aynı senaryo içinde start_year -> end_year yakıt/teknoloji dönüşümü (Δ=end-start).
     Çıktı: step, delta, y0, y1 (waterfall için).
