@@ -1743,6 +1743,12 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
 # =========================
 if stacked_value_mode != "Pay (%)":  # yüzde modunda anlamsız, kapat
     st.markdown("### Yakıt/Teknoloji Bazlı Enerji Dönüşümü (Δ)")
+    st.markdown(
+    "🟩 **Artış** &nbsp;&nbsp;&nbsp; "
+    "🟥 **Azalış** &nbsp;&nbsp;&nbsp; "
+    "🟦 **Net Değişim**"
+)
+
     st.caption(
         "Grafikler, seçili senaryoda başlangıç ve bitiş yılları (ayarlardan seçiniz) arasındaki "
         "yakıt/teknoloji bazlı elektrik üretimi ve kurulu güç değişimlerini (Δ) ifade etmektedir."
