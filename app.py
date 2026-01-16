@@ -1835,6 +1835,73 @@ def prepare_yearly_transition_waterfall(
     if "scenario" not in df.columns:
         return pd.DataFrame()
 
+    # Güvenli tip dönüşümleri (2050 gibi boş/metin kolonlar için kritik)
+    df["year"] = pd.to_numeric(df["year"], errors="coerce")
+    if value_col in df.columns:
+        df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
+
+    df = df.dropna(subset=["year", value_col, "scenario"])
+    df["year"] = df["year"].astype(int)
+
+    df = df[(df["scenario"] == scenario) & (df["year"].isin([start_year, end_year]))]
+    if df.empty:
+        return pd.DataFrame()
+
+    # NaN -> 0 (boş hücreleri 0 say)
+    df[value_col] = df[value_col].fillna(0.0)
+
+    wide = (
+        df.pivot_table(index=group_col, columns="year", values=value_col, aggfunc="sum")
+        .fillna(0.0)
+        .reset_index()
+    )
+
+    if start_year not in wide.columns or end_year not in wide.columns:
+        return pd.DataFrame()
+
+    # Bazı durumlarda pivot sonrası kolonlar object kalabiliyor -> bir kez daha numeric'e zorla
+    wide[start_year] = pd.to_numeric(wide[start_year], errors="coerce").fillna(0.0)
+    wide[end_year] = pd.to_numeric(wide[end_year], errors="coerce").fillna(0.0)
+
+    wide["delta"] = wide[end_year] - wide[start_year]
+    wide = wide[wide["delta"].abs() > 1e-9]
+    if wide.empty:
+        return pd.DataFrame()
+
+    wide = wide.sort_values("delta")
+
+    records = []
+    cumulative = 0.0
+    for _, r in wide.iterrows():
+        y0 = cumulative
+        y1 = cumulative + float(r["delta"])
+        records.append(
+            {"step": str(r[group_col]), "delta": float(r["delta"]), "y0": y0, "y1": y1}
+        )
+        cumulative = y1
+
+    records.append({"step": "Net Değişim", "delta": cumulative, "y0": 0.0, "y1": cumulative})
+    return pd.DataFrame(records)
+
+    
+    df_mix: pd.DataFrame,
+    scenario: str,
+    start_year: int,
+    end_year: int,
+    value_col: str = "value",
+    group_col: str = "category",
+) -> pd.DataFrame:
+    """
+    Aynı senaryo içinde start_year -> end_year yakıt/teknoloji dönüşümü (Δ=end-start).
+    Çıktı: step, delta, y0, y1 (waterfall için).
+    """
+    if df_mix is None or df_mix.empty:
+        return pd.DataFrame()
+
+    df = df_mix.copy()
+    if "scenario" not in df.columns:
+        return pd.DataFrame()
+
     df = df[(df["scenario"] == scenario) & (df["year"].isin([start_year, end_year]))]
     if df.empty:
         return pd.DataFrame()
