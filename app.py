@@ -1756,8 +1756,8 @@ if stacked_value_mode != "Pay (%)":  # yüzde modunda anlamsız, kapat
 
     st.caption(
         "Grafikler, seçili senaryoda başlangıç ve bitiş yılları (ayarlardan seçiniz) arasındaki "
-        "yakıt/teknoloji bazlı elektrik üretimi ve kurulu güç değişimlerini (Δ) ifade etmektedir. 
-        "Kırmızlar azalış, Yeşiller artışı, mavi ise kümülatif net değişmi ifade eder."
+        "yakıt/teknoloji bazlı elektrik üretimi ve kurulu güç değişimlerini (Δ) ifade etmektedir."
+        "Kırmızlar önceki yıla görece azalışı, Yeşiller artışı, Mavi ise kümülatif net değişmi ifade eder."
     )
 
     # Çoklu senaryoda karışmasın: sadece 1 senaryo analiz edelim
