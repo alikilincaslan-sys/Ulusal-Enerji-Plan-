@@ -1630,6 +1630,174 @@ _render_stacked(
 
 st.divider()
 
+# ============================================================
+# EKLENECEK TEK BLOK (2 PARÇA) — HİÇBİR ŞEY SİLME
+# 1) Helper fonksiyonları: _render_stacked(...) fonksiyonunun ALTINA yapıştır
+# 2) UI paneli: "Sektörlere Göre Elektrik Tüketimi (GWh)" grafiğini çizen
+#    _render_stacked(...) çağrısının HEMEN ALTINA (st.divider() öncesi) yapıştır
+# ============================================================
+
+
+# =========================
+# (1) HELPERS — BURAYI
+# _render_stacked(...) fonksiyonunun HEMEN ALTINA yapıştır
+# =========================
+def prepare_yearly_transition_waterfall(
+    df_mix: pd.DataFrame,
+    scenario: str,
+    start_year: int,
+    end_year: int,
+    value_col: str = "value",
+    group_col: str = "category",
+) -> pd.DataFrame:
+    """
+    Aynı senaryo içinde start_year -> end_year yakıt/teknoloji dönüşümü (Δ=end-start).
+    Çıktı: step, delta, y0, y1 (waterfall için).
+    """
+    if df_mix is None or df_mix.empty:
+        return pd.DataFrame()
+
+    df = df_mix.copy()
+    if "scenario" not in df.columns:
+        return pd.DataFrame()
+
+    df = df[(df["scenario"] == scenario) & (df["year"].isin([start_year, end_year]))]
+    if df.empty:
+        return pd.DataFrame()
+
+    wide = (
+        df.pivot_table(index=group_col, columns="year", values=value_col, aggfunc="sum")
+        .fillna(0.0)
+        .reset_index()
+    )
+
+    if start_year not in wide.columns or end_year not in wide.columns:
+        return pd.DataFrame()
+
+    wide["delta"] = wide[end_year] - wide[start_year]
+    wide = wide[wide["delta"].abs() > 1e-9]
+    if wide.empty:
+        return pd.DataFrame()
+
+    # okunabilirlik: küçükten büyüğe
+    wide = wide.sort_values("delta")
+
+    records = []
+    cumulative = 0.0
+    for _, r in wide.iterrows():
+        y0 = cumulative
+        y1 = cumulative + float(r["delta"])
+        records.append(
+            {"step": str(r[group_col]), "delta": float(r["delta"]), "y0": y0, "y1": y1}
+        )
+        cumulative = y1
+
+    records.append({"step": "Net Değişim", "delta": cumulative, "y0": 0.0, "y1": cumulative})
+    return pd.DataFrame(records)
+
+
+def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
+    if df_wf is None or df_wf.empty:
+        st.info("Seçilen yıllar için dönüşüm verisi bulunamadı.")
+        return
+
+    d = df_wf.copy()
+    d["color"] = np.where(
+        d["step"] == "Net Değişim",
+        "Net",
+        np.where(d["delta"] >= 0, "Artış", "Azalış"),
+    )
+
+    ch = (
+        alt.Chart(d)
+        .mark_bar()
+        .encode(
+            x=alt.X("step:N", title="Yakıt / Teknoloji", sort=None),
+            y=alt.Y("y0:Q", title=y_title),
+            y2="y1:Q",
+            color=alt.Color(
+                "color:N",
+                scale=alt.Scale(
+                    domain=["Artış", "Azalış", "Net"],
+                    range=["#2ca02c", "#d62728", "#1f77b4"],
+                ),
+                legend=None,
+            ),
+            tooltip=[
+                alt.Tooltip("step:N", title="Adım"),
+                alt.Tooltip("delta:Q", title="Δ", format=",.2f"),
+            ],
+        )
+        .properties(height=340)
+    )
+
+    st.markdown(f"**{title}**")
+    st.altair_chart(ch, use_container_width=True)
+
+
+# =========================
+# (2) UI PANELİ — BURAYI
+# "Sektörlere Göre Elektrik Tüketimi (GWh)" grafiğini çizen
+# _render_stacked(...) çağrısının HEMEN ALTINA yapıştır
+# (st.divider() gelmeden önce)
+# =========================
+if stacked_value_mode != "Pay (%)":  # yüzde modunda anlamsız, kapat
+    st.markdown("### Yakıt/Teknoloji Bazlı Enerji Dönüşümü (Δ)")
+    st.caption(
+        "Grafikler, seçili senaryoda başlangıç ve bitiş yılları (ayarlardan seçiniz) arasındaki "
+        "yakıt/teknoloji bazlı elektrik üretimi ve kurulu güç değişimlerini (Δ) ifade etmektedir."
+    )
+
+    # Çoklu senaryoda karışmasın: sadece 1 senaryo analiz edelim
+    if len(selected_scenarios) == 1:
+        scn_tr = selected_scenarios[0]
+    else:
+        scn_tr = st.selectbox(
+            "Dönüşüm analizi için senaryo seçin",
+            options=selected_scenarios,
+            index=0,
+            key="transition_scn_select",
+        )
+
+    # df_genmix ve df_capmix zaten mevcut:
+    # df_genmix: year, group, value, scenario
+    # df_capmix: year, group, value, scenario
+    gen_for_wf = df_genmix.rename(columns={"group": "category"}).copy()
+    cap_for_wf = df_capmix.rename(columns={"group": "category"}).copy()
+
+    wf_gen = prepare_yearly_transition_waterfall(
+        gen_for_wf,
+        scenario=scn_tr,
+        start_year=int(start_year),
+        end_year=int(MAX_YEAR),
+        value_col="value",
+        group_col="category",
+    )
+
+    wf_cap = prepare_yearly_transition_waterfall(
+        cap_for_wf,
+        scenario=scn_tr,
+        start_year=int(start_year),
+        end_year=int(MAX_YEAR),
+        value_col="value",
+        group_col="category",
+    )
+
+    colA, colB = st.columns(2)
+    with colA:
+        render_waterfall(
+            wf_gen,
+            title=f"Elektrik Üretimi Dönüşümü (GWh) — {start_year} → {MAX_YEAR}",
+            y_title="GWh",
+        )
+    with colB:
+        render_waterfall(
+            wf_cap,
+            title=f"Kurulu Güç Dönüşümü (GW) — {start_year} → {MAX_YEAR}",
+            y_title="GW",
+        )
+
+
 # -----------------------------
 # 2.1) Sektörlere Göre Elektrik Tüketimi (stacked)
 # -----------------------------
