@@ -1316,7 +1316,18 @@ def _normalize_stacked_to_percent(df: pd.DataFrame, stack_field: str) -> pd.Data
     dfp = dfp.drop(columns=['total'])
     return dfp
 
-def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
+def _stacked_small_multiples(
+    df,
+    title: str,
+    x_field: str,
+    stack_field: str,
+    y_title: str,
+    category_title: str,
+    value_format: str,
+    order=None,
+    is_percent: bool = False,
+    show_totals: bool = True,
+):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1345,10 +1356,17 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         sub = dfp[dfp["scenario"] == scn]
         if sub.empty:
             continue
+
+        # Totals for top labels (scenario-year). In percent mode totals are always ~100,
+        # so show only in absolute mode unless explicitly needed.
+        totals = (
+            sub.groupby([x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
+        )
+
         c = cols[idx % ncols]
         with c:
             st.markdown(f"**{scn}**")
-            chart = (
+            bars = (
                 alt.Chart(sub)
                 .mark_bar()
                 .encode(
@@ -1361,11 +1379,36 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
                         alt.Tooltip("value:Q", title=y_title, format=value_format),
                     ],
                 )
-                .properties(height=380)
             )
+
+            if show_totals and not is_percent:
+                total_labels = (
+                    alt.Chart(totals)
+                    .mark_text(angle=90, dy=-6)
+                    .encode(
+                        x=alt.X(f"{x_field}:O"),
+                        y=alt.Y("total:Q"),
+                        text=alt.Text("total:Q", format=value_format),
+                    )
+                )
+                chart = (bars + total_labels).properties(height=380)
+            else:
+                chart = bars.properties(height=380)
+
             st.altair_chart(chart, use_container_width=True)
 
-def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
+def _stacked_clustered(
+    df,
+    title: str,
+    x_field: str,
+    stack_field: str,
+    y_title: str,
+    category_title: str,
+    value_format: str,
+    order=None,
+    is_percent: bool = False,
+    show_totals: bool = True,
+):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1382,7 +1425,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
-    chart = (
+    bars = (
         alt.Chart(dfp)
         .mark_bar()
         .encode(
@@ -1397,11 +1440,41 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
             ],
         )
-        .properties(height=420)
     )
+
+    if show_totals and not is_percent:
+        totals = (
+            dfp.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
+        )
+        total_labels = (
+            alt.Chart(totals)
+            .mark_text(angle=90, dy=-6)
+            .encode(
+                x=alt.X(f"{x_field}:O"),
+                xOffset=alt.XOffset("scenario:N"),
+                y=alt.Y("total:Q"),
+                text=alt.Text("total:Q", format=value_format),
+            )
+        )
+        chart = (bars + total_labels).properties(height=420)
+    else:
+        chart = bars.properties(height=420)
+
     st.altair_chart(chart, use_container_width=True)
 
-def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False):
+def _stacked_snapshot(
+    df,
+    title: str,
+    x_field: str,
+    stack_field: str,
+    y_title: str,
+    category_title: str,
+    value_format: str,
+    years=(2035, 2050),
+    order=None,
+    is_percent: bool = False,
+    show_totals: bool = True,
+):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1418,7 +1491,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
-    chart = (
+    bars = (
         alt.Chart(dfp)
         .mark_bar()
         .encode(
@@ -1433,8 +1506,26 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
             ],
         )
-        .properties(height=420)
     )
+
+    if show_totals and not is_percent:
+        totals = (
+            dfp.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
+        )
+        total_labels = (
+            alt.Chart(totals)
+            .mark_text(angle=90, dy=-6)
+            .encode(
+                x=alt.X(f"{x_field}:O"),
+                xOffset=alt.XOffset("scenario:N"),
+                y=alt.Y("total:Q"),
+                text=alt.Text("total:Q", format=value_format),
+            )
+        )
+        chart = (bars + total_labels).properties(height=420)
+    else:
+        chart = bars.properties(height=420)
+
     st.altair_chart(chart, use_container_width=True)
 
 def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None):
