@@ -991,7 +991,7 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
 # -----------------------------
 # UI
 # -----------------------------
-st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü v17012026")
+st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü v17.01.2026")
 
 with st.sidebar:
     st.header("Dosyalar (çoklu senaryo)")
