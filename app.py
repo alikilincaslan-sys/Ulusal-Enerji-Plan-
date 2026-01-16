@@ -1316,6 +1316,7 @@ def _normalize_stacked_to_percent(df: pd.DataFrame, stack_field: str) -> pd.Data
     dfp = dfp.drop(columns=['total'])
     return dfp
 
+
 def _stacked_small_multiples(
     df,
     title: str,
@@ -1332,10 +1333,6 @@ def _stacked_small_multiples(
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
-
-    # Theme-aware label color so totals don't clash in light mode
-    _theme_base = st.get_option("theme.base")
-    _total_label_color = "black" if _theme_base == "light" else "white"
 
     dfp = df.copy()
     dfp["year"] = dfp["year"].astype(int)
@@ -1361,17 +1358,17 @@ def _stacked_small_multiples(
         if sub.empty:
             continue
 
-        # Totals for top labels (scenario-year). In percent mode totals are always ~100,
-        # so show only in absolute mode unless explicitly needed.
-        totals = (
-            sub.groupby([x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
-        )
-
         c = cols[idx % ncols]
         with c:
             st.markdown(f"**{scn}**")
+
+            # Bar layer (add Total via join-aggregate so tooltip can show it)
             bars = (
                 alt.Chart(sub)
+                .transform_joinaggregate(
+                    total='sum(value)',
+                    groupby=[x_field],
+                )
                 .mark_bar()
                 .encode(
                     x=alt.X(f"{x_field}:O", title="Yıl"),
@@ -1381,25 +1378,34 @@ def _stacked_small_multiples(
                         alt.Tooltip(f"{x_field}:O", title="Yıl"),
                         alt.Tooltip(f"{stack_field}:N", title=category_title),
                         alt.Tooltip("value:Q", title=y_title, format=value_format),
+                        alt.Tooltip("total:Q", title="Total", format=value_format),
                     ],
                 )
             )
 
+            # Total overlay line (disabled in % mode)
             if show_totals and not is_percent:
-                total_labels = (
+                totals = (
+                    sub.groupby([x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
+                )
+                total_line = (
                     alt.Chart(totals)
-                    .mark_text(angle=90, dy=-6, color=_total_label_color, fontWeight="bold")
+                    .mark_line(point=True, strokeWidth=2)
                     .encode(
-                        x=alt.X(f"{x_field}:O"),
+                        x=alt.X(f"{x_field}:O", title="Yıl"),
                         y=alt.Y("total:Q"),
-                        text=alt.Text("total:Q", format=value_format),
+                        tooltip=[
+                            alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                            alt.Tooltip("total:Q", title="Total", format=value_format),
+                        ],
                     )
                 )
-                chart = (bars + total_labels).properties(height=380)
+                chart = (bars + total_line).properties(height=380)
             else:
                 chart = bars.properties(height=380)
 
             st.altair_chart(chart, use_container_width=True)
+
 
 def _stacked_clustered(
     df,
@@ -1418,23 +1424,20 @@ def _stacked_clustered(
         st.warning("Veri bulunamadı.")
         return
 
-    # Theme-aware label color so totals don't clash in light mode
-    _theme_base = st.get_option("theme.base")
-    _total_label_color = "black" if _theme_base == "light" else "white"
-
     dfp = df.copy()
     dfp["year"] = dfp["year"].astype(int)
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
-
-    yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
-
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
     bars = (
         alt.Chart(dfp)
+        .transform_joinaggregate(
+            total='sum(value)',
+            groupby=['scenario', x_field],
+        )
         .mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
@@ -1446,6 +1449,7 @@ def _stacked_clustered(
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
+                alt.Tooltip("total:Q", title="Total", format=value_format),
             ],
         )
     )
@@ -1454,21 +1458,27 @@ def _stacked_clustered(
         totals = (
             dfp.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
         )
-        total_labels = (
+        total_line = (
             alt.Chart(totals)
-            .mark_text(angle=90, dy=-6, color=_total_label_color, fontWeight="bold")
+            .mark_line(point=True, strokeWidth=2)
             .encode(
-                x=alt.X(f"{x_field}:O"),
+                x=alt.X(f"{x_field}:O", title="Yıl"),
                 xOffset=alt.XOffset("scenario:N"),
                 y=alt.Y("total:Q"),
-                text=alt.Text("total:Q", format=value_format),
+                detail="scenario:N",
+                tooltip=[
+                    alt.Tooltip("scenario:N", title="Senaryo"),
+                    alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                    alt.Tooltip("total:Q", title="Total", format=value_format),
+                ],
             )
         )
-        chart = (bars + total_labels).properties(height=420)
+        chart = (bars + total_line).properties(height=420)
     else:
         chart = bars.properties(height=420)
 
     st.altair_chart(chart, use_container_width=True)
+
 
 def _stacked_snapshot(
     df,
@@ -1488,16 +1498,13 @@ def _stacked_snapshot(
         st.warning("Veri bulunamadı.")
         return
 
-    # Theme-aware label color so totals don't clash in light mode
-    _theme_base = st.get_option("theme.base")
-    _total_label_color = "black" if _theme_base == "light" else "white"
-
     dfp = df.copy()
     dfp["year"] = dfp["year"].astype(int)
     dfp = dfp[dfp["year"].isin(list(years))]
     if dfp.empty:
         st.warning("Seçilen yıllar için veri yok (seçili snapshot yılları).")
         return
+
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
@@ -1506,6 +1513,10 @@ def _stacked_snapshot(
 
     bars = (
         alt.Chart(dfp)
+        .transform_joinaggregate(
+            total='sum(value)',
+            groupby=['scenario', x_field],
+        )
         .mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
@@ -1517,6 +1528,7 @@ def _stacked_snapshot(
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
+                alt.Tooltip("total:Q", title="Total", format=value_format),
             ],
         )
     )
@@ -1525,17 +1537,22 @@ def _stacked_snapshot(
         totals = (
             dfp.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
         )
-        total_labels = (
+        total_line = (
             alt.Chart(totals)
-            .mark_text(angle=90, dy=-6, color=_total_label_color, fontWeight="bold")
+            .mark_line(point=True, strokeWidth=2)
             .encode(
-                x=alt.X(f"{x_field}:O"),
+                x=alt.X(f"{x_field}:O", title="Yıl"),
                 xOffset=alt.XOffset("scenario:N"),
                 y=alt.Y("total:Q"),
-                text=alt.Text("total:Q", format=value_format),
+                detail="scenario:N",
+                tooltip=[
+                    alt.Tooltip("scenario:N", title="Senaryo"),
+                    alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                    alt.Tooltip("total:Q", title="Total", format=value_format),
+                ],
             )
         )
-        chart = (bars + total_labels).properties(height=420)
+        chart = (bars + total_line).properties(height=420)
     else:
         chart = bars.properties(height=420)
 
