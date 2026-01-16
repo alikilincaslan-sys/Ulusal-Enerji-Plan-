@@ -912,6 +912,22 @@ with st.sidebar:
         index=0,
     )
 
+    stacked_value_mode = st.select_slider(
+        'Stacked gosterim',
+        options=['Mutlak', 'Pay (%)'],
+        value='Mutlak',
+        help='Stacked grafiklerde mutlak deger (GWh/GW) yerine her yil icin paylari (%) gostermek icin Pay (%) secin.',
+    )
+
+    st.divider()
+    st.header("Grafik tipi")
+    ts_chart_style = st.selectbox(
+        "Zaman serisi grafikleri",
+        ["Bar (Gruplu)", "Çizgi", "Bar (Stack)"],
+        index=0,
+        help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
+    )
+
 if not uploaded_files:
     st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
     st.stop()
@@ -1129,9 +1145,20 @@ def _expected_year_ticks(start_year: int, end_year: int) -> list[int]:
     return [y for y in ticks if start_year <= y <= end_year]
 
 
-def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed_series: str | None = None):
-    """Çizgi yerine gruplanmış bar grafik.
-    Not: start_year/filtre nedeniyle veri olmayan yıllar eksende gösterilmez.
+def _line_chart(
+    df,
+    title: str,
+    y_title: str,
+    value_format: str = ",.2f",
+    dashed_series: str | None = None,
+    chart_style: str | None = None,
+):
+    """Zaman serisi (tek değer) grafiği.
+
+    chart_style:
+      - "Bar (Gruplu)": senaryolar yan yana
+      - "Bar (Stack)": senaryolar üst üste
+      - "Çizgi": çoklu senaryo çizgi
     """
     st.subheader(title)
     if df is None or df.empty:
@@ -1146,25 +1173,54 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", dashed
 
     year_vals = sorted(dfp["year"].unique().tolist())
 
-    chart = (
-        alt.Chart(dfp)
-        .mark_bar()
-        .encode(
-            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
-            xOffset=alt.XOffset("scenario:N"),
-            y=alt.Y("value:Q", title=y_title),
-            color=alt.Color(
-                "scenario:N",
-                title="Senaryo",
-                legend=alt.Legend(labelLimit=0, titleLimit=0),
-            ),
-            tooltip=[
-                alt.Tooltip("scenario:N", title="Senaryo"),
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title=y_title, format=value_format),
-            ],
-        )
+    # Default: global sidebar seçimi
+    style = chart_style or globals().get("ts_chart_style", "Bar (Gruplu)")
+
+    base = alt.Chart(dfp).encode(
+        color=alt.Color(
+            "scenario:N",
+            title="Senaryo",
+            legend=alt.Legend(labelLimit=0, titleLimit=0),
+        ),
+        tooltip=[
+            alt.Tooltip("scenario:N", title="Senaryo"),
+            alt.Tooltip("year:O", title="Yıl"),
+            alt.Tooltip("value:Q", title=y_title, format=value_format),
+        ],
     )
+
+    if style == "Çizgi":
+        # Line: year numeric looks nicer
+        chart = (
+            base.mark_line(point=True)
+            .encode(
+                x=alt.X(
+                    "year:Q",
+                    title="Yıl",
+                    scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
+                    axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
+                ),
+                y=alt.Y("value:Q", title=y_title),
+            )
+        )
+    elif style == "Bar (Stack)":
+        chart = (
+            base.mark_bar()
+            .encode(
+                x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
+                y=alt.Y("value:Q", title=y_title, stack="zero"),
+            )
+        )
+    else:
+        # Bar (Gruplu)
+        chart = (
+            base.mark_bar()
+            .encode(
+                x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
+                xOffset=alt.XOffset("scenario:N"),
+                y=alt.Y("value:Q", title=y_title),
+            )
+        )
 
     st.altair_chart(chart.properties(height=320), use_container_width=True)
 
@@ -1247,7 +1303,31 @@ st.divider()
 # -----------------------------
 # Stacked charts helpers (3 modes)
 # -----------------------------
-def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None):
+def _normalize_stacked_to_percent(df: pd.DataFrame, stack_field: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    dfp = df.copy()
+    dfp['year'] = pd.to_numeric(dfp['year'], errors='coerce').astype('Int64')
+    dfp['value'] = pd.to_numeric(dfp['value'], errors='coerce')
+    dfp = dfp.dropna(subset=['scenario', 'year', stack_field, 'value'])
+    totals = dfp.groupby(['scenario', 'year'], as_index=False)['value'].sum().rename(columns={'value': 'total'})
+    dfp = dfp.merge(totals, on=['scenario', 'year'], how='left')
+    dfp['value'] = np.where(dfp['total'] > 0, (dfp['value'] / dfp['total']) * 100.0, np.nan)
+    dfp = dfp.drop(columns=['total'])
+    return dfp
+
+def _stacked_small_multiples(
+    df,
+    title: str,
+    x_field: str,
+    stack_field: str,
+    y_title: str,
+    category_title: str,
+    value_format: str,
+    order=None,
+    is_percent: bool = False,
+    show_totals: bool = True,
+):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1262,7 +1342,10 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         dfp = dfp.sort_values(["scenario", "year", stack_field])
 
     # global max for same scale
-    ymax = float(dfp.groupby(["scenario","year"])["value"].sum().max()) if len(dfp) else None
+    if is_percent:
+        ymax = 100.0
+    else:
+        ymax = float(dfp.groupby(['scenario','year'])['value'].sum().max()) if len(dfp) else None
     yscale = alt.Scale(domain=[0, ymax]) if ymax and np.isfinite(ymax) else alt.Undefined
 
     n = len(selected_scenarios)
@@ -1273,15 +1356,17 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         sub = dfp[dfp["scenario"] == scn]
         if sub.empty:
             continue
+
+        # Totals for top labels (scenario-year). In percent mode totals are always ~100,
+        # so show only in absolute mode unless explicitly needed.
+        totals = (
+            sub.groupby([x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
+        )
+
         c = cols[idx % ncols]
         with c:
             st.markdown(f"**{scn}**")
-            # Totals (top labels) — use one legible color on both themes.
-            total_color = "#FF8C00"  # darkorange
-            df_tot = (
-                sub.groupby([x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
-            )
-            chart = (
+            bars = (
                 alt.Chart(sub)
                 .mark_bar()
                 .encode(
@@ -1294,21 +1379,36 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
                         alt.Tooltip("value:Q", title=y_title, format=value_format),
                     ],
                 )
-                .properties(height=380)
             )
-            total_text = (
-                alt.Chart(df_tot)
-                .mark_text(angle=90, dy=-6, color=total_color, fontWeight="bold")
-                .encode(
-                    x=alt.X(f"{x_field}:O"),
-                    y=alt.Y("total:Q"),
-                    text=alt.Text("total:Q", format=value_format),
+
+            if show_totals and not is_percent:
+                total_labels = (
+                    alt.Chart(totals)
+                    .mark_text(angle=90, dy=-6)
+                    .encode(
+                        x=alt.X(f"{x_field}:O"),
+                        y=alt.Y("total:Q"),
+                        text=alt.Text("total:Q", format=value_format),
+                    )
                 )
-            )
-            chart = chart + total_text
+                chart = (bars + total_labels).properties(height=380)
+            else:
+                chart = bars.properties(height=380)
+
             st.altair_chart(chart, use_container_width=True)
 
-def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None):
+def _stacked_clustered(
+    df,
+    title: str,
+    x_field: str,
+    stack_field: str,
+    y_title: str,
+    category_title: str,
+    value_format: str,
+    order=None,
+    is_percent: bool = False,
+    show_totals: bool = True,
+):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1320,18 +1420,18 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
-    total_color = "#FF8C00"  # darkorange
-    df_tot = (
-        dfp.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
-    )
 
-    chart = (
+    yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
+
+    yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
+
+    bars = (
         alt.Chart(dfp)
         .mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
             xOffset=alt.XOffset("scenario:N"),
-            y=alt.Y("value:Q", title=y_title, stack=True),
+            y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=alt.Color(f"{stack_field}:N", title=category_title),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
@@ -1340,22 +1440,41 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
             ],
         )
-        .properties(height=420)
     )
-    total_text = (
-        alt.Chart(df_tot)
-        .mark_text(angle=90, dy=-6, color=total_color, fontWeight="bold")
-        .encode(
-            x=alt.X(f"{x_field}:O"),
-            xOffset=alt.XOffset("scenario:N"),
-            y=alt.Y("total:Q"),
-            text=alt.Text("total:Q", format=value_format),
+
+    if show_totals and not is_percent:
+        totals = (
+            dfp.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
         )
-    )
-    chart = chart + total_text
+        total_labels = (
+            alt.Chart(totals)
+            .mark_text(angle=90, dy=-6)
+            .encode(
+                x=alt.X(f"{x_field}:O"),
+                xOffset=alt.XOffset("scenario:N"),
+                y=alt.Y("total:Q"),
+                text=alt.Text("total:Q", format=value_format),
+            )
+        )
+        chart = (bars + total_labels).properties(height=420)
+    else:
+        chart = bars.properties(height=420)
+
     st.altair_chart(chart, use_container_width=True)
 
-def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None):
+def _stacked_snapshot(
+    df,
+    title: str,
+    x_field: str,
+    stack_field: str,
+    y_title: str,
+    category_title: str,
+    value_format: str,
+    years=(2035, 2050),
+    order=None,
+    is_percent: bool = False,
+    show_totals: bool = True,
+):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1370,18 +1489,15 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
-    total_color = "#FF8C00"  # darkorange
-    df_tot = (
-        dfp.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
-    )
+    yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
-    chart = (
+    bars = (
         alt.Chart(dfp)
         .mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
             xOffset=alt.XOffset("scenario:N"),
-            y=alt.Y("value:Q", title=y_title, stack=True),
+            y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=alt.Color(f"{stack_field}:N", title=category_title),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
@@ -1390,30 +1506,53 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
             ],
         )
-        .properties(height=420)
     )
-    total_text = (
-        alt.Chart(df_tot)
-        .mark_text(angle=90, dy=-6, color=total_color, fontWeight="bold")
-        .encode(
-            x=alt.X(f"{x_field}:O"),
-            xOffset=alt.XOffset("scenario:N"),
-            y=alt.Y("total:Q"),
-            text=alt.Text("total:Q", format=value_format),
+
+    if show_totals and not is_percent:
+        totals = (
+            dfp.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "total"})
         )
-    )
-    chart = chart + total_text
+        total_labels = (
+            alt.Chart(totals)
+            .mark_text(angle=90, dy=-6)
+            .encode(
+                x=alt.X(f"{x_field}:O"),
+                xOffset=alt.XOffset("scenario:N"),
+                y=alt.Y("total:Q"),
+                text=alt.Text("total:Q", format=value_format),
+            )
+        )
+        chart = (bars + total_labels).properties(height=420)
+    else:
+        chart = bars.properties(height=420)
+
     st.altair_chart(chart, use_container_width=True)
 
 def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None):
-    if compare_mode == "Small multiples (önerilen)":
-        _stacked_small_multiples(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
-    elif compare_mode == "Yıl içinde yan yana (clustered)":
-        _stacked_clustered(df, title, x_field, stack_field, y_title, category_title, value_format, order=order)
-    elif compare_mode == "2035/2050 snapshot":
-        _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, years=(2035, 2050), order=order)
-    else:  # "2025/2035 snapshot"
-        _stacked_snapshot(df, title, x_field, stack_field, y_title, category_title, value_format, years=(2025, 2035), order=order)
+    df_use = df
+    y_title_use = y_title
+    value_format_use = value_format
+    is_percent = False
+
+    # Stacked: mutlak -> pay (%)
+    if stacked_value_mode == 'Pay (%)':
+        df_use = _normalize_stacked_to_percent(df_use, stack_field=stack_field)
+        y_title_use = '%'
+        value_format_use = '.1f'
+        is_percent = True
+
+    # Baslik net olsun
+    title_use = title + (' (Pay %)' if is_percent else '')
+
+    if compare_mode == 'Small multiples (önerilen)':
+        _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
+    elif compare_mode == 'Yıl içinde yan yana (clustered)':
+        _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
+    elif compare_mode == '2035/2050 snapshot':
+        _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2035, 2050), order=order, is_percent=is_percent)
+    else:  # '2025/2035 snapshot'
+        _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2025, 2035), order=order, is_percent=is_percent)
+
 
 # -----------------------------
 # 1) Elektrik üretim karması (stacked)
