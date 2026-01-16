@@ -299,11 +299,11 @@ def _read_power_generation_fixed_rows_as_stack(xlsx_file, value_rows_1idx: list[
             continue
 
         label = raw.iloc[r0, 0]
-    label = "" if pd.isna(label) else str(label).strip()
-    if (not label) or (label.lower() == "nan"):
+label = "" if pd.isna(label) else str(label).strip()
+
+if (not label) or (label.lower() == "nan"):
     # önce haritadan isim ata, yoksa fallback
     label = EXTRA_ROW_NAME_MAP.get(r1, f"Ek Satır {r1}")
-
 
         for y, c in zip(years, year_cols_idx):
             if int(y) > MAX_YEAR:
