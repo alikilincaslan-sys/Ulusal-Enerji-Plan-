@@ -1292,8 +1292,11 @@ def _line_chart(
 
     # Global senaryo görünürlüğü
     vis = globals().get("visible_scenarios")
-    if vis:
-        dfp = dfp[dfp["scenario"].isin(vis)]
+    diff_on = bool(globals().get("diff_mode_enabled", False))
+
+        if vis and not diff_on:
+    df_use = df_use[df_use["scenario"].isin(vis)].copy()
+
 
     st.subheader(title)
 
