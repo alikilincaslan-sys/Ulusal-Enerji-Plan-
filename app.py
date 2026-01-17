@@ -1234,8 +1234,95 @@ def _line_chart(
     title: str,
     y_title: str,
     value_format: str = ",.2f",
-    chart_style: str | None = None,
+    default_style: str = "Çizgi",
 ):
+    if df is None or df.empty:
+        st.subheader(title)
+        st.warning("Veri bulunamadı.")
+        return
+
+    # ---------- Grafik tipi seçici (HER GRAFİK İÇİN) ----------
+    chart_style = st.radio(
+        "Grafik tipi",
+        options=["Çizgi", "Bar (Gruplu)", "Bar (Stacked)"],
+        horizontal=True,
+        index=["Çizgi", "Bar (Gruplu)", "Bar (Stacked)"].index(default_style),
+        key=f"chart_style_{title}",
+    )
+
+    dfp = df.copy()
+    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
+    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
+    dfp = dfp.dropna(subset=["year", "value", "scenario"])
+    dfp["year"] = dfp["year"].astype(int)
+
+    # Global senaryo görünürlüğü
+    vis = globals().get("visible_scenarios")
+    if vis:
+        dfp = dfp[dfp["scenario"].isin(vis)]
+
+    st.subheader(title)
+
+    # 2 senaryo fark modu
+    diff_on = bool(globals().get("diff_mode_enabled", False))
+    a = globals().get("diff_scn_a")
+    b = globals().get("diff_scn_b")
+
+    if diff_on and a and b:
+        sub = dfp[dfp["scenario"].isin([a, b])]
+        if not sub.empty:
+            wide = sub.pivot_table(index="year", columns="scenario", values="value", aggfunc="mean")
+            if a in wide.columns and b in wide.columns:
+                wide["value"] = wide[a] - wide[b]
+                dfp = wide.reset_index()[["year", "value"]]
+                dfp["scenario"] = f"Fark: {a} - {b}"
+                title = f"{title} — Fark ({a} - {b})"
+
+    year_vals = sorted(dfp["year"].unique())
+
+    sel = alt.selection_point(fields=["scenario"], bind="legend", toggle=True, empty="all")
+
+    base = (
+        alt.Chart(dfp)
+        .add_params(sel)
+        .transform_filter(sel)
+        .encode(
+            color=alt.Color(
+                "scenario:N",
+                title="Senaryo",
+                legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0),
+            ),
+            tooltip=[
+                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip("year:O", title="Yıl"),
+                alt.Tooltip("value:Q", title=y_title, format=value_format),
+            ],
+        )
+    )
+
+    # ---------- Grafik tipine göre çizim ----------
+    if chart_style == "Çizgi":
+        chart = base.mark_line(point=True).encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals),
+            y=alt.Y("value:Q", title=y_title),
+        )
+
+    elif chart_style == "Bar (Stacked)":
+        chart = base.mark_bar().encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals),
+            y=alt.Y("value:Q", title=y_title, stack="zero"),
+        )
+
+    else:  # Bar (Gruplu)
+        chart = base.mark_bar().encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals),
+            xOffset=alt.XOffset("scenario:N"),
+            y=alt.Y("value:Q", title=y_title),
+        )
+
+    st.caption("İpucu: Legend’e tıklayarak senaryoları gizle/göster.")
+    st.altair_chart(chart.properties(height=320), use_container_width=True)
+
     """Tek-değer zaman serileri.
 
     - Senaryo seçimi: legend'e tıklayarak (toggle) gizle/göster.
