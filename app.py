@@ -12,6 +12,7 @@ st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 # -----------------------------
 # Config
 # -----------------------------
+# DEFAULT max year (will be overwritten by sidebar year range)
 MAX_YEAR = 2050
 
 # Electricity supply (GWh) – reference
@@ -264,6 +265,9 @@ def _is_natural_gas_item(item: str) -> bool:
     return bool(NATURAL_GAS_REGEX.search(it))
 
 
+# -----------------------------
+# NEW: Fixed-row reading for extra capacity rows (Power_Generation)
+# -----------------------------
 def _read_power_generation_fixed_rows_as_stack(xlsx_file, value_rows_1idx: list[int]) -> pd.DataFrame:
     try:
         raw = pd.read_excel(xlsx_file, sheet_name="Power_Generation", header=None)
@@ -305,7 +309,7 @@ def _read_power_generation_fixed_rows_as_stack(xlsx_file, value_rows_1idx: list[
 
 
 # -----------------------------
-# Reading: Scenario assumptions
+# Reading: Scenario assumptions (Nüfus & GSYH & Karbon)
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def _read_scenario_assumptions_row(xlsx_file, value_row_1idx: int, series_name: str) -> pd.DataFrame:
@@ -404,6 +408,9 @@ def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
     )
 
 
+# -----------------------------
+# CO2 -> CO2e (CRF 2023 tabanli varsayim)
+# -----------------------------
 SECTOR_CO2_OVER_CO2E = {
     "power": 0.99,
     "transport": 0.94,
@@ -518,6 +525,7 @@ def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
         return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
 
     years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+
     years = []
     for y_cell in years_row:
         y = _as_int_year(y_cell)
@@ -572,6 +580,7 @@ def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
         return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
 
     years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+
     years = []
     for y_cell in years_row:
         y = _as_int_year(y_cell)
@@ -784,6 +793,7 @@ def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
     df = gross_gen_df.copy()
     df = df[~df["item"].apply(_gen_is_excluded)]
 
+    # Total Storage ve storage alt bileşenlerini tamamen çıkar
     df = df[~df["item"].astype(str).apply(lambda x: bool(STORAGE_COMPONENT_REGEX.search(x)))]
     df = df[df["item"].str.strip().ne(TOTAL_STORAGE_LABEL)]
 
@@ -805,6 +815,7 @@ def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
 def share_series_from_mix(mix_df: pd.DataFrame, total_series_df: pd.DataFrame, groups: set[str], name: str) -> pd.DataFrame:
     if mix_df.empty or total_series_df.empty:
         return pd.DataFrame(columns=["year", "series", "value"])
+
     num = mix_df[mix_df["group"].isin(groups)].groupby("year", as_index=False)["value"].sum()
     den = total_series_df.rename(columns={"value": "total"}).copy()
     out = num.merge(den, on="year", how="inner")
@@ -891,6 +902,7 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
     df = df[~df["item"].apply(_cap_is_excluded)]
     df = df[df["item"].str.strip().ne(TOTAL_CAPACITY_LABEL)]
 
+    # storage & ptx components out
     df = df[~df["item"].astype(str).apply(lambda x: bool(STORAGE_COMPONENT_REGEX.search(x)))]
     df = df[df["item"].str.strip().ne(TOTAL_STORAGE_LABEL)]
 
@@ -904,6 +916,7 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
     natgas_series = natgas_series[["year", "group", "value"]]
 
     df_rest = df[~df["item"].apply(_is_natural_gas_item)].copy()
+
     long = _to_long(df_rest, value_name="value")
     long["group"] = long["item"].apply(_strict_match_group)
     long.loc[long["group"] == "Other Renewables", "group"] = "Other"
@@ -943,19 +956,37 @@ with st.sidebar:
 
     show_security_note = st.checkbox("Güvenlik notunu göster", value=True)
     if show_security_note:
-        st.info("Yüklenen Excel dosyaları yalnızca bu oturumda kullanılır, kalıcı olarak saklanmaz ve başka kullanıcılar tarafından erişilemez.")
+        st.info(
+            "Yüklenen Excel dosyaları yalnızca bu oturumda kullanılır, "
+            "kalıcı olarak saklanmaz ve başka kullanıcılar tarafından erişilemez."
+        )
+
+    st.divider()
+    st.header("Paneller (grafik grupları)")
+
+    panel_options = ["Elektrik", "Enerji", "Sera Gazı Emisyonları"]
+    selected_panels = st.multiselect(
+        "Hangi grafik grupları görünsün?",
+        options=panel_options,
+        default=panel_options,
+        help="Sadeleştirmek için bir grubu kapatırsanız o bölüm tamamen gizlenir.",
+    )
 
     st.divider()
     st.header("Ayarlar")
 
-    start_year_options = [2018, 2020, 2025, 2030, 2035, 2040, 2045]
-    start_year = st.selectbox(
-        "İlk Senaryo Yılı",
-        start_year_options,
-        index=start_year_options.index(2025) if 2025 in start_year_options else 0,
+    # Year range slider (replaces start_year + max_year)
+    year_min_default = 2018
+    year_max_default = 2050
+    year_range = st.slider(
+        "Senaryo yıl aralığı",
+        min_value=year_min_default,
+        max_value=year_max_default,
+        value=(2025, 2050),
+        step=1,
+        help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
-
-    max_year = st.selectbox("Son Senaryo Yılı", [2050, 2045, 2040, 2035], index=0)
+    start_year, max_year = int(year_range[0]), int(year_range[1])
     MAX_YEAR = int(max_year)
 
     st.divider()
@@ -967,10 +998,10 @@ with st.sidebar:
     )
 
     stacked_value_mode = st.select_slider(
-        "Stacked gosterim",
+        "Stacked gösterim",
         options=["Mutlak", "Pay (%)"],
         value="Mutlak",
-        help="Stacked grafiklerde mutlak deger (GWh/GW) yerine her yil icin paylari (%) gostermek icin Pay (%) secin.",
+        help="Stacked grafiklerde mutlak değer yerine yıl içi pay (%) göstermek için Pay (%) seçin.",
     )
 
     st.divider()
@@ -1034,7 +1065,6 @@ if not selected_scenarios:
 if len(selected_scenarios) >= 4 and compare_mode not in {"2035/2050 snapshot", "2025/2035 snapshot"}:
     st.warning("4+ senaryoda okunabilirlik için snapshot modları önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
-
 
 if len(selected_scenarios) == 2:
     with st.sidebar:
@@ -1163,7 +1193,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
 
         merged = ts.merge(pp[["year", "pop_person"]], on="year", how="inner")
         merged = merged[(merged["pop_person"] > 0) & merged["value"].notna()]
-        merged["value"] = (merged["value"] * 1_000_000.0) / merged["pop_person"]
+        merged["value"] = (merged["value"] * 1_000_000.0) / merged["pop_person"]  # kWh/kişi
         per_capita = merged[["year", "value"]].sort_values("year")
 
     def _add_scn(df):
@@ -1226,28 +1256,10 @@ df_electrification = _concat("electrification_ratio")
 df_storage_ptx = _concat("storage_ptx")
 
 
-# =========================
-# NEW: Legend-based scenario filter (works via Altair selection)
-# =========================
-def _scenario_legend_selection():
-    """
-    Legend tıklama ile senaryo gizle/göster:
-    - toggle=True: çoklu seçim
-    - empty=True: hiçbir şey seçili değilse hepsi görünsün
-    """
-    return alt.selection_point(fields=["scenario"], bind="legend", toggle=True, empty=True)
-
-
 # -----------------------------
-# Line charts (single axis, scenario colors) + legend filter
+# Line charts (single axis, scenario colors)
 # -----------------------------
-def _line_chart(
-    df,
-    title: str,
-    y_title: str,
-    value_format: str = ",.2f",
-    chart_style: str | None = None,
-):
+def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_style: str | None = None):
     if df is None or df.empty:
         st.subheader(title)
         st.warning("Veri bulunamadı.")
@@ -1275,67 +1287,36 @@ def _line_chart(
                 title = f"{title} — Fark ({a} - {b})"
 
     st.subheader(title)
-
     year_vals = sorted(dfp["year"].unique().tolist())
     style = chart_style or globals().get("ts_chart_style", "Bar (Gruplu)")
 
-    sel = _scenario_legend_selection()
-
-    base = (
-        alt.Chart(dfp)
-        .add_params(sel)
-        .transform_filter(sel)
-        .encode(
-            color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
-            tooltip=[
-                alt.Tooltip("scenario:N", title="Senaryo"),
-                alt.Tooltip("year:O", title="Yıl"),
-                alt.Tooltip("value:Q", title=y_title, format=value_format),
-            ],
-        )
+    base = alt.Chart(dfp).encode(
+        color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
+        tooltip=[
+            alt.Tooltip("scenario:N", title="Senaryo"),
+            alt.Tooltip("year:O", title="Yıl"),
+            alt.Tooltip("value:Q", title=y_title, format=value_format),
+        ],
     )
 
     if style == "Çizgi":
-        chart = (
-            base.mark_line(point=True)
-            .encode(
-                x=alt.X(
-                    "year:Q",
-                    title="Yıl",
-                    scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
-                    axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
-                ),
-                y=alt.Y("value:Q", title=y_title),
-            )
+        chart = base.mark_line(point=True).encode(
+            x=alt.X("year:Q", title="Yıl", scale=alt.Scale(domain=[min(year_vals), max(year_vals)]), axis=alt.Axis(values=year_vals, format="d", labelAngle=0)),
+            y=alt.Y("value:Q", title=y_title),
         )
     elif style == "Bar (Stack)":
-        chart = (
-            base.mark_bar()
-            .encode(
-                x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
-                y=alt.Y("value:Q", title=y_title, stack="zero"),
-            )
+        chart = base.mark_bar().encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
+            y=alt.Y("value:Q", title=y_title, stack="zero"),
         )
     else:
-        chart = (
-            base.mark_bar()
-            .encode(
-                x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
-                xOffset=alt.XOffset("scenario:N"),
-                y=alt.Y("value:Q", title=y_title),
-            )
+        chart = base.mark_bar().encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
+            xOffset=alt.XOffset("scenario:N"),
+            y=alt.Y("value:Q", title=y_title),
         )
 
     st.altair_chart(chart.properties(height=320), use_container_width=True)
-
-
-_line_chart(df_pop, "Türkiye Nüfus Gelişimi", "Nüfus (milyon)", value_format=",.3f")
-_line_chart(df_gdp, "GSYH (Milyar ABD Doları, 2015 fiyatlarıyla)", "Milyar ABD Doları (2015)", value_format=",.2f")
-st.divider()
-
-df_pc = _concat("per_capita_el")
-_line_chart(df_pc, "Kişi Başına Elektrik Tüketimi (kWh/kişi)", "kWh/kişi", value_format=",.0f")
-_line_chart(df_electrification, "Nihai Enerjide Elektrifikasyon Oranı (%)", "%", value_format=",.1f")
 
 
 # -----------------------------
@@ -1410,9 +1391,8 @@ if len(kpis) > ncols:
 
 st.divider()
 
-
 # -----------------------------
-# Stacked charts helpers
+# Stacked charts helpers (with legend-click filter)
 # -----------------------------
 def _normalize_stacked_to_percent(df: pd.DataFrame, stack_field: str) -> pd.DataFrame:
     if df is None or df.empty:
@@ -1428,104 +1408,81 @@ def _normalize_stacked_to_percent(df: pd.DataFrame, stack_field: str) -> pd.Data
     return dfp
 
 
-def _stacked_small_multiples_faceted(
-    df,
-    title: str,
-    x_field: str,
-    stack_field: str,
-    y_title: str,
-    category_title: str,
-    value_format: str,
-    order=None,
-    is_percent: bool = False,
-):
-    """
-    IMPORTANT:
-    - Small multiples artık TEK chart + facet (scenario sütunları) olarak çiziliyor.
-      Bu sayede legend selection tüm panellerde çalışır.
-    """
+def _legend_filter_params(stack_field: str):
+    sel = alt.selection_point(fields=[stack_field], bind="legend", name="legend_filter")
+    return sel
+
+
+def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
 
     dfp = df.copy()
-    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce").astype("Int64")
-    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
-    dfp = dfp.dropna(subset=["scenario", "year", stack_field, "value"])
     dfp["year"] = dfp["year"].astype(int)
 
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["scenario", "year", stack_field])
 
-    sel = _scenario_legend_selection()
-
     ymax = 100.0 if is_percent else float(dfp.groupby(["scenario", "year"])["value"].sum().max()) if len(dfp) else None
     yscale = alt.Scale(domain=[0, ymax]) if ymax and np.isfinite(ymax) else alt.Undefined
 
-    base = (
-        alt.Chart(dfp)
-        .add_params(sel)
-        .transform_filter(sel)
-        .encode(
-            x=alt.X(f"{x_field}:O", title="Yıl"),
-            y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-            color=alt.Color(f"{stack_field}:N", title=category_title),
-            tooltip=[
-                alt.Tooltip("scenario:N", title="Senaryo"),
-                alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                alt.Tooltip(f"{stack_field}:N", title=category_title),
-                alt.Tooltip("value:Q", title=y_title, format=value_format),
-            ],
+    n = len(selected_scenarios)
+    ncols = _ncols_for_selected(n)
+    cols = st.columns(ncols)
+
+    for idx, scn in enumerate(selected_scenarios):
+        sub = dfp[dfp["scenario"] == scn]
+        if sub.empty:
+            continue
+
+        sel = _legend_filter_params(stack_field)
+
+        bars_src = alt.Chart(sub)
+        if not is_percent:
+            bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=[x_field])
+
+        bars = (
+            bars_src.mark_bar()
+            .encode(
+                x=alt.X(f"{x_field}:O", title="Yıl"),
+                y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
+                color=alt.Color(f"{stack_field}:N", title=category_title),
+                opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
+                tooltip=[
+                    alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                    alt.Tooltip(f"{stack_field}:N", title=category_title),
+                    alt.Tooltip("value:Q", title=y_title, format=value_format),
+                    *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
+                ],
+            )
+            .add_params(sel)
         )
-    )
 
-    cols_count = _ncols_for_selected(len(selected_scenarios))
-    chart = base.mark_bar().properties(height=380).facet(
-        column=alt.Column(
-            "scenario:N",
-            title=None,
-            sort=selected_scenarios,
-            header=alt.Header(labelAngle=0, labelFontSize=12),
-        ),
-        columns=cols_count,
-    )
-
-    st.altair_chart(chart.resolve_scale(y="shared"), use_container_width=True)
+        with cols[idx % ncols]:
+            st.markdown(f"**{scn}**")
+            st.altair_chart(bars.properties(height=380), use_container_width=True)
 
 
-def _stacked_clustered(
-    df,
-    title: str,
-    x_field: str,
-    stack_field: str,
-    y_title: str,
-    category_title: str,
-    value_format: str,
-    order=None,
-    is_percent: bool = False,
-):
+def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
 
     dfp = df.copy()
-    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce").astype("Int64")
-    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
-    dfp = dfp.dropna(subset=["scenario", "year", stack_field, "value"])
     dfp["year"] = dfp["year"].astype(int)
-
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
-    sel = _scenario_legend_selection()
+    sel = _legend_filter_params(stack_field)
 
-    bars_src = alt.Chart(dfp).add_params(sel).transform_filter(sel)
+    bars_src = alt.Chart(dfp)
     if not is_percent:
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
 
@@ -1536,6 +1493,7 @@ def _stacked_clustered(
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=alt.Color(f"{stack_field}:N", title=category_title),
+            opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
@@ -1544,32 +1502,18 @@ def _stacked_clustered(
                 *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
             ],
         )
+        .add_params(sel)
     )
     st.altair_chart(bars.properties(height=420), use_container_width=True)
 
 
-def _stacked_snapshot(
-    df,
-    title: str,
-    x_field: str,
-    stack_field: str,
-    y_title: str,
-    category_title: str,
-    value_format: str,
-    years=(2035, 2050),
-    order=None,
-    is_percent: bool = False,
-):
+def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
     dfp = df.copy()
-    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce").astype("Int64")
-    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
-    dfp = dfp.dropna(subset=["scenario", "year", stack_field, "value"])
     dfp["year"] = dfp["year"].astype(int)
-
     dfp = dfp[dfp["year"].isin(list(years))]
     if dfp.empty:
         st.warning("Seçilen yıllar için veri yok (seçili snapshot yılları).")
@@ -1581,9 +1525,9 @@ def _stacked_snapshot(
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
-    sel = _scenario_legend_selection()
+    sel = _legend_filter_params(stack_field)
 
-    bars_src = alt.Chart(dfp).add_params(sel).transform_filter(sel)
+    bars_src = alt.Chart(dfp)
     if not is_percent:
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
 
@@ -1594,6 +1538,7 @@ def _stacked_snapshot(
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=alt.Color(f"{stack_field}:N", title=category_title),
+            opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
@@ -1602,6 +1547,7 @@ def _stacked_snapshot(
                 *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
             ],
         )
+        .add_params(sel)
     )
     st.altair_chart(bars.properties(height=420), use_container_width=True)
 
@@ -1652,7 +1598,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
 
     def _render_main():
         if compare_mode == "Small multiples (önerilen)":
-            _stacked_small_multiples_faceted(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
+            _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
         elif compare_mode == "Yıl içinde yan yana (clustered)":
             _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
         elif compare_mode == "2035/2050 snapshot":
@@ -1675,26 +1621,49 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
 
         st.markdown("**Toplam (Total) — ayrı grafik**")
 
-        sel = _scenario_legend_selection()
-
-        ch = (
-            alt.Chart(totals)
-            .add_params(sel)
-            .transform_filter(sel)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X(f"{x_field}:O", title="Yıl"),
-                y=alt.Y("Total:Q", title=y_title),
-                color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
-                tooltip=[
-                    alt.Tooltip("scenario:N", title="Senaryo"),
-                    alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                    alt.Tooltip("Total:Q", title="Total", format=value_format_use),
-                ],
+        if compare_mode == "Small multiples (önerilen)":
+            scenarios_to_show = list(dict.fromkeys(totals["scenario"].tolist()))
+            n = len(scenarios_to_show)
+            ncols = _ncols_for_selected(n)
+            cols = st.columns(ncols)
+            for idx, scn in enumerate(scenarios_to_show):
+                sub = totals[totals["scenario"] == scn]
+                if sub.empty:
+                    continue
+                with cols[idx % ncols]:
+                    st.caption(scn)
+                    ch = (
+                        alt.Chart(sub)
+                        .mark_line(point=True)
+                        .encode(
+                            x=alt.X(f"{x_field}:O", title="Yıl"),
+                            y=alt.Y("Total:Q", title=y_title),
+                            tooltip=[
+                                alt.Tooltip("scenario:N", title="Senaryo"),
+                                alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                                alt.Tooltip("Total:Q", title="Total", format=value_format_use),
+                            ],
+                        )
+                        .properties(height=220)
+                    )
+                    st.altair_chart(ch, use_container_width=True)
+        else:
+            ch = (
+                alt.Chart(totals)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X(f"{x_field}:O", title="Yıl"),
+                    y=alt.Y("Total:Q", title=y_title),
+                    color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
+                    tooltip=[
+                        alt.Tooltip("scenario:N", title="Senaryo"),
+                        alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                        alt.Tooltip("Total:Q", title="Total", format=value_format_use),
+                    ],
+                )
+                .properties(height=320)
             )
-            .properties(height=320)
-        )
-        st.altair_chart(ch, use_container_width=True)
+            st.altair_chart(ch, use_container_width=True)
 
     _render_main()
     if show_total_panel and (not is_percent):
@@ -1702,19 +1671,11 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
 
 
 # =========================
-# FIXED HELPERS: Waterfall
+# Waterfall helpers (unchanged)
 # =========================
-def prepare_yearly_transition_waterfall(
-    df_mix: pd.DataFrame,
-    scenario: str,
-    start_year: int,
-    end_year: int,
-    value_col: str = "value",
-    group_col: str = "category",
-) -> pd.DataFrame:
+def prepare_yearly_transition_waterfall(df_mix: pd.DataFrame, scenario: str, start_year: int, end_year: int, value_col: str = "value", group_col: str = "category") -> pd.DataFrame:
     if df_mix is None or df_mix.empty:
         return pd.DataFrame()
-
     df = df_mix.copy()
     if "scenario" not in df.columns:
         return pd.DataFrame()
@@ -1769,11 +1730,7 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
         return
 
     d = df_wf.copy()
-    d["color"] = np.where(
-        d["step"] == "Net Değişim",
-        "Net",
-        np.where(d["delta"] >= 0, "Artış", "Azalış"),
-    )
+    d["color"] = np.where(d["step"] == "Net Değişim", "Net", np.where(d["delta"] >= 0, "Artış", "Azalış"))
 
     ch = (
         alt.Chart(d)
@@ -1800,186 +1757,166 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
 
 
 # -----------------------------
-# 1) Elektrik üretim karması (stacked) — TOTAL STORAGE HARİÇ
+# PANELS
 # -----------------------------
-order_gen = [
-    "Hydro",
-    "Wind (RES)",
-    "Solar (GES)",
-    "Other Renewables",
-    "Natural gas",
-    "Coal",
-    "Lignite",
-    "Nuclear",
-    "Other",
-]
-_render_stacked(
-    df_genmix.rename(columns={"group": "category"}),
-    title="Kaynaklarına Göre Elektrik Üretimi (GWh)",
-    x_field="year",
-    stack_field="category",
-    y_title="GWh",
-    category_title="Kaynak/Teknoloji",
-    value_format=",.0f",
-    order=order_gen,
-)
+# ELECTRICITY PANEL
+if "Elektrik" in selected_panels:
+    st.markdown("## Elektrik")
 
-st.divider()
+    _line_chart(df_pop, "Türkiye Nüfus Gelişimi", "Nüfus (milyon)", value_format=",.3f")
+    _line_chart(df_gdp, "GSYH (Milyar ABD Doları, 2015 fiyatlarıyla)", "Milyar ABD Doları (2015)", value_format=",.2f")
 
-# -----------------------------
-# 2) Kurulu güç karması (stacked, storage & PTX hariç)
-# -----------------------------
-order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
-_render_stacked(
-    df_capmix.rename(columns={"group": "category"}),
-    title="Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç",
-    x_field="year",
-    stack_field="category",
-    y_title="GW",
-    category_title="Teknoloji",
-    value_format=",.2f",
-    order=order_cap,
-)
+    st.divider()
 
-st.divider()
+    df_pc = _concat("per_capita_el")
+    _line_chart(df_pc, "Kişi Başına Elektrik Tüketimi (kWh/kişi)", "kWh/kişi", value_format=",.0f")
+    _line_chart(df_electrification, "Nihai Enerjide Elektrifikasyon Oranı (%)", "%", value_format=",.1f")
 
-# -----------------------------
-# 2.1) Sektörlere Göre Elektrik Tüketimi (stacked)
-# -----------------------------
-_render_stacked(
-    df_sector_el.rename(columns={"sector": "category"}),
-    title="Sektörlere Göre Elektrik Tüketimi (GWh)",
-    x_field="year",
-    stack_field="category",
-    y_title="GWh",
-    category_title="Sektör",
-    value_format=", .0f".replace(" ", ""),
-)
+    st.divider()
 
-if stacked_value_mode != "Pay (%)":
-    st.markdown("### Yakıt/Teknoloji Bazlı Enerji Dönüşümü (Δ)")
-    st.caption(
-        "Seçili senaryoda başlangıç ve bitiş yılları arasında yakıt/teknoloji bazlı değişimi (Δ) gösterir."
+    order_gen = ["Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
+    _render_stacked(
+        df_genmix.rename(columns={"group": "category"}),
+        title="Kaynaklarına Göre Elektrik Üretimi (GWh)",
+        x_field="year",
+        stack_field="category",
+        y_title="GWh",
+        category_title="Kaynak/Teknoloji",
+        value_format=",.0f",
+        order=order_gen,
     )
 
-    if len(selected_scenarios) == 1:
-        scn_tr = selected_scenarios[0]
-    else:
-        scn_tr = st.selectbox(
-            "Dönüşüm analizi için senaryo seçin",
-            options=selected_scenarios,
-            index=0,
-            key="transition_scn_select",
+    st.divider()
+
+    order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
+    _render_stacked(
+        df_capmix.rename(columns={"group": "category"}),
+        title="Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç",
+        x_field="year",
+        stack_field="category",
+        y_title="GW",
+        category_title="Teknoloji",
+        value_format=",.2f",
+        order=order_cap,
+    )
+
+    st.divider()
+
+    _render_stacked(
+        df_sector_el.rename(columns={"sector": "category"}),
+        title="Sektörlere Göre Elektrik Tüketimi (GWh)",
+        x_field="year",
+        stack_field="category",
+        y_title="GWh",
+        category_title="Sektör",
+        value_format=",.0f",
+    )
+
+    st.divider()
+
+    if stacked_value_mode != "Pay (%)":
+        st.markdown("### Yakıt/Teknoloji Bazlı Enerji Dönüşümü (Δ)")
+        st.caption(
+            "Seçili senaryoda başlangıç ve bitiş yılları arasındaki elektrik üretimi ve kurulu güç değişimlerini (Δ) gösterir."
         )
 
-    gen_for_wf = df_genmix.rename(columns={"group": "category"}).copy()
-    cap_for_wf = df_capmix.rename(columns={"group": "category"}).copy()
+        if len(selected_scenarios) == 1:
+            scn_tr = selected_scenarios[0]
+        else:
+            scn_tr = st.selectbox("Dönüşüm analizi için senaryo seçin", options=selected_scenarios, index=0, key="transition_scn_select")
 
-    wf_gen = prepare_yearly_transition_waterfall(
-        gen_for_wf,
-        scenario=scn_tr,
-        start_year=int(start_year),
-        end_year=int(MAX_YEAR),
-        value_col="value",
-        group_col="category",
+        gen_for_wf = df_genmix.rename(columns={"group": "category"}).copy()
+        cap_for_wf = df_capmix.rename(columns={"group": "category"}).copy()
+
+        wf_gen = prepare_yearly_transition_waterfall(gen_for_wf, scenario=scn_tr, start_year=int(start_year), end_year=int(MAX_YEAR), value_col="value", group_col="category")
+        wf_cap = prepare_yearly_transition_waterfall(cap_for_wf, scenario=scn_tr, start_year=int(start_year), end_year=int(MAX_YEAR), value_col="value", group_col="category")
+
+        colA, colB = st.columns(2)
+        with colA:
+            render_waterfall(wf_gen, title=f"Elektrik Üretimi Dönüşümü (GWh) — {start_year} → {MAX_YEAR}", y_title="GWh")
+        with colB:
+            render_waterfall(wf_cap, title=f"Kurulu Güç Dönüşümü (GW) — {start_year} → {MAX_YEAR}", y_title="GW")
+
+    st.divider()
+
+    order_storage_ptx = ["Total Storage", "Power to X"]
+    _render_stacked(
+        df_storage_ptx.rename(columns={"group": "category"}),
+        title="Depolama & PTX Kurulu Gücü (GW)",
+        x_field="year",
+        stack_field="category",
+        y_title="GW",
+        category_title="Kategori",
+        value_format=",.3f",
+        order=order_storage_ptx,
     )
 
-    wf_cap = prepare_yearly_transition_waterfall(
-        cap_for_wf,
-        scenario=scn_tr,
-        start_year=int(start_year),
-        end_year=int(MAX_YEAR),
-        value_col="value",
-        group_col="category",
+    st.divider()
+
+# ENERGY PANEL
+if "Enerji" in selected_panels:
+    st.markdown("## Enerji")
+
+    _render_stacked(
+        df_primary.rename(columns={"source": "category"}),
+        title="Birincil Enerji Talebi (GWh)",
+        x_field="year",
+        stack_field="category",
+        y_title="GWh",
+        category_title="Kaynak",
+        value_format=",.0f",
     )
 
-    colA, colB = st.columns(2)
-    with colA:
-        render_waterfall(wf_gen, title=f"Elektrik Üretimi Dönüşümü (GWh) — {start_year} → {MAX_YEAR}", y_title="GWh")
-    with colB:
-        render_waterfall(wf_cap, title=f"Kurulu Güç Dönüşümü (GW) — {start_year} → {MAX_YEAR}", y_title="GW")
+    st.divider()
 
-st.divider()
+    _render_stacked(
+        df_final.rename(columns={"source": "category"}),
+        title="Kaynaklarına Göre Nihai Enerji Tüketimi (GWh)",
+        x_field="year",
+        stack_field="category",
+        y_title="GWh",
+        category_title="Kaynak",
+        value_format=",.0f",
+    )
 
-# -----------------------------
-# 2.2) Depolama & PTX Kurulu Gücü (GW)
-# -----------------------------
-order_storage_ptx = ["Total Storage", "Power to X"]
-_render_stacked(
-    df_storage_ptx.rename(columns={"group": "category"}),
-    title="Depolama & PTX Kurulu Gücü (GW)",
-    x_field="year",
-    stack_field="category",
-    y_title="GW",
-    category_title="Kategori",
-    value_format=",.3f",
-    order=order_storage_ptx,
-)
+    st.divider()
 
-st.divider()
+# EMISSIONS PANEL
+if "Sera Gazı Emisyonları" in selected_panels:
+    st.markdown("## Sera Gazı Emisyonları")
 
-# -----------------------------
-# 3) Birincil enerji talebi (stacked)
-# -----------------------------
-_render_stacked(
-    df_primary.rename(columns={"source": "category"}),
-    title="Birincil Enerji Talebi (GWh)",
-    x_field="year",
-    stack_field="category",
-    y_title="GWh",
-    category_title="Kaynak",
-    value_format=",.0f",
-)
+    _line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
+    _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
 
-st.divider()
+    st.divider()
 
-# -----------------------------
-# 4) Nihai enerji tüketimi (stacked)
-# -----------------------------
-_render_stacked(
-    df_final.rename(columns={"source": "category"}),
-    title="Kaynaklarına Göre Nihai Enerji Tüketimi (GWh)",
-    x_field="year",
-    stack_field="category",
-    y_title="GWh",
-    category_title="Kaynak",
-    value_format=",.0f",
-)
+    st.markdown("### Türkiye Seragazı Emisyonları — Net Zero Hedefi Takibi (CO₂e)")
+    st.caption(
+        "Enerji dışı emisyonlar/SGE ve LULUCF değerleri varsayımsaldır. "
+        "CO₂→CO₂e dönüşümü (2023 CRF varsayımı): Elektrik 0.99, Ulaştırma 0.94, Sanayi 0.97, Tarım 0.01, Diğer 0.99 (CO₂/CO₂e)."
+    )
 
-st.divider()
+    df_nz_plot = df_co2_nz_stack.copy() if df_co2_nz_stack is not None else pd.DataFrame()
+    if not df_nz_plot.empty and stacked_value_mode == "Pay (%)":
+        df_nz_plot = df_nz_plot[df_nz_plot["category"] != "LULUCF (Net Yutak, Tahmini)"]
 
-# -----------------------------
-# Remaining line charts
-# -----------------------------
-_line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
-_line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
+    _render_stacked(
+        df_nz_plot,
+        title="CO₂e Emisyon Bileşenleri (ktn CO₂e)",
+        x_field="year",
+        stack_field="category",
+        y_title="ktn CO₂e",
+        category_title="Bileşen",
+        value_format=",.0f",
+        order=[
+            "Enerji Kaynakli (Model, CO2e)",
+            "Enerji Disi Emisyonlar ve Diger SGE (Tahmini)",
+            "LULUCF (Net Yutak, Tahmini)",
+        ],
+    )
 
-st.divider()
-st.markdown("## Türkiye Seragazı Emisyonları — Net Zero Hedefi Takibi (CO₂e)")
-st.caption(
-    "Bu panel, Net Zero hedefine yaklasimi izlemek amaciyla kullanilir. "
-    "Enerji disi emisyonlar/SGE ve LULUCF degerleri varsayimsaldir. "
-    "CO₂→CO₂e donusumu (2023 CRF varsayimi): Elektrik 0.99, Ulastirma 0.94, Sanayi 0.97, Tarim 0.01, Diger 0.99."
-)
-
-df_nz_plot = df_co2_nz_stack.copy() if df_co2_nz_stack is not None else pd.DataFrame()
-if not df_nz_plot.empty and stacked_value_mode == "Pay (%)":
-    df_nz_plot = df_nz_plot[df_nz_plot["category"] != "LULUCF (Net Yutak, Tahmini)"]
-
-_render_stacked(
-    df_nz_plot,
-    title="CO₂e Emisyon Bileşenleri (ktn CO₂e)",
-    x_field="year",
-    stack_field="category",
-    y_title="ktn CO₂e",
-    category_title="Bileşen",
-    value_format=",.0f",
-    order=[
-        "Enerji Kaynakli (Model, CO2e)",
-        "Enerji Disi Emisyonlar ve Diger SGE (Tahmini)",
-        "LULUCF (Net Yutak, Tahmini)",
-    ],
-)
+    st.divider()
 
 with st.expander("Çalıştırma"):
     st.code("pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py", language="bash")
+
