@@ -952,7 +952,7 @@ st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü")
 # -----------------------------
 st.subheader("Dosya Yükleme")
 uploaded_files = st.file_uploader(
-    "Excel yükleyin (.xlsx) — en fazla 12 dosya",
+    "Excel yükleyin (.xlsx) — en fazla 3 dosya",
     type=["xlsx"],
     accept_multiple_files=True,
 )
@@ -961,15 +961,12 @@ uploaded_files = st.file_uploader(
 with st.sidebar:
     st.header("Aralık Seç")
 
-    # Year range slider (replaces start_year + max_year)
-    year_min_default = 2018
-    year_max_default = 2050
-    year_range = st.slider(
+    # Yıl aralığı (veri yılları ile uyumlu sabit seçenekler)
+    YEAR_OPTIONS = [2018, 2020, 2025, 2030, 2035, 2040, 2045, 2050]
+    year_range = st.select_slider(
         "Senaryo yıl aralığı",
-        min_value=year_min_default,
-        max_value=year_max_default,
+        options=YEAR_OPTIONS,
         value=(2025, 2050),
-        step=1,
         help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
     start_year, max_year = int(year_range[0]), int(year_range[1])
@@ -996,9 +993,9 @@ if not uploaded_files:
     st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
     st.stop()
 
-if len(uploaded_files) > 12:
-    st.warning("En fazla 12 dosya yükleyebilirsiniz. İlk 12 dosya alınacak.")
-    uploaded_files = uploaded_files[:12]
+if len(uploaded_files) > 3:
+    st.warning("En fazla 3 dosya yükleyebilirsiniz. İlk 3 dosya alınacak.")
+    uploaded_files = uploaded_files[:3]
 
 
 def _derive_scenario_name(uploaded) -> str:
@@ -1026,27 +1023,10 @@ scenario_to_file = dict(zip(scenario_names_unique, uploaded_files))
 default_n = 3 if len(scenario_names_unique) >= 3 else len(scenario_names_unique)
 default_selected = scenario_names_unique[:default_n]
 
-selected_scenarios = st.multiselect(
-    "Karşılaştırılacak senaryolar",
-    options=scenario_names_unique,
-    default=default_selected,
-)
+selected_scenarios = list(scenario_names_unique)
+visible_scenarios = list(selected_scenarios)
 
-visible_scenarios = list(selected_scenarios)  # widget kaldırıldı; hepsi görünür
 
-# Seçili senaryoları tam isimle göster
-st.markdown("**Seçili senaryolar (tam isim):**")
-for i, scn in enumerate(selected_scenarios, 1):
-    st.markdown(f"{i}. {scn}")
-    # Görünür senaryo filtresi kaldırıldı (senaryo seçimi üstte)
-
-if not selected_scenarios:
-    st.info("En az 1 senaryo seçin.")
-    st.stop()
-
-if len(selected_scenarios) >= 4 and compare_mode not in {"2035/2050 snapshot", "2025/2035 snapshot"}:
-    st.warning("4+ senaryoda okunabilirlik için snapshot modları önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
-    selected_scenarios = selected_scenarios[:3]
 
 if len(selected_scenarios) == 2:
     with st.sidebar:
