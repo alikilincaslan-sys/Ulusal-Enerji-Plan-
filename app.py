@@ -1319,6 +1319,7 @@ def _line_chart(
     style = chart_style or globals().get("ts_chart_style", "Bar (Gruplu)")
 
     sel_scn = alt.selection_point(fields=["scenario"], bind="legend", toggle=True, empty="all")
+    scn_domain = [str(s) for s in (vis if vis else selected_scenarios)]
 
     base = (
         alt.Chart(dfp)
@@ -1329,6 +1330,7 @@ def _line_chart(
                 "scenario:N",
                 title="Senaryo",
                 legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0),
+                scale=alt.Scale(domain=scn_domain) if scn_domain else alt.Undefined,
             ),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
@@ -1458,6 +1460,20 @@ def _legend_toggle_selection(field: str):
     return alt.selection_point(fields=[field], bind="legend", toggle=True, empty="all")
 
 
+def _domain_for_field(dfp: pd.DataFrame, field: str, preferred_order=None) -> list[str] | None:
+    """Renklerin filtreyle degismemesi icin color scale domain'ini sabitle.
+
+    - preferred_order verilirse onu kullanir (or: order listesi)
+    - yoksa verideki benzersiz degerleri (sirali) kullanir
+    """
+    if preferred_order is not None:
+        return [str(x) for x in preferred_order]
+    if dfp is None or dfp.empty or field not in dfp.columns:
+        return None
+    vals = [str(x) for x in dfp[field].dropna().astype(str).unique().tolist()]
+    return sorted(vals)
+
+
 def _stacked_small_multiples(
     df,
     title: str,
@@ -1491,6 +1507,7 @@ def _stacked_small_multiples(
         dfp = dfp.sort_values(["scenario", "year", stack_field])
 
     sel_cat = _legend_toggle_selection(stack_field)
+    color_domain = _domain_for_field(dfp, stack_field, preferred_order=order)
 
     n = len(selected_scenarios)
     ncols = _ncols_for_selected(n)
@@ -1503,7 +1520,8 @@ def _stacked_small_multiples(
         if sub.empty:
             continue
 
-        legend = alt.Legend(orient="right", labelLimit=0, titleLimit=0) if idx == 0 else None
+        # Her panelde legend goster: kolonlar yan yana iken boyutlar esit kalsin
+        legend = alt.Legend(orient="right", labelLimit=0, titleLimit=0)
 
         bars_src = alt.Chart(sub).add_params(sel_cat).transform_filter(sel_cat)
         bars = (
@@ -1511,7 +1529,12 @@ def _stacked_small_multiples(
             .encode(
                 x=alt.X(f"{x_field}:O", title="Yıl"),
                 y=alt.Y("value:Q", title=y_title, stack=True, scale=(alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined)),
-                color=alt.Color(f"{stack_field}:N", title=category_title, legend=legend),
+                color=alt.Color(
+                    f"{stack_field}:N",
+                    title=category_title,
+                    legend=legend,
+                    scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+                ),
                 tooltip=[
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
                     alt.Tooltip(f"{stack_field}:N", title=category_title),
@@ -1574,6 +1597,7 @@ def _stacked_clustered(
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
     sel_cat = _legend_toggle_selection(stack_field)
+    color_domain = _domain_for_field(dfp, stack_field, preferred_order=order)
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
@@ -1583,7 +1607,12 @@ def _stacked_clustered(
         x=alt.X(f"{x_field}:O", title="Yıl"),
         xOffset=alt.XOffset("scenario:N"),
         y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-        color=alt.Color(f"{stack_field}:N", title=category_title, legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0)),
+        color=alt.Color(
+            f"{stack_field}:N",
+            title=category_title,
+            legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0),
+            scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+        ),
         tooltip=[
             alt.Tooltip("scenario:N", title="Senaryo"),
             alt.Tooltip(f"{x_field}:O", title="Yıl"),
@@ -1652,6 +1681,7 @@ def _stacked_snapshot(
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
     sel_cat = _legend_toggle_selection(stack_field)
+    color_domain = _domain_for_field(dfp, stack_field, preferred_order=order)
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
@@ -1661,7 +1691,12 @@ def _stacked_snapshot(
         x=alt.X(f"{x_field}:O", title="Yıl"),
         xOffset=alt.XOffset("scenario:N"),
         y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-        color=alt.Color(f"{stack_field}:N", title=category_title, legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0)),
+        color=alt.Color(
+            f"{stack_field}:N",
+            title=category_title,
+            legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0),
+            scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+        ),
         tooltip=[
             alt.Tooltip("scenario:N", title="Senaryo"),
             alt.Tooltip(f"{x_field}:O", title="Yıl"),
@@ -2003,4 +2038,3 @@ if "Sera Gazı Emisyonları" in selected_panels:
 
 with st.expander("Çalıştırma"):
     st.code("pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py", language="bash")
-
