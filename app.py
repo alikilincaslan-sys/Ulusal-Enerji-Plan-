@@ -1224,10 +1224,18 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     return bundle
 
 
+bundle_start_year = int(start_year)
+# Snapshot modunda, yil araligi filtresi snapshot yillarini dislasa bile veri okunabilsin.
+if 'snapshot' in str(compare_mode).lower():
+    try:
+        bundle_start_year = int(min(start_year, min(globals().get('snapshot_years_selected', (start_year, MAX_YEAR)))))
+    except Exception:
+        bundle_start_year = int(start_year)
+
 bundles = []
 for scn in selected_scenarios:
     f = scenario_to_file[scn]
-    bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR))
+    bundles.append(compute_scenario_bundle(f, scn, bundle_start_year, MAX_YEAR))
 
 
 def _concat(key: str):
@@ -1457,6 +1465,18 @@ PALETTE20 = [
     '#8C564B', '#E377C2', '#7F7F7F', '#BCBD22', '#17BECF',
 ]
 TOTAL_LINE_COLOR = '#800020'  # koyu bordo (burgundy)
+TOTAL_LINE_LABEL = 'Toplam'
+
+
+def _line_scale_with_total(color_domain: list[str] | None):
+    """Kategori renklerini sabitle ve 'Toplam' kesikli çizgisine özel renk ver."""
+    if not color_domain:
+        return alt.Undefined
+
+    dom = [str(x) for x in color_domain if str(x) != TOTAL_LINE_LABEL]
+    dom = dom + [TOTAL_LINE_LABEL]
+    rng = (PALETTE20[: len(dom) - 1] if len(dom) > 1 else []) + [TOTAL_LINE_COLOR]
+    return alt.Scale(domain=dom, range=rng)
 
 def _legend_toggle_selection(field: str):
     """Legend tıklamasıyla çoklu seç / gizle-göster (toggle)."""
@@ -1560,7 +1580,7 @@ def _stacked_small_multiples(
             # Toplam (secilen kategorilerin toplami) – kesikli cizgi (legend'de 'Toplam')
             total_line = (
                 base_src.transform_joinaggregate(Total="sum(value)", groupby=[x_field])
-                .transform_calculate(**{stack_field: "'Toplam'"})
+                .transform_calculate(**{stack_field: f"'{TOTAL_LINE_LABEL}'"})
                 .mark_line(strokeDash=[6, 4], strokeWidth=3)
                 .encode(
                     x=alt.X(f"{x_field}:O", title="Yıl"),
