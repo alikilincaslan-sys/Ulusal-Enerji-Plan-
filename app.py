@@ -1259,13 +1259,7 @@ df_storage_ptx = _concat("storage_ptx")
 # -----------------------------
 # Line charts (single axis, scenario colors)
 # -----------------------------
-def _line_chart(
-    df,
-    title: str,
-    y_title: str,
-    value_format: str = ",.2f",
-    chart_style: str | None = None,
-):
+def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_style: str | None = None):
     if df is None or df.empty:
         st.subheader(title)
         st.warning("Veri bulunamadı.")
@@ -1277,24 +1271,6 @@ def _line_chart(
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
     dfp["year"] = dfp["year"].astype(int)
 
-    st.subheader(title)
-
-    # --- Senaryo görünürlüğü (checkbox listesi) ---
-    safe_key = re.sub(r"[^a-zA-Z0-9_]+", "_", f"scn_vis_{title}")
-    scn_all = list(dict.fromkeys(dfp["scenario"].astype(str).tolist()))
-    scn_vis = st.multiselect(
-        "Gösterilecek senaryolar",
-        options=scn_all,
-        default=scn_all,
-        key=safe_key,
-        help="Senaryoları tek tıkla gizle/göster. Varsayılan: hepsi açık.",
-    )
-    if not scn_vis:
-        st.info("Senaryo filtresinde en az 1 senaryo seçin.")
-        return
-    dfp = dfp[dfp["scenario"].isin(scn_vis)].copy()
-
-    # --- 2 senaryo fark modu (A - B) ---
     diff_on = bool(globals().get("diff_mode_enabled", False))
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
@@ -1310,15 +1286,12 @@ def _line_chart(
                 dfp = out
                 title = f"{title} — Fark ({a} - {b})"
 
+    st.subheader(title)
     year_vals = sorted(dfp["year"].unique().tolist())
     style = chart_style or globals().get("ts_chart_style", "Bar (Gruplu)")
 
     base = alt.Chart(dfp).encode(
-        color=alt.Color(
-            "scenario:N",
-            title="Senaryo",
-            legend=alt.Legend(orient="bottom", labelLimit=0, titleLimit=0),
-        ),
+        color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
         tooltip=[
             alt.Tooltip("scenario:N", title="Senaryo"),
             alt.Tooltip("year:O", title="Yıl"),
@@ -1327,34 +1300,20 @@ def _line_chart(
     )
 
     if style == "Çizgi":
-        chart = (
-            base.mark_line(point=True)
-            .encode(
-                x=alt.X(
-                    "year:Q",
-                    title="Yıl",
-                    scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
-                    axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
-                ),
-                y=alt.Y("value:Q", title=y_title),
-            )
+        chart = base.mark_line(point=True).encode(
+            x=alt.X("year:Q", title="Yıl", scale=alt.Scale(domain=[min(year_vals), max(year_vals)]), axis=alt.Axis(values=year_vals, format="d", labelAngle=0)),
+            y=alt.Y("value:Q", title=y_title),
         )
     elif style == "Bar (Stack)":
-        chart = (
-            base.mark_bar()
-            .encode(
-                x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
-                y=alt.Y("value:Q", title=y_title, stack="zero"),
-            )
+        chart = base.mark_bar().encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
+            y=alt.Y("value:Q", title=y_title, stack="zero"),
         )
     else:
-        chart = (
-            base.mark_bar()
-            .encode(
-                x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
-                xOffset=alt.XOffset("scenario:N"),
-                y=alt.Y("value:Q", title=y_title),
-            )
+        chart = base.mark_bar().encode(
+            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
+            xOffset=alt.XOffset("scenario:N"),
+            y=alt.Y("value:Q", title=y_title),
         )
 
     st.altair_chart(chart.properties(height=320), use_container_width=True)
@@ -1454,267 +1413,143 @@ def _legend_filter_params(stack_field: str):
     return sel
 
 
-def _stacked_small_multiples(
-    df,
-    title: str,
-    x_field: str,
-    stack_field: str,
-    y_title: str,
-    category_title: str,
-    value_format: str,
-    order=None,
-    is_percent: bool = False,
-):
+def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
 
     dfp = df.copy()
-    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce").astype("Int64")
-    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
-    dfp = dfp.dropna(subset=["scenario", "year", stack_field, "value"])
     dfp["year"] = dfp["year"].astype(int)
 
-    # Legend yerine: checkbox ile kategori filtresi (çoklu seçim)
-    safe_key_cat = re.sub(r"[^a-zA-Z0-9_]+", "_", f"cat_vis_{title}")
-    cats_all = dfp[stack_field].astype(str).unique().tolist()
     if order is not None:
-        # order'a göre sırala (order dışı varsa sona)
-        ord_map = {c: i for i, c in enumerate(order)}
-        cats_all = sorted(cats_all, key=lambda c: ord_map.get(c, 10_000))
-    cats_vis = st.multiselect(
-        f"Gösterilecek {category_title} (çoklu seçim)",
-        options=cats_all,
-        default=cats_all,
-        key=safe_key_cat,
-        help="Örn. Kömür + Linyit seçip sadece toplamını görmek için diğerlerini kapatın.",
-    )
-    if not cats_vis:
-        st.info("Kategori filtresinde en az 1 öğe seçin.")
-        return
-    dfp = dfp[dfp[stack_field].astype(str).isin(cats_vis)].copy()
-
-    # Senaryo görünürlüğü (small multiples'ta da tek panelden)
-    safe_key_scn = re.sub(r"[^a-zA-Z0-9_]+", "_", f"scn_vis_sm_{title}")
-    scn_all = list(dict.fromkeys(dfp["scenario"].astype(str).tolist()))
-    scn_vis = st.multiselect(
-        "Gösterilecek senaryolar",
-        options=scn_all,
-        default=scn_all,
-        key=safe_key_scn,
-    )
-    if not scn_vis:
-        st.info("Senaryo filtresinde en az 1 senaryo seçin.")
-        return
-    dfp = dfp[dfp["scenario"].isin(scn_vis)].copy()
-
-    if order is not None:
-        dfp[stack_field] = pd.Categorical(dfp[stack_field].astype(str), categories=order, ordered=True)
+        dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["scenario", "year", stack_field])
 
     ymax = 100.0 if is_percent else float(dfp.groupby(["scenario", "year"])["value"].sum().max()) if len(dfp) else None
     yscale = alt.Scale(domain=[0, ymax]) if ymax and np.isfinite(ymax) else alt.Undefined
 
-    scenarios_to_show = list(dict.fromkeys(dfp["scenario"].tolist()))
-    n = len(scenarios_to_show)
+    n = len(selected_scenarios)
     ncols = _ncols_for_selected(n)
     cols = st.columns(ncols)
 
-    for idx, scn in enumerate(scenarios_to_show):
+    for idx, scn in enumerate(selected_scenarios):
         sub = dfp[dfp["scenario"] == scn]
         if sub.empty:
             continue
 
+        sel = _legend_filter_params(stack_field)
+
+        bars_src = alt.Chart(sub)
+        if not is_percent:
+            bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=[x_field])
+
         bars = (
-            alt.Chart(sub)
-            .mark_bar()
+            bars_src.mark_bar()
             .encode(
                 x=alt.X(f"{x_field}:O", title="Yıl"),
                 y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-                color=alt.Color(
-                    f"{stack_field}:N",
-                    title=category_title,
-                    legend=alt.Legend(orient="bottom", labelLimit=0, titleLimit=0),
-                ),
+                color=alt.Color(f"{stack_field}:N", title=category_title),
+                opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
                 tooltip=[
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
                     alt.Tooltip(f"{stack_field}:N", title=category_title),
                     alt.Tooltip("value:Q", title=y_title, format=value_format),
+                    *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
                 ],
             )
+            .add_params(sel)
         )
-
-        layer = bars
-        if not is_percent:
-            totals = sub.groupby(x_field, as_index=False)["value"].sum().rename(columns={"value": "Total"})
-            labels = (
-                alt.Chart(totals)
-                .mark_text(dy=-6)
-                .encode(
-                    x=alt.X(f"{x_field}:O", title="Yıl"),
-                    y=alt.Y("Total:Q"),
-                    text=alt.Text("Total:Q", format=value_format),
-                    tooltip=[
-                        alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                        alt.Tooltip("Total:Q", title="Seçili Toplam", format=value_format),
-                    ],
-                )
-            )
-            layer = alt.layer(bars, labels)
 
         with cols[idx % ncols]:
             st.markdown(f"**{scn}**")
-            st.altair_chart(layer.properties(height=380), use_container_width=True)
+            st.altair_chart(bars.properties(height=380), use_container_width=True)
 
 
-def _stacked_clustered(
-    df,
-    title: str,
-    x_field: str,
-    stack_field: str,
-    y_title: str,
-    category_title: str,
-    value_format: str,
-    order=None,
-    is_percent: bool = False,
-):
+def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
 
     dfp = df.copy()
-    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce").astype("Int64")
-    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
-    dfp = dfp.dropna(subset=["scenario", "year", stack_field, "value"])
     dfp["year"] = dfp["year"].astype(int)
-
     if order is not None:
-        dfp[stack_field] = pd.Categorical(dfp[stack_field].astype(str), categories=order, ordered=True)
+        dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
+    sel = _legend_filter_params(stack_field)
+
+    bars_src = alt.Chart(dfp)
+    if not is_percent:
+        bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
+
     bars = (
-        alt.Chart(dfp)
-        .mark_bar()
+        bars_src.mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-            color=alt.Color(
-                f"{stack_field}:N",
-                title=category_title,
-                legend=alt.Legend(orient="bottom", labelLimit=0, titleLimit=0),
-            ),
+            color=alt.Color(f"{stack_field}:N", title=category_title),
+            opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
+                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
             ],
         )
+        .add_params(sel)
     )
-
-    layer = bars
-    if not is_percent:
-        totals = dfp.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "Total"})
-        labels = (
-            alt.Chart(totals)
-            .mark_text(dy=-6)
-            .encode(
-                x=alt.X(f"{x_field}:O", title="Yıl"),
-                xOffset=alt.XOffset("scenario:N"),
-                y=alt.Y("Total:Q"),
-                text=alt.Text("Total:Q", format=value_format),
-                tooltip=[
-                    alt.Tooltip("scenario:N", title="Senaryo"),
-                    alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                    alt.Tooltip("Total:Q", title="Seçili Toplam", format=value_format),
-                ],
-            )
-        )
-        layer = alt.layer(bars, labels)
-
-    st.altair_chart(layer.properties(height=420), use_container_width=True)
+    st.altair_chart(bars.properties(height=420), use_container_width=True)
 
 
-def _stacked_snapshot(
-    df,
-    title: str,
-    x_field: str,
-    stack_field: str,
-    y_title: str,
-    category_title: str,
-    value_format: str,
-    years=(2035, 2050),
-    order=None,
-    is_percent: bool = False,
-):
+def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
     dfp = df.copy()
-    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce").astype("Int64")
-    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
-    dfp = dfp.dropna(subset=["scenario", "year", stack_field, "value"])
     dfp["year"] = dfp["year"].astype(int)
-
     dfp = dfp[dfp["year"].isin(list(years))]
     if dfp.empty:
         st.warning("Seçilen yıllar için veri yok (seçili snapshot yılları).")
         return
 
     if order is not None:
-        dfp[stack_field] = pd.Categorical(dfp[stack_field].astype(str), categories=order, ordered=True)
+        dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
+    sel = _legend_filter_params(stack_field)
+
+    bars_src = alt.Chart(dfp)
+    if not is_percent:
+        bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
+
     bars = (
-        alt.Chart(dfp)
-        .mark_bar()
+        bars_src.mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-            color=alt.Color(
-                f"{stack_field}:N",
-                title=category_title,
-                legend=alt.Legend(orient="bottom", labelLimit=0, titleLimit=0),
-            ),
+            color=alt.Color(f"{stack_field}:N", title=category_title),
+            opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
+                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
             ],
         )
+        .add_params(sel)
     )
-
-    layer = bars
-    if not is_percent:
-        totals = dfp.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "Total"})
-        labels = (
-            alt.Chart(totals)
-            .mark_text(dy=-6)
-            .encode(
-                x=alt.X(f"{x_field}:O", title="Yıl"),
-                xOffset=alt.XOffset("scenario:N"),
-                y=alt.Y("Total:Q"),
-                text=alt.Text("Total:Q", format=value_format),
-                tooltip=[
-                    alt.Tooltip("scenario:N", title="Senaryo"),
-                    alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                    alt.Tooltip("Total:Q", title="Seçili Toplam", format=value_format),
-                ],
-            )
-        )
-        layer = alt.layer(bars, labels)
-
-    st.altair_chart(layer.properties(height=420), use_container_width=True)
+    st.altair_chart(bars.properties(height=420), use_container_width=True)
 
 
 def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None):
@@ -1723,7 +1558,6 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     value_format_use = value_format
     is_percent = False
 
-    # --- 2 senaryo fark modu (A - B) — SADECE MUTLAK DEĞERLERDE ---
     diff_on = bool(globals().get("diff_mode_enabled", False))
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
@@ -1745,46 +1579,6 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
                     df_use = out
                     title = f"{title} — Fark ({a} - {b})"
 
-    # --- KATEGORİ CHECKBOX FİLTRESİ (legend yerine) ---
-    if df_use is None or df_use.empty:
-        st.subheader(title)
-        st.warning("Veri bulunamadı.")
-        return
-
-    # Önce yüzde moduna geçilecekse normalize etmeden önce filtreleri hazırlayalım
-    safe_key_cat = re.sub(r"[^a-zA-Z0-9_]+", "_", f"cat_vis_main_{title}")
-    cats_all = df_use[stack_field].astype(str).unique().tolist() if stack_field in df_use.columns else []
-    if order is not None:
-        ord_map = {c: i for i, c in enumerate(order)}
-        cats_all = sorted(cats_all, key=lambda c: ord_map.get(c, 10_000))
-
-    cats_vis = st.multiselect(
-        f"Gösterilecek {category_title} (çoklu seçim)",
-        options=cats_all,
-        default=cats_all,
-        key=safe_key_cat,
-        help="Örn. Kömür + Linyit seçip sadece toplamlarını görmek için diğerlerini kapatın.",
-    )
-    if not cats_vis:
-        st.info("Kategori filtresinde en az 1 öğe seçin.")
-        return
-
-    df_use = df_use[df_use[stack_field].astype(str).isin(cats_vis)].copy()
-
-    # --- SENARYO CHECKBOX FİLTRESİ ---
-    safe_key_scn = re.sub(r"[^a-zA-Z0-9_]+", "_", f"scn_vis_main_{title}")
-    scn_all = list(dict.fromkeys(df_use["scenario"].astype(str).tolist())) if "scenario" in df_use.columns else []
-    scn_vis = st.multiselect(
-        "Gösterilecek senaryolar",
-        options=scn_all,
-        default=scn_all,
-        key=safe_key_scn,
-    )
-    if not scn_vis:
-        st.info("Senaryo filtresinde en az 1 senaryo seçin.")
-        return
-    df_use = df_use[df_use["scenario"].isin(scn_vis)].copy()
-
     if stacked_value_mode == "Pay (%)":
         df_use = _normalize_stacked_to_percent(df_use, stack_field=stack_field)
         y_title_use = "%"
@@ -1795,10 +1589,10 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
 
     safe_key = re.sub(r"[^a-zA-Z0-9_]+", "_", f"show_total_{title}")
     show_total_panel = st.checkbox(
-        "Sadece seçili toplamı (Total) ayrı grafikte göster",
+        "Sadece toplamı (Total) ayrı grafikte göster",
         key=safe_key,
         value=False,
-        help="Kategori filtresinden seçtiğiniz kalemlerin toplamını ayrı grafikte görürsünüz.",
+        help="Stacked grafikte toplamı okumak zor olursa açın: altta sadece toplam çizgi grafiği gösterilir.",
         disabled=is_percent,
     )
 
@@ -1825,7 +1619,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
         if totals.empty:
             return
 
-        st.markdown("**Seçili kalemlerin toplamı (Total) — ayrı grafik**")
+        st.markdown("**Toplam (Total) — ayrı grafik**")
 
         if compare_mode == "Small multiples (önerilen)":
             scenarios_to_show = list(dict.fromkeys(totals["scenario"].tolist()))
@@ -1843,11 +1637,11 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
                         .mark_line(point=True)
                         .encode(
                             x=alt.X(f"{x_field}:O", title="Yıl"),
-                            y=alt.Y("Total:Q", title=y_title_use),
+                            y=alt.Y("Total:Q", title=y_title),
                             tooltip=[
                                 alt.Tooltip("scenario:N", title="Senaryo"),
                                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                                alt.Tooltip("Total:Q", title="Seçili Toplam", format=value_format_use),
+                                alt.Tooltip("Total:Q", title="Total", format=value_format_use),
                             ],
                         )
                         .properties(height=220)
@@ -1859,16 +1653,12 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
                 .mark_line(point=True)
                 .encode(
                     x=alt.X(f"{x_field}:O", title="Yıl"),
-                    y=alt.Y("Total:Q", title=y_title_use),
-                    color=alt.Color(
-                        "scenario:N",
-                        title="Senaryo",
-                        legend=alt.Legend(orient="bottom", labelLimit=0, titleLimit=0),
-                    ),
+                    y=alt.Y("Total:Q", title=y_title),
+                    color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
                     tooltip=[
                         alt.Tooltip("scenario:N", title="Senaryo"),
                         alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                        alt.Tooltip("Total:Q", title="Seçili Toplam", format=value_format_use),
+                        alt.Tooltip("Total:Q", title="Total", format=value_format_use),
                     ],
                 )
                 .properties(height=320)
