@@ -1102,7 +1102,7 @@ if len(selected_scenarios) >= 4 and compare_mode not in {"2035/2050 snapshot", "
 if len(selected_scenarios) == 2:
     with st.sidebar:
         st.divider()
-        st.header("2 Senaryo Fark Modu : Kullanmadan önce Karşılaştırma modu: Small multiples harici mod seçin!")
+        st.header("2 Senaryo Fark Modu ")
         diff_mode_enabled = st.checkbox(
             "Farkı göster (A - B)",
             value=False,
