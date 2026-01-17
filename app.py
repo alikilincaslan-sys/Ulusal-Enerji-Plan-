@@ -989,15 +989,8 @@ with st.sidebar:
         value="Mutlak",
         help="Stacked grafiklerde mutlak değer yerine yıl içi pay (%) göstermek için Pay (%) seçin.",
     )
-
-    st.divider()
-    st.header("Grafik tipi")
-    ts_chart_style = st.selectbox(
-        "Zaman serisi grafikleri",
-        ["Bar (Gruplu)", "Çizgi", "Bar (Stack)"],
-        index=0,
-        help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
-    )
+    # Grafik tipi global seçici kaldırıldı (her grafikte ayrı seçim var)
+    ts_chart_style = "Çizgi"
 
 if not uploaded_files:
     st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
@@ -1039,22 +1032,13 @@ selected_scenarios = st.multiselect(
     default=default_selected,
 )
 
+visible_scenarios = list(selected_scenarios)  # widget kaldırıldı; hepsi görünür
+
 # Seçili senaryoları tam isimle göster
 st.markdown("**Seçili senaryolar (tam isim):**")
 for i, scn in enumerate(selected_scenarios, 1):
     st.markdown(f"{i}. {scn}")
-
-
-
-    st.divider()
-    st.subheader("Grafiklerde görünür senaryolar")
-    visible_scenarios = st.multiselect(
-        "Göster/Gizle (legend tıklaması yoksa buradan)",
-        options=selected_scenarios,
-        default=selected_scenarios,
-        key="visible_scenarios",
-        help="Tüm grafiklerde ortak senaryo görünürlüğü. Varsayılan: hepsi açık.",
-    )
+    # Görünür senaryo filtresi kaldırıldı (senaryo seçimi üstte)
 
 if not selected_scenarios:
     st.info("En az 1 senaryo seçin.")
