@@ -1449,6 +1449,15 @@ def _stacked_small_multiples(
         st.warning("Veri bulunamadı.")
         return
 
+    # Grafik tipi (stacked grafikler icin): Bar (Stacked) veya Cizgi
+    stacked_style = st.radio(
+        "Grafik tipi",
+        options=["Bar (Stacked)", "Çizgi"],
+        horizontal=True,
+        index=0,
+        key=f"stacked_style_sm_{title}",
+    )
+
     dfp = df.copy()
     dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce").astype("Int64")
     dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
@@ -1482,42 +1491,86 @@ def _stacked_small_multiples(
         # Her panelde legend goster: kolonlar yan yana iken boyutlar esit kalsin
         legend = alt.Legend(orient="right", labelLimit=0, titleLimit=0)
 
-        bars_src = alt.Chart(sub).add_params(sel_cat).transform_filter(sel_cat)
-        bars = (
-            bars_src.mark_bar()
-            .encode(
-                x=alt.X(f"{x_field}:O", title="Yıl"),
-                y=alt.Y("value:Q", title=y_title, stack=True, scale=(alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined)),
-                color=alt.Color(
-                    f"{stack_field}:N",
-                    title=category_title,
-                    legend=legend,
-                    scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
-                ),
-                tooltip=[
-                    alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                    alt.Tooltip(f"{stack_field}:N", title=category_title),
-                    alt.Tooltip("value:Q", title=y_title, format=value_format),
-                ],
-            )
-        )
+        base_src = alt.Chart(sub).add_params(sel_cat).transform_filter(sel_cat)
 
-        layer = bars
-        if not is_percent:
-            labels = (
-                bars_src.transform_joinaggregate(Total="sum(value)", groupby=[x_field])
-                .mark_text(dy=-6)
+        if stacked_style == "Çizgi":
+            lines = (
+                base_src.mark_line(point=True)
                 .encode(
                     x=alt.X(f"{x_field}:O", title="Yıl"),
-                    y=alt.Y("Total:Q"),
-                    text=alt.Text("Total:Q", format=value_format),
+                    y=alt.Y("value:Q", title=y_title, scale=(alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined)),
+                    color=alt.Color(
+                        f"{stack_field}:N",
+                        title=category_title,
+                        legend=legend,
+                        scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+                    ),
                     tooltip=[
                         alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                        alt.Tooltip("Total:Q", title="Seçili Toplam", format=value_format),
+                        alt.Tooltip(f"{stack_field}:N", title=category_title),
+                        alt.Tooltip("value:Q", title=y_title, format=value_format),
                     ],
                 )
             )
-            layer = alt.layer(bars, labels)
+
+            # Toplam (secilen kategorilerin toplami) – kesikli cizgi
+            total_line = (
+                base_src.transform_joinaggregate(Total="sum(value)", groupby=[x_field])
+                .mark_line(strokeDash=[6, 4], strokeWidth=2)
+                .encode(
+                    x=alt.X(f"{x_field}:O", title="Yıl"),
+                    y=alt.Y("Total:Q", title=y_title),
+                    tooltip=[
+                        alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                        alt.Tooltip("Total:Q", title="Toplam", format=value_format),
+                    ],
+                    color=alt.value("black"),
+                )
+            )
+
+            layer = alt.layer(lines, total_line)
+
+        else:
+            bars = (
+                base_src.mark_bar()
+                .encode(
+                    x=alt.X(f"{x_field}:O", title="Yıl"),
+                    y=alt.Y(
+                        "value:Q",
+                        title=y_title,
+                        stack=True,
+                        scale=(alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined),
+                    ),
+                    color=alt.Color(
+                        f"{stack_field}:N",
+                        title=category_title,
+                        legend=legend,
+                        scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+                    ),
+                    tooltip=[
+                        alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                        alt.Tooltip(f"{stack_field}:N", title=category_title),
+                        alt.Tooltip("value:Q", title=y_title, format=value_format),
+                    ],
+                )
+            )
+
+            layer = bars
+            if not is_percent:
+                labels = (
+                    base_src.transform_joinaggregate(Total="sum(value)", groupby=[x_field])
+                    .mark_text(dy=-6)
+                    .encode(
+                        x=alt.X(f"{x_field}:O", title="Yıl"),
+                        y=alt.Y("Total:Q"),
+                        text=alt.Text("Total:Q", format=value_format),
+                        tooltip=[
+                            alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                            alt.Tooltip("Total:Q", title="Seçili Toplam", format=value_format),
+                        ],
+                    )
+                )
+                layer = alt.layer(bars, labels)
 
         with cols[idx % ncols]:
             st.markdown(f"**{scn}**")
@@ -1539,6 +1592,15 @@ def _stacked_clustered(
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
+
+    # Grafik tipi (stacked grafikler icin): Bar (Stacked) veya Cizgi
+    stacked_style = st.radio(
+        "Grafik tipi",
+        options=["Bar (Stacked)", "Çizgi"],
+        horizontal=True,
+        index=0,
+        key=f"stacked_style_cl_{title}",
+    )
 
     dfp = df.copy()
     dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce").astype("Int64")
@@ -1562,42 +1624,82 @@ def _stacked_clustered(
 
     base = alt.Chart(dfp).add_params(sel_cat).transform_filter(sel_cat)
 
-    bars = base.mark_bar().encode(
-        x=alt.X(f"{x_field}:O", title="Yıl"),
-        xOffset=alt.XOffset("scenario:N"),
-        y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-        color=alt.Color(
-            f"{stack_field}:N",
-            title=category_title,
-            legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0),
-            scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
-        ),
-        tooltip=[
-            alt.Tooltip("scenario:N", title="Senaryo"),
-            alt.Tooltip(f"{x_field}:O", title="Yıl"),
-            alt.Tooltip(f"{stack_field}:N", title=category_title),
-            alt.Tooltip("value:Q", title=y_title, format=value_format),
-        ],
-    )
+    legend = alt.Legend(orient="right", labelLimit=0, titleLimit=0)
 
-    layer = bars
-    if not is_percent:
-        labels = (
+    if stacked_style == "Çizgi":
+        lines = base.mark_line(point=True).encode(
+            x=alt.X(f"{x_field}:O", title="Yıl"),
+            y=alt.Y("value:Q", title=y_title, scale=yscale),
+            xOffset=alt.XOffset("scenario:N"),
+            color=alt.Color(
+                f"{stack_field}:N",
+                title=category_title,
+                legend=legend,
+                scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+            ),
+            tooltip=[
+                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                alt.Tooltip(f"{stack_field}:N", title=category_title),
+                alt.Tooltip("value:Q", title=y_title, format=value_format),
+            ],
+        )
+
+        total_line = (
             base.transform_joinaggregate(Total="sum(value)", groupby=["scenario", x_field])
-            .mark_text(dy=-6)
+            .mark_line(strokeDash=[6, 4], strokeWidth=2)
             .encode(
                 x=alt.X(f"{x_field}:O", title="Yıl"),
                 xOffset=alt.XOffset("scenario:N"),
-                y=alt.Y("Total:Q"),
-                text=alt.Text("Total:Q", format=value_format),
+                y=alt.Y("Total:Q", title=y_title),
                 tooltip=[
                     alt.Tooltip("scenario:N", title="Senaryo"),
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                    alt.Tooltip("Total:Q", title="Seçili Toplam", format=value_format),
+                    alt.Tooltip("Total:Q", title="Toplam", format=value_format),
                 ],
+                color=alt.value("black"),
             )
         )
-        layer = alt.layer(bars, labels)
+
+        layer = alt.layer(lines, total_line)
+
+    else:
+        bars = base.mark_bar().encode(
+            x=alt.X(f"{x_field}:O", title="Yıl"),
+            xOffset=alt.XOffset("scenario:N"),
+            y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
+            color=alt.Color(
+                f"{stack_field}:N",
+                title=category_title,
+                legend=legend,
+                scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+            ),
+            tooltip=[
+                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                alt.Tooltip(f"{stack_field}:N", title=category_title),
+                alt.Tooltip("value:Q", title=y_title, format=value_format),
+            ],
+        )
+
+        layer = bars
+        if not is_percent:
+            labels = (
+                base.transform_joinaggregate(Total="sum(value)", groupby=["scenario", x_field])
+                .mark_text(dy=-6)
+                .encode(
+                    x=alt.X(f"{x_field}:O", title="Yıl"),
+                    xOffset=alt.XOffset("scenario:N"),
+                    y=alt.Y("Total:Q"),
+                    text=alt.Text("Total:Q", format=value_format),
+                    tooltip=[
+                        alt.Tooltip("scenario:N", title="Senaryo"),
+                        alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                        alt.Tooltip("Total:Q", title="Seçili Toplam", format=value_format),
+                    ],
+                )
+            )
+            layer = alt.layer(bars, labels)
 
     st.altair_chart(layer.properties(height=420), use_container_width=True)
 
@@ -1618,6 +1720,15 @@ def _stacked_snapshot(
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
+
+    # Grafik tipi (stacked grafikler icin): Bar (Stacked) veya Cizgi
+    stacked_style = st.radio(
+        "Grafik tipi",
+        options=["Bar (Stacked)", "Çizgi"],
+        horizontal=True,
+        index=0,
+        key=f"stacked_style_snap_{title}_{'-'.join(map(str, years))}",
+    )
 
     dfp = df.copy()
     dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce").astype("Int64")
@@ -1645,43 +1756,81 @@ def _stacked_snapshot(
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
     base = alt.Chart(dfp).add_params(sel_cat).transform_filter(sel_cat)
+    legend = alt.Legend(orient="right", labelLimit=0, titleLimit=0)
 
-    bars = base.mark_bar().encode(
-        x=alt.X(f"{x_field}:O", title="Yıl"),
-        xOffset=alt.XOffset("scenario:N"),
-        y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-        color=alt.Color(
-            f"{stack_field}:N",
-            title=category_title,
-            legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0),
-            scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
-        ),
-        tooltip=[
-            alt.Tooltip("scenario:N", title="Senaryo"),
-            alt.Tooltip(f"{x_field}:O", title="Yıl"),
-            alt.Tooltip(f"{stack_field}:N", title=category_title),
-            alt.Tooltip("value:Q", title=y_title, format=value_format),
-        ],
-    )
+    if stacked_style == "Çizgi":
+        lines = base.mark_line(point=True).encode(
+            x=alt.X(f"{x_field}:O", title="Yıl"),
+            xOffset=alt.XOffset("scenario:N"),
+            y=alt.Y("value:Q", title=y_title, scale=yscale),
+            color=alt.Color(
+                f"{stack_field}:N",
+                title=category_title,
+                legend=legend,
+                scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+            ),
+            tooltip=[
+                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                alt.Tooltip(f"{stack_field}:N", title=category_title),
+                alt.Tooltip("value:Q", title=y_title, format=value_format),
+            ],
+        )
 
-    layer = bars
-    if not is_percent:
-        labels = (
+        total_line = (
             base.transform_joinaggregate(Total="sum(value)", groupby=["scenario", x_field])
-            .mark_text(dy=-6)
+            .mark_line(strokeDash=[6, 4], strokeWidth=2)
             .encode(
                 x=alt.X(f"{x_field}:O", title="Yıl"),
                 xOffset=alt.XOffset("scenario:N"),
-                y=alt.Y("Total:Q"),
-                text=alt.Text("Total:Q", format=value_format),
+                y=alt.Y("Total:Q", title=y_title),
                 tooltip=[
                     alt.Tooltip("scenario:N", title="Senaryo"),
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                    alt.Tooltip("Total:Q", title="Seçili Toplam", format=value_format),
+                    alt.Tooltip("Total:Q", title="Toplam", format=value_format),
                 ],
+                color=alt.value("black"),
             )
         )
-        layer = alt.layer(bars, labels)
+        layer = alt.layer(lines, total_line)
+
+    else:
+        bars = base.mark_bar().encode(
+            x=alt.X(f"{x_field}:O", title="Yıl"),
+            xOffset=alt.XOffset("scenario:N"),
+            y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
+            color=alt.Color(
+                f"{stack_field}:N",
+                title=category_title,
+                legend=legend,
+                scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+            ),
+            tooltip=[
+                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                alt.Tooltip(f"{stack_field}:N", title=category_title),
+                alt.Tooltip("value:Q", title=y_title, format=value_format),
+            ],
+        )
+
+        layer = bars
+        if not is_percent:
+            labels = (
+                base.transform_joinaggregate(Total="sum(value)", groupby=["scenario", x_field])
+                .mark_text(dy=-6)
+                .encode(
+                    x=alt.X(f"{x_field}:O", title="Yıl"),
+                    xOffset=alt.XOffset("scenario:N"),
+                    y=alt.Y("Total:Q"),
+                    text=alt.Text("Total:Q", format=value_format),
+                    tooltip=[
+                        alt.Tooltip("scenario:N", title="Senaryo"),
+                        alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                        alt.Tooltip("Total:Q", title="Seçili Toplam", format=value_format),
+                    ],
+                )
+            )
+            layer = alt.layer(bars, labels)
 
     st.altair_chart(layer.properties(height=420), use_container_width=True)
 
