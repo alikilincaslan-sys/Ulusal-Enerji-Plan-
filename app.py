@@ -1295,7 +1295,7 @@ def _line_chart(
     diff_on = bool(globals().get("diff_mode_enabled", False))
 
     if vis and not diff_on:
-    df_use = df_use[df_use["scenario"].isin(vis)].copy()
+        df_use = df_use[df_use["scenario"].isin(vis)].copy()
 
 
     st.subheader(title)
