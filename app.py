@@ -962,15 +962,38 @@ with st.sidebar:
         )
 
     st.divider()
-    st.header("Paneller (grafik grupları)")
+    st.header("Grafik grupları")
 
-    panel_options = ["Elektrik", "Enerji", "Sera Gazı Emisyonları"]
-    selected_panels = st.multiselect(
-        "Hangi grafik grupları görünsün?",
-        options=panel_options,
-        default=panel_options,
-        help="Sadeleştirmek için bir grubu kapatırsanız o bölüm tamamen gizlenir.",
-    )
+    # Hızlı seçim: Tümü / Hiçbiri
+    cbtn1, cbtn2 = st.columns([1, 1])
+    with cbtn1:
+        if st.button("Tümünü seç", use_container_width=True):
+            st.session_state["panel_el"] = True
+            st.session_state["panel_en"] = True
+            st.session_state["panel_ghg"] = True
+    with cbtn2:
+        if st.button("Hiçbiri", use_container_width=True):
+            st.session_state["panel_el"] = False
+            st.session_state["panel_en"] = False
+            st.session_state["panel_ghg"] = False
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        show_el = st.checkbox("Elektrik", value=st.session_state.get("panel_el", True), key="panel_el")
+    with c2:
+        show_en = st.checkbox("Enerji", value=st.session_state.get("panel_en", True), key="panel_en")
+    with c3:
+        show_ghg = st.checkbox("Sera Gazı Emisyonları", value=st.session_state.get("panel_ghg", True), key="panel_ghg")
+
+    selected_panels = []
+    if show_el:
+        selected_panels.append("Elektrik")
+    if show_en:
+        selected_panels.append("Enerji")
+    if show_ghg:
+        selected_panels.append("Sera Gazı Emisyonları")
+
+    st.caption("İsterseniz bir grubu kapatıp arayüzü sadeleştirebilirsiniz.")
 
     st.divider()
     st.header("Ayarlar")
