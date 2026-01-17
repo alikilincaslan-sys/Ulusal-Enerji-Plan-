@@ -946,67 +946,27 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
 # -----------------------------
 st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü")
 
+
+# -----------------------------
+# Dosya yükleme (ana sayfa)
+# -----------------------------
+st.subheader("Dosya Yükleme")
+uploaded_files = st.file_uploader(
+    "Excel yükleyin (.xlsx) — en fazla 3 dosya",
+    type=["xlsx"],
+    accept_multiple_files=True,
+)
+
+
 with st.sidebar:
-    st.header("Dosyalar (çoklu senaryo)")
-    uploaded_files = st.file_uploader(
-        "Excel yükleyin (.xlsx) — en fazla 12 dosya",
-        type=["xlsx"],
-        accept_multiple_files=True,
-    )
+    st.header("Aralık Seç")
 
-    show_security_note = st.checkbox("Güvenlik notunu göster", value=True)
-    if show_security_note:
-        st.info(
-            "Yüklenen Excel dosyaları yalnızca bu oturumda kullanılır, "
-            "kalıcı olarak saklanmaz ve başka kullanıcılar tarafından erişilemez."
-        )
-
-    st.divider()
-    st.header("Grafik grupları")
-
-    # Hızlı seçim: Tümü / Hiçbiri
-    cbtn1, cbtn2 = st.columns([1, 1])
-    with cbtn1:
-        if st.button("Tümünü seç", use_container_width=True):
-            st.session_state["panel_el"] = True
-            st.session_state["panel_en"] = True
-            st.session_state["panel_ghg"] = True
-    with cbtn2:
-        if st.button("Hiçbiri", use_container_width=True):
-            st.session_state["panel_el"] = False
-            st.session_state["panel_en"] = False
-            st.session_state["panel_ghg"] = False
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        show_el = st.checkbox("Elektrik", value=st.session_state.get("panel_el", True), key="panel_el")
-    with c2:
-        show_en = st.checkbox("Enerji", value=st.session_state.get("panel_en", True), key="panel_en")
-    with c3:
-        show_ghg = st.checkbox("Sera Gazı Emisyonları", value=st.session_state.get("panel_ghg", True), key="panel_ghg")
-
-    selected_panels = []
-    if show_el:
-        selected_panels.append("Elektrik")
-    if show_en:
-        selected_panels.append("Enerji")
-    if show_ghg:
-        selected_panels.append("Sera Gazı Emisyonları")
-
-    st.caption("İsterseniz bir grubu kapatıp arayüzü sadeleştirebilirsiniz.")
-
-    st.divider()
-    st.header("Ayarlar")
-
-    # Year range slider (replaces start_year + max_year)
-    year_min_default = 2018
-    year_max_default = 2050
-    year_range = st.slider(
+    # Yıl aralığı (veri yılları ile uyumlu sabit seçenekler)
+    YEAR_OPTIONS = [2018, 2020, 2025, 2030, 2035, 2040, 2045, 2050]
+    year_range = st.select_slider(
         "Senaryo yıl aralığı",
-        min_value=year_min_default,
-        max_value=year_max_default,
+        options=YEAR_OPTIONS,
         value=(2025, 2050),
-        step=1,
         help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
     start_year, max_year = int(year_range[0]), int(year_range[1])
@@ -1026,23 +986,16 @@ with st.sidebar:
         value="Mutlak",
         help="Stacked grafiklerde mutlak değer yerine yıl içi pay (%) göstermek için Pay (%) seçin.",
     )
-
-    st.divider()
-    st.header("Grafik tipi")
-    ts_chart_style = st.selectbox(
-        "Zaman serisi grafikleri",
-        ["Bar (Gruplu)", "Çizgi", "Bar (Stack)"],
-        index=0,
-        help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
-    )
+    # Grafik tipi global seçici kaldırıldı (her grafikte ayrı seçim var)
+    ts_chart_style = "Çizgi"
 
 if not uploaded_files:
     st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
     st.stop()
 
-if len(uploaded_files) > 12:
-    st.warning("En fazla 12 dosya yükleyebilirsiniz. İlk 12 dosya alınacak.")
-    uploaded_files = uploaded_files[:12]
+if len(uploaded_files) > 3:
+    st.warning("En fazla 3 dosya yükleyebilirsiniz. İlk 3 dosya alınacak.")
+    uploaded_files = uploaded_files[:3]
 
 
 def _derive_scenario_name(uploaded) -> str:
@@ -1070,39 +1023,15 @@ scenario_to_file = dict(zip(scenario_names_unique, uploaded_files))
 default_n = 3 if len(scenario_names_unique) >= 3 else len(scenario_names_unique)
 default_selected = scenario_names_unique[:default_n]
 
-selected_scenarios = st.multiselect(
-    "Karşılaştırılacak senaryolar",
-    options=scenario_names_unique,
-    default=default_selected,
-)
+selected_scenarios = list(scenario_names_unique)
+visible_scenarios = list(selected_scenarios)
 
-with st.sidebar:
-    st.markdown("**Karşılaştırılan senaryolar (tam ad):**")
-    for i, scn in enumerate(selected_scenarios, 1):
-        st.markdown(f"{i}. {scn}")
 
-    st.divider()
-    st.subheader("Grafiklerde görünür senaryolar")
-    visible_scenarios = st.multiselect(
-        "Göster/Gizle (legend tıklaması yoksa buradan)",
-        options=selected_scenarios,
-        default=selected_scenarios,
-        key="visible_scenarios",
-        help="Tüm grafiklerde ortak senaryo görünürlüğü. Varsayılan: hepsi açık.",
-    )
-
-if not selected_scenarios:
-    st.info("En az 1 senaryo seçin.")
-    st.stop()
-
-if len(selected_scenarios) >= 4 and compare_mode not in {"2035/2050 snapshot", "2025/2035 snapshot"}:
-    st.warning("4+ senaryoda okunabilirlik için snapshot modları önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
-    selected_scenarios = selected_scenarios[:3]
 
 if len(selected_scenarios) == 2:
     with st.sidebar:
         st.divider()
-        st.header("2 Senaryo Fark Modu : Kullanmadan önce Karşılaştırma modu: Small multiples harici mod seçin!")
+        st.header("2 Senaryo Fark Modu ")
         diff_mode_enabled = st.checkbox(
             "Farkı göster (A - B)",
             value=False,
