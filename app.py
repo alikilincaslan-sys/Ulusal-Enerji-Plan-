@@ -988,6 +988,32 @@ with st.sidebar:
         index=0,
     )
 
+    # Snapshot yil secimi (yil araligi filtresinden bagimsiz)
+    default_snap = (2035, 2050) if compare_mode == "2035/2050 snapshot" else (2025, 2035)
+    if 'snapshot_y1' not in st.session_state:
+        st.session_state['snapshot_y1'] = default_snap[0]
+    if 'snapshot_y2' not in st.session_state:
+        st.session_state['snapshot_y2'] = default_snap[1]
+
+    if 'snapshot' in compare_mode:
+        st.session_state['snapshot_y1'] = st.selectbox(
+            "Snapshot Yıl-1",
+            options=YEAR_OPTIONS,
+            index=YEAR_OPTIONS.index(st.session_state['snapshot_y1']) if st.session_state['snapshot_y1'] in YEAR_OPTIONS else 0,
+            key='snapshot_y1_box',
+        )
+        st.session_state['snapshot_y2'] = st.selectbox(
+            "Snapshot Yıl-2",
+            options=YEAR_OPTIONS,
+            index=YEAR_OPTIONS.index(st.session_state['snapshot_y2']) if st.session_state['snapshot_y2'] in YEAR_OPTIONS else (len(YEAR_OPTIONS)-1),
+            key='snapshot_y2_box',
+        )
+
+    snapshot_years_selected = (int(st.session_state['snapshot_y1']), int(st.session_state['snapshot_y2']))
+    # KPI, snapshot modunda secili snapshotin SON yilina gore hesaplanir
+    kpi_year_override = max(snapshot_years_selected) if ('snapshot' in compare_mode) else None
+
+
     stacked_value_mode = st.select_slider(
         "Stacked gösterim",
         options=["Mutlak", "Pay (%)"],
@@ -1339,8 +1365,18 @@ def _kpi_for_bundle(b):
     ye = b["ye_both"]
     cap_total = b["cap_total"]
     gdp = b["gdp"]
+    # KPI yil secimi: snapshot modunda secili snapshotin son yilina gore, degilse mevcut filtreli verinin son yilina gore
+    year_pref = globals().get('kpi_year_override')
+    latest_year = None
+    if supply is not None and (not supply.empty):
+        years_av = sorted(pd.to_numeric(supply['year'], errors='coerce').dropna().astype(int).unique().tolist())
+        if years_av:
+            if year_pref is None:
+                latest_year = int(max(years_av))
+            else:
+                # secilen yil veride yoksa en yakin yili kullan
+                latest_year = int(min(years_av, key=lambda y: (abs(y - int(year_pref)), -y)))
 
-    latest_year = int(supply["year"].max()) if supply is not None and not supply.empty else None
     latest_total = float(supply.loc[supply["year"] == latest_year, "value"].iloc[0]) if latest_year else np.nan
 
     latest_ye_total = np.nan
@@ -1413,6 +1449,14 @@ def _normalize_stacked_to_percent(df: pd.DataFrame, stack_field: str) -> pd.Data
     dfp["value"] = np.where(dfp["total"] > 0, (dfp["value"] / dfp["total"]) * 100.0, np.nan)
     return dfp.drop(columns=["total"])
 
+
+PALETTE20 = [
+    '#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#59A14F',
+    '#EDC948', '#B07AA1', '#FF9DA7', '#9C755F', '#BAB0AC',
+    '#1F77B4', '#FF7F0E', '#2CA02C', '#D62728', '#9467BD',
+    '#8C564B', '#E377C2', '#7F7F7F', '#BCBD22', '#17BECF',
+]
+TOTAL_LINE_COLOR = '#800020'  # koyu bordo (burgundy)
 
 def _legend_toggle_selection(field: str):
     """Legend tıklamasıyla çoklu seç / gizle-göster (toggle)."""
@@ -1503,7 +1547,7 @@ def _stacked_small_multiples(
                         f"{stack_field}:N",
                         title=category_title,
                         legend=legend,
-                        scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+                        scale=_line_scale_with_total(color_domain),
                     ),
                     tooltip=[
                         alt.Tooltip(f"{x_field}:O", title="Yıl"),
@@ -1513,18 +1557,24 @@ def _stacked_small_multiples(
                 )
             )
 
-            # Toplam (secilen kategorilerin toplami) – kesikli cizgi
+            # Toplam (secilen kategorilerin toplami) – kesikli cizgi (legend'de 'Toplam')
             total_line = (
                 base_src.transform_joinaggregate(Total="sum(value)", groupby=[x_field])
-                .mark_line(strokeDash=[6, 4], strokeWidth=2)
+                .transform_calculate(**{stack_field: "'Toplam'"})
+                .mark_line(strokeDash=[6, 4], strokeWidth=3)
                 .encode(
                     x=alt.X(f"{x_field}:O", title="Yıl"),
                     y=alt.Y("Total:Q", title=y_title),
+                    color=alt.Color(
+                        f"{stack_field}:N",
+                        title=category_title,
+                        legend=legend,
+                        scale=_line_scale_with_total(color_domain),
+                    ),
                     tooltip=[
                         alt.Tooltip(f"{x_field}:O", title="Yıl"),
                         alt.Tooltip("Total:Q", title="Toplam", format=value_format),
                     ],
-                    color=alt.value("black"),
                 )
             )
 
@@ -1635,7 +1685,7 @@ def _stacked_clustered(
                 f"{stack_field}:N",
                 title=category_title,
                 legend=legend,
-                scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+                scale=_line_scale_with_total(color_domain),
             ),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
@@ -1645,22 +1695,29 @@ def _stacked_clustered(
             ],
         )
 
+        line_scale = _line_scale_with_total(color_domain)
         total_line = (
             base.transform_joinaggregate(Total="sum(value)", groupby=["scenario", x_field])
-            .mark_line(strokeDash=[6, 4], strokeWidth=2)
+            .transform_calculate(**{stack_field: f"'{TOTAL_LINE_LABEL}'"})
+            .mark_line(strokeDash=[6, 4], strokeWidth=3)
             .encode(
                 x=alt.X(f"{x_field}:O", title="Yıl"),
                 xOffset=alt.XOffset("scenario:N"),
                 y=alt.Y("Total:Q", title=y_title),
+                color=alt.Color(
+                    f"{stack_field}:N",
+                    title=category_title,
+                    legend=legend,
+                    scale=line_scale,
+                ),
                 tooltip=[
                     alt.Tooltip("scenario:N", title="Senaryo"),
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                    alt.Tooltip(f"{stack_field}:N", title=category_title),
                     alt.Tooltip("Total:Q", title="Toplam", format=value_format),
                 ],
-                color=alt.value("black"),
             )
         )
-
         layer = alt.layer(lines, total_line)
 
     else:
@@ -1712,7 +1769,7 @@ def _stacked_snapshot(
     y_title: str,
     category_title: str,
     value_format: str,
-    years=(2035, 2050),
+    years=globals().get('snapshot_years_selected', (2035, 2050)),
     order=None,
     is_percent: bool = False,
 ):
@@ -1741,7 +1798,19 @@ def _stacked_snapshot(
     if vis:
         dfp = dfp[dfp["scenario"].isin(vis)].copy()
 
-    dfp = dfp[dfp["year"].isin(list(years))]
+    # Snapshot yillari: veride yoksa en yakin mevcut yil kullan (slider filtresi olsa bile calissin)
+    years_req = [int(y) for y in years]
+    years_av = sorted(dfp['year'].unique().tolist())
+    def _closest(y):
+        if not years_av:
+            return y
+        return int(min(years_av, key=lambda a: (abs(a - y), -a)))
+    years_use = tuple(_closest(y) for y in years_req)
+    dfp = dfp[dfp['year'].isin(list(years_use))]
+
+    # KPI icin snapshot son yili (yaklasik)
+    globals()['kpi_year_override'] = max(years_use)
+
     if dfp.empty:
         st.warning("Seçilen yıllar için veri yok (seçili snapshot yılları).")
         return
@@ -1767,7 +1836,7 @@ def _stacked_snapshot(
                 f"{stack_field}:N",
                 title=category_title,
                 legend=legend,
-                scale=(alt.Scale(domain=color_domain) if color_domain else alt.Undefined),
+                scale=_line_scale_with_total(color_domain),
             ),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
@@ -1777,19 +1846,27 @@ def _stacked_snapshot(
             ],
         )
 
+        line_scale = _line_scale_with_total(color_domain)
         total_line = (
             base.transform_joinaggregate(Total="sum(value)", groupby=["scenario", x_field])
-            .mark_line(strokeDash=[6, 4], strokeWidth=2)
+            .transform_calculate(**{stack_field: f"'{TOTAL_LINE_LABEL}'"})
+            .mark_line(strokeDash=[6, 4], strokeWidth=3)
             .encode(
                 x=alt.X(f"{x_field}:O", title="Yıl"),
                 xOffset=alt.XOffset("scenario:N"),
                 y=alt.Y("Total:Q", title=y_title),
+                color=alt.Color(
+                    f"{stack_field}:N",
+                    title=category_title,
+                    legend=legend,
+                    scale=line_scale,
+                ),
                 tooltip=[
                     alt.Tooltip("scenario:N", title="Senaryo"),
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                    alt.Tooltip(f"{stack_field}:N", title=category_title),
                     alt.Tooltip("Total:Q", title="Toplam", format=value_format),
                 ],
-                color=alt.value("black"),
             )
         )
         layer = alt.layer(lines, total_line)
@@ -1893,9 +1970,9 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     elif compare_mode == "Yıl içinde yan yana (clustered)":
         _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
     elif compare_mode == "2035/2050 snapshot":
-        _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2035, 2050), order=order, is_percent=is_percent)
+        _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=globals().get('snapshot_years_selected', (2035, 2050)), order=order, is_percent=is_percent)
     else:
-        _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2025, 2035), order=order, is_percent=is_percent)
+        _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=globals().get('snapshot_years_selected', (2025, 2035)), order=order, is_percent=is_percent)
 
     st.caption("İpucu: Legend'e tıklayarak kalemleri gizle/göster. Seçime göre eksen otomatik yeniden ölçeklenir.")
 # Waterfall helpers (unchanged)
