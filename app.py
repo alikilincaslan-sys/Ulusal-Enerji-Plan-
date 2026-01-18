@@ -157,6 +157,20 @@ def _extract_years(raw: pd.DataFrame, year_row_idx: int):
 
 
 def _extract_block(raw: pd.DataFrame, first_col_idx: int, year_cols_idx: list[int], years: list[int], block_title_regex: str):
+    """Excel sheet içinden bir blok (tablo) çek.
+
+    Eski yaklaşım "ilk boş satırda dur" idi; bazı dosyalarda ilk sütun hiç boş
+    olmadığı için blok yanlış/boş dönebiliyordu.
+
+    Yeni yaklaşım:
+    - Başlığı (block_title_regex) bul
+    - Başlığın altından itibaren, yıl sütunlarında en az bir sayı olan satırları al
+    - Üst üste 2 satır boyunca hem item boş hem de tüm yıl hücreleri NaN ise bloğu bitir
+    - "(in GW" gibi yeni alt-blok başlıklarına gelince de dur
+    """
+    if raw is None or raw.empty:
+        return None
+
     c0 = raw.iloc[:, first_col_idx].astype(str)
     mask = c0.str.contains(block_title_regex, case=False, na=False, regex=True)
     if not mask.any():
@@ -165,15 +179,42 @@ def _extract_block(raw: pd.DataFrame, first_col_idx: int, year_cols_idx: list[in
     title_row = mask[mask].index[0]
     start = title_row + 1
 
-    end = start
-    while end < len(raw):
-        v = raw.iloc[end, first_col_idx]
-        if pd.isna(v):
+    def _cell_str(x):
+        if x is None or (isinstance(x, float) and pd.isna(x)):
+            return ""
+        s = str(x).strip()
+        return "" if s.lower() == "nan" else s
+
+    empty_streak = 0
+    end = start - 1
+
+    for r in range(start, len(raw)):
+        item = _cell_str(raw.iloc[r, first_col_idx])
+
+        # Yeni bir alt-blok başlığına gelince (ör: "(in GW"), mevcut bloğu bitir.
+        if item and re.search(r"\(in\s+gw", item, flags=re.IGNORECASE):
             break
-        if isinstance(v, str) and re.search(r"\(in\s+gw", v.strip(), flags=re.IGNORECASE):
-            break
-        end += 1
-    end = max(start, end - 1)
+
+        vals = raw.iloc[r, year_cols_idx]
+        vals_num = pd.to_numeric(vals, errors="coerce")
+        has_any = bool(np.isfinite(vals_num).any())
+
+        is_blank_row = (item == "") and (not has_any)
+
+        if is_blank_row:
+            empty_streak += 1
+            if empty_streak >= 2:
+                break
+            continue
+
+        empty_streak = 0
+
+        # En az bir yıl değeri olan satırları bloğa dahil et.
+        if item != "" or has_any:
+            end = r
+
+    if end < start:
+        return None
 
     use_cols = [first_col_idx] + year_cols_idx
     blk = raw.iloc[start : end + 1, use_cols].copy()
@@ -185,7 +226,9 @@ def _extract_block(raw: pd.DataFrame, first_col_idx: int, year_cols_idx: list[in
     blk = blk[["item"] + keep_years]
     for y in keep_years:
         blk[y] = pd.to_numeric(blk[y], errors="coerce")
+
     return blk
+
 
 
 def _to_long(df_wide: pd.DataFrame, value_name="value"):
@@ -1271,7 +1314,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
     dfp["year"] = dfp["year"].astype(int)
 
-    diff_on = bool(globals().get("diff_mode_enabled", False))
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Small multiples (önerilen)") and (globals().get("compare_mode") != "Small multiples (önerilen)")
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
     if diff_on and a and b:
@@ -1558,7 +1601,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     value_format_use = value_format
     is_percent = False
 
-    diff_on = bool(globals().get("diff_mode_enabled", False))
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Small multiples (önerilen)") and (globals().get("compare_mode") != "Small multiples (önerilen)")
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
     if diff_on and a and b and (globals().get("stacked_value_mode") != "Pay (%)"):
