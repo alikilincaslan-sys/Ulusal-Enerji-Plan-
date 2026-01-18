@@ -1015,15 +1015,14 @@ with st.sidebar:
     # Year range slider (replaces start_year + max_year)
     year_min_default = 2018
     year_max_default = 2050
-    year_range = st.slider(
+    YEAR_OPTIONS = [2018, 2020, 2025, 2030, 2035, 2040, 2045, 2050]
+    year_range = st.select_slider(
         "Senaryo yıl aralığı",
-        min_value=year_min_default,
-        max_value=year_max_default,
+        options=YEAR_OPTIONS,
         value=(2025, 2050),
-        step=1,
         help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
-    start_year, max_year = int(year_range[0]), int(year_range[1])
+    start_year, max_year = year_range
     MAX_YEAR = int(max_year)
 
     st.divider()
@@ -1106,7 +1105,7 @@ if len(selected_scenarios) >= 4 and compare_mode not in {"2035/2050 snapshot", "
 if len(selected_scenarios) == 2:
     with st.sidebar:
         st.divider()
-        st.header("2 Senaryo Fark Modu : Kullanmadan önce Karşılaştırma modu: Small multiples harici mod seçin!")
+        st.caption("ℹ️ **2 Senaryo Fark Modu**, *Small multiples* dışındaki karşılaştırma modlarında çalışır.")
         diff_mode_enabled = st.checkbox(
             "Farkı göster (A - B)",
             value=False,
