@@ -179,6 +179,37 @@ def _extract_block(raw: pd.DataFrame, first_col_idx: int, year_cols_idx: list[in
     return blk
 
 
+def _extract_block_any(
+    raw: pd.DataFrame,
+    first_col_idx: int,
+    year_cols_idx: list[int],
+    years: list[int],
+    block_title_regex_list: list[str],
+):
+    """Try multiple block-title regex patterns and return the first match.
+
+    Bazı Excel dosyalarında blok başlıkları farklı dillerde / küçük varyasyonlarla
+    gelebiliyor (örn. Türkçe). Bu helper, sırayla regex listesi deneyerek
+    ilk bulunan bloğu döndürür.
+    """
+
+    for pat in block_title_regex_list:
+        blk = _extract_block(raw, first_col_idx, year_cols_idx, years, pat)
+        if blk is not None and not blk.empty:
+            return blk
+    # Son çare: boş olmayan ama başlık regex'leri uyuşmayan dosyalar için
+    # çok gevşek bir arama.
+    for pat in block_title_regex_list:
+        try:
+            token = re.sub(r"\\s\+", " ", pat)
+        except Exception:
+            token = pat
+        blk = _extract_block(raw, first_col_idx, year_cols_idx, years, token)
+        if blk is not None and not blk.empty:
+            return blk
+    return None
+
+
 def _to_long(df_wide: pd.DataFrame, value_name="value"):
     year_cols = [c for c in df_wide.columns if isinstance(c, int)]
     long = df_wide.melt(id_vars=["item"], value_vars=year_cols, var_name="year", value_name=value_name)
@@ -213,11 +244,58 @@ def read_power_generation(xlsx_file):
     years, year_cols_idx = _extract_years(raw, year_row)
     first_col_idx = 0
 
+    # Not: Bazı Excel sürümlerinde başlıklar TR/EN farklı yazılabiliyor.
+    # Bu yüzden her blok için birden fazla olası başlık regex'i deneniyor.
     return {
-        "electricity_balance": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Electricity\s+Balance"),
-        "gross_generation": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Gross\s+Electricity\s+Generation\s+by\s+plant\s+type"),
-        "net_generation": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Net\s+Electricity\s+Generation\s+by\s+plant\s+type"),
-        "installed_capacity": _extract_block(raw, first_col_idx, year_cols_idx, years, r"Gross\s+Installed\s+Capacity"),
+        "electricity_balance": _extract_block_any(
+            raw,
+            first_col_idx,
+            year_cols_idx,
+            years,
+            [
+                r"Electricity\s+Balance",
+                r"Elektrik\s+Dengesi",
+                r"Electricity\s*balance",
+            ],
+        ),
+        "gross_generation": _extract_block_any(
+            raw,
+            first_col_idx,
+            year_cols_idx,
+            years,
+            [
+                r"Gross\s+Electricity\s+Generation\s+by\s+plant\s+type",
+                r"Gross\s+Electricity\s+Generation",
+                r"Br\u00fct\s+Elektrik\s+\u00dcretimi",
+                r"Brut\s+Elektrik\s+Uretimi",
+            ],
+        ),
+        "net_generation": _extract_block_any(
+            raw,
+            first_col_idx,
+            year_cols_idx,
+            years,
+            [
+                r"Net\s+Electricity\s+Generation\s+by\s+plant\s+type",
+                r"Net\s+Electricity\s+Generation",
+                r"Net\s+Elektrik\s+\u00dcretimi",
+                r"Net\s+Elektrik\s+Uretimi",
+            ],
+        ),
+        "installed_capacity": _extract_block_any(
+            raw,
+            first_col_idx,
+            year_cols_idx,
+            years,
+            [
+                r"Gross\s+Installed\s+Capacity",
+                r"Installed\s+Capacity",
+                r"Br\u00fct\s+Kurulu\s+G\u00fc\u00e7",
+                r"Kurulu\s+G\u00fc\u00e7",
+                r"Brut\s+Kurulu\s+Guc",
+                r"Kurulu\s+Guc",
+            ],
+        ),
         "_raw": raw,
         "_years": years,
         "_year_cols_idx": year_cols_idx,
