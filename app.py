@@ -242,7 +242,22 @@ def read_power_generation(xlsx_file):
     raw = pd.read_excel(xlsx_file, sheet_name="Power_Generation", header=None)
     year_row = _find_year_row(raw)
     years, year_cols_idx = _extract_years(raw, year_row)
+    # Bazı Excel çıktılarında A sütunu tamamen boş olabiliyor ve etiketler B/C sütununda başlıyor.
+    # Stacked grafiklerin "Veri bulunamadı" dememesi için, etiket sütununu otomatik seç.
     first_col_idx = 0
+    try:
+        scan_n = min(250, len(raw))
+        best_col, best_score = 0, -1
+        for c in range(min(4, raw.shape[1])):  # ilk 4 sütunda ara
+            col = raw.iloc[:scan_n, c]
+            # string benzeri, boş olmayan hücre sayısı
+            score = col.apply(lambda v: (not pd.isna(v)) and (str(v).strip() != "") and (str(v).strip().lower() != "nan")).sum()
+            if score > best_score:
+                best_score = score
+                best_col = c
+        first_col_idx = int(best_col)
+    except Exception:
+        first_col_idx = 0
 
     # Not: Bazı Excel sürümlerinde başlıklar TR/EN farklı yazılabiliyor.
     # Bu yüzden her blok için birden fazla olası başlık regex'i deneniyor.
@@ -1861,8 +1876,12 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
         return
 
     vis = globals().get("visible_scenarios")
-    if vis:
+    # Diff modunda tek seri 'Fark: A - B' ismiyle üretildiği için
+    # görünür senaryo filtresi bu seriyi yanlışlıkla elemesin.
+    if vis and not diff_on:
         df_use = df_use[df_use["scenario"].isin(vis)].copy()
+    elif vis and diff_on:
+        df_use = df_use[df_use["scenario"].astype(str).str.startswith("Fark:")].copy()
 
     if stacked_value_mode == "Pay (%)":
         df_use = _normalize_stacked_to_percent(df_use, stack_field=stack_field)
