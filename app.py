@@ -10,6 +10,14 @@ import altair as alt
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 
 # -----------------------------
+# Units
+# -----------------------------
+# Electricity / energy values are read as GWh.
+# Optional display conversion: GWh -> thousand toe (ktoe, "bin TEP").
+# 1 toe = 11.63 MWh  =>  1 GWh = 1000/11.63 = 85.9845 toe = 0.0859845 ktoe
+GWH_TO_KTOE = 0.0859845
+
+# -----------------------------
 # Config
 # -----------------------------
 # DEFAULT max year (will be overwritten by sidebar year range)
@@ -253,6 +261,36 @@ def _cagr(start_value: float, end_value: float, n_years: int) -> float:
     if start_value <= 0 or end_value <= 0:
         return np.nan
     return (end_value / start_value) ** (1.0 / n_years) - 1.0
+
+
+# -----------------------------
+# Display unit helpers
+# -----------------------------
+def _energy_unit_is_ktoe() -> bool:
+    try:
+        return str(globals().get("energy_unit", "GWh")).lower().startswith("bin")
+    except Exception:
+        return False
+
+
+def _energy_unit_label() -> str:
+    return "bin TEP (ktoe)" if _energy_unit_is_ktoe() else "GWh"
+
+
+def _energy_value_format() -> str:
+    # GWh is typically big integers; ktoe tends to benefit from 1 decimal.
+    return ",.1f" if _energy_unit_is_ktoe() else ",.0f"
+
+
+def _convert_energy_df(df: pd.DataFrame, value_col: str = "value") -> pd.DataFrame:
+    """Convert a df with energy values in GWh to display unit (optionally ktoe)."""
+    if df is None or df.empty or value_col not in df.columns:
+        return df
+    if not _energy_unit_is_ktoe():
+        return df
+    out = df.copy()
+    out[value_col] = pd.to_numeric(out[value_col], errors="coerce") * float(GWH_TO_KTOE)
+    return out
 
 
 # -----------------------------
@@ -1026,6 +1064,15 @@ with st.sidebar:
     MAX_YEAR = int(max_year)
 
     st.divider()
+    st.header("Birim")
+    energy_unit = st.select_slider(
+        "Enerji birimi (GWh → bin TEP)",
+        options=["GWh", "bin TEP (ktoe)"],
+        value="GWh",
+        help="Elektrik üretimi/tüketimi ve enerji talebi grafiklerinde birimi değiştirir. Model verisi GWh'dir.",
+    )
+
+    st.divider()
     st.header("Karşılaştırma modu")
     compare_mode = st.radio(
         "Stacked grafikler",
@@ -1410,17 +1457,22 @@ for i, kpi in enumerate(kpis[:ncols]):
     with cols[i]:
         st.markdown(f"**{kpi['scenario']}**")
         st.metric("GSYH CAGR (%)", f"{kpi['gdp_cagr']*100:.2f}%" if np.isfinite(kpi["gdp_cagr"]) else "—")
-        st.metric(f"Toplam Arz (GWh) – {kpi['latest_year'] or ''}", f"{kpi['total_supply']:,.0f}" if np.isfinite(kpi["total_supply"]) else "—")
+        supply_display = (kpi["total_supply"] * GWH_TO_KTOE) if (_energy_unit_is_ktoe() and np.isfinite(kpi["total_supply"])) else kpi["total_supply"]
+        st.metric(
+            f"Toplam Arz ({_energy_unit_label()}) – {kpi['latest_year'] or ''}",
+            f"{supply_display:{_energy_value_format()}}" if np.isfinite(supply_display) else "—",
+        )
         st.metric("YE Payı (%)", f"{kpi['ye_total']:.1f}% / {kpi['ye_int']:.1f}%" if np.isfinite(kpi["ye_total"]) else "—")
         st.metric("Elektrik Kurulu Gücü (GW)", f"{kpi['cap_total']:,.3f}" if np.isfinite(kpi["cap_total"]) else "—")
 
 if len(kpis) > ncols:
     with st.expander("Diğer seçili senaryoların KPI’ları"):
         for kpi in kpis[ncols:]:
+            supply_display = (kpi["total_supply"] * GWH_TO_KTOE) if (_energy_unit_is_ktoe() and np.isfinite(kpi["total_supply"])) else kpi["total_supply"]
             st.markdown(
                 f"**{kpi['scenario']}** — "
                 f"GSYH CAGR: {(kpi['gdp_cagr']*100):.2f}% | "
-                f"Toplam Arz: {kpi['total_supply']:,.0f} GWh | "
+                f"Toplam Arz: {supply_display:{_energy_value_format()}} {_energy_unit_label()} | "
                 f"YE Payı: {kpi['ye_total']:.1f}%/{kpi['ye_int']:.1f}% | "
                 f"KG: {kpi['cap_total']:,.3f} GW"
             )
@@ -1812,13 +1864,13 @@ if "Elektrik" in selected_panels:
 
     order_gen = ["Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
     _render_stacked(
-        df_genmix.rename(columns={"group": "category"}),
-        title="Kaynaklarına Göre Elektrik Üretimi (GWh)",
+        _convert_energy_df(df_genmix).rename(columns={"group": "category"}),
+        title=f"Kaynaklarına Göre Elektrik Üretimi ({_energy_unit_label()})",
         x_field="year",
         stack_field="category",
-        y_title="GWh",
+        y_title=_energy_unit_label(),
         category_title="Kaynak/Teknoloji",
-        value_format=",.0f",
+        value_format=_energy_value_format(),
         order=order_gen,
     )
 
@@ -1839,13 +1891,13 @@ if "Elektrik" in selected_panels:
     st.divider()
 
     _render_stacked(
-        df_sector_el.rename(columns={"sector": "category"}),
-        title="Sektörlere Göre Elektrik Tüketimi (GWh)",
+        _convert_energy_df(df_sector_el).rename(columns={"sector": "category"}),
+        title=f"Sektörlere Göre Elektrik Tüketimi ({_energy_unit_label()})",
         x_field="year",
         stack_field="category",
-        y_title="GWh",
+        y_title=_energy_unit_label(),
         category_title="Sektör",
-        value_format=",.0f",
+        value_format=_energy_value_format(),
     )
 
     st.divider()
@@ -1867,9 +1919,13 @@ if "Elektrik" in selected_panels:
         wf_gen = prepare_yearly_transition_waterfall(gen_for_wf, scenario=scn_tr, start_year=int(start_year), end_year=int(MAX_YEAR), value_col="value", group_col="category")
         wf_cap = prepare_yearly_transition_waterfall(cap_for_wf, scenario=scn_tr, start_year=int(start_year), end_year=int(MAX_YEAR), value_col="value", group_col="category")
 
+        wf_gen = _convert_energy_df(wf_gen, value_col="delta")
+        wf_gen = _convert_energy_df(wf_gen, value_col="y0")
+        wf_gen = _convert_energy_df(wf_gen, value_col="y1")
+
         colA, colB = st.columns(2)
         with colA:
-            render_waterfall(wf_gen, title=f"Elektrik Üretimi Dönüşümü (GWh) — {start_year} → {MAX_YEAR}", y_title="GWh")
+            render_waterfall(wf_gen, title=f"Elektrik Üretimi Dönüşümü ({_energy_unit_label()}) — {start_year} → {MAX_YEAR}", y_title=_energy_unit_label())
         with colB:
             render_waterfall(wf_cap, title=f"Kurulu Güç Dönüşümü (GW) — {start_year} → {MAX_YEAR}", y_title="GW")
 
@@ -1894,25 +1950,25 @@ if "Enerji" in selected_panels:
     st.markdown("## Enerji")
 
     _render_stacked(
-        df_primary.rename(columns={"source": "category"}),
-        title="Birincil Enerji Talebi (GWh)",
+        _convert_energy_df(df_primary).rename(columns={"source": "category"}),
+        title=f"Birincil Enerji Talebi ({_energy_unit_label()})",
         x_field="year",
         stack_field="category",
-        y_title="GWh",
+        y_title=_energy_unit_label(),
         category_title="Kaynak",
-        value_format=",.0f",
+        value_format=_energy_value_format(),
     )
 
     st.divider()
 
     _render_stacked(
-        df_final.rename(columns={"source": "category"}),
-        title="Kaynaklarına Göre Nihai Enerji Tüketimi (GWh)",
+        _convert_energy_df(df_final).rename(columns={"source": "category"}),
+        title=f"Kaynaklarına Göre Nihai Enerji Tüketimi ({_energy_unit_label()})",
         x_field="year",
         stack_field="category",
-        y_title="GWh",
+        y_title=_energy_unit_label(),
         category_title="Kaynak",
-        value_format=",.0f",
+        value_format=_energy_value_format(),
     )
 
     st.divider()
