@@ -1861,8 +1861,12 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
         return
 
     vis = globals().get("visible_scenarios")
-    if vis:
+    # Diff modunda tek seri 'Fark: A - B' ismiyle üretildiği için
+    # görünür senaryo filtresi bu seriyi yanlışlıkla elemesin.
+    if vis and not diff_on:
         df_use = df_use[df_use["scenario"].isin(vis)].copy()
+    elif vis and diff_on:
+        df_use = df_use[df_use["scenario"].astype(str).str.startswith("Fark:")].copy()
 
     if stacked_value_mode == "Pay (%)":
         df_use = _normalize_stacked_to_percent(df_use, stack_field=stack_field)
