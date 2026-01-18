@@ -1380,6 +1380,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
             alt.Tooltip("year:O", title="Yıl"),
             alt.Tooltip("value:Q", title=y_title, format=value_format),
         ],
+        x_axis_fix=True,
     )
 
     if style == "Çizgi":
@@ -1501,7 +1502,7 @@ def _legend_filter_params(stack_field: str):
     return sel
 
 
-def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
+def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, x_axis_fix: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1526,6 +1527,8 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         if sub.empty:
             continue
 
+        x_axis = alt.Axis(labelAngle=0, labelPadding=12, titlePadding=12) if x_axis_fix else alt.Axis()
+
         sel = _legend_filter_params(stack_field)
 
         bars_src = alt.Chart(sub)
@@ -1535,7 +1538,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         bars = (
             bars_src.mark_bar()
             .encode(
-                x=alt.X(f"{x_field}:O", title="Yıl"),
+                x=alt.X(f"{x_field}:O", title="Yıl", axis=(alt.Axis(labelAngle=0, labelPadding=12, titlePadding=12) if x_axis_fix else alt.Axis())),
                 y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
                 color=alt.Color(f"{stack_field}:N", title=category_title),
                 opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
@@ -1554,7 +1557,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             st.altair_chart(bars.properties(height=380), use_container_width=True)
 
 
-def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
+def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, x_axis_fix: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1568,6 +1571,8 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
+    x_axis = alt.Axis(labelAngle=0, labelPadding=12, titlePadding=12) if x_axis_fix else alt.Axis()
+
     sel = _legend_filter_params(stack_field)
 
     bars_src = alt.Chart(dfp)
@@ -1577,7 +1582,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
     bars = (
         bars_src.mark_bar()
         .encode(
-            x=alt.X(f"{x_field}:O", title="Yıl"),
+            x=alt.X(f"{x_field}:O", title="Yıl", axis=(alt.Axis(labelAngle=0, labelPadding=12, titlePadding=12) if x_axis_fix else alt.Axis())),
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=alt.Color(f"{stack_field}:N", title=category_title),
@@ -1592,10 +1597,11 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         )
         .add_params(sel)
     )
-    st.altair_chart(bars.properties(height=420), use_container_width=True)
+    pad = {"bottom": 30} if x_axis_fix else None
+    st.altair_chart(bars.properties(height=420, padding=pad), use_container_width=True)
 
 
-def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False):
+def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False, x_axis_fix: bool = False):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -1613,6 +1619,8 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
+    x_axis = alt.Axis(labelAngle=0, labelPadding=12, titlePadding=12) if x_axis_fix else alt.Axis()
+
     sel = _legend_filter_params(stack_field)
 
     bars_src = alt.Chart(dfp)
@@ -1622,7 +1630,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
     bars = (
         bars_src.mark_bar()
         .encode(
-            x=alt.X(f"{x_field}:O", title="Yıl"),
+            x=alt.X(f"{x_field}:O", title="Yıl", axis=(alt.Axis(labelAngle=0, labelPadding=12, titlePadding=12) if x_axis_fix else alt.Axis())),
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=alt.Color(f"{stack_field}:N", title=category_title),
@@ -1637,10 +1645,11 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         )
         .add_params(sel)
     )
-    st.altair_chart(bars.properties(height=420), use_container_width=True)
+    pad = {"bottom": 30} if x_axis_fix else None
+    st.altair_chart(bars.properties(height=420, padding=pad), use_container_width=True)
 
 
-def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None):
+def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None, x_axis_fix: bool = False):
     df_use = df
     y_title_use = y_title
     value_format_use = value_format
@@ -1686,13 +1695,13 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
 
     def _render_main():
         if compare_mode == "Small multiples (önerilen)":
-            _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
+            _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, x_axis_fix=x_axis_fix)
         elif compare_mode == "Yıl içinde yan yana (clustered)":
-            _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
+            _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, x_axis_fix=x_axis_fix)
         elif compare_mode == "2035/2050 snapshot":
-            _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2035, 2050), order=order, is_percent=is_percent)
+            _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2035, 2050), order=order, is_percent=is_percent, x_axis_fix=x_axis_fix)
         else:
-            _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2025, 2035), order=order, is_percent=is_percent)
+            _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2025, 2035), order=order, is_percent=is_percent, x_axis_fix=x_axis_fix)
 
     def _render_total():
         if df_use is None or df_use.empty:
@@ -1724,7 +1733,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
                         alt.Chart(sub)
                         .mark_line(point=True)
                         .encode(
-                            x=alt.X(f"{x_field}:O", title="Yıl"),
+                            x=alt.X(f"{x_field}:O", title="Yıl", axis=(alt.Axis(labelAngle=0, labelPadding=12, titlePadding=12) if x_axis_fix else alt.Axis())),
                             y=alt.Y("Total:Q", title=y_title),
                             tooltip=[
                                 alt.Tooltip("scenario:N", title="Senaryo"),
@@ -1740,7 +1749,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
                 alt.Chart(totals)
                 .mark_line(point=True)
                 .encode(
-                    x=alt.X(f"{x_field}:O", title="Yıl"),
+                    x=alt.X(f"{x_field}:O", title="Yıl", axis=(alt.Axis(labelAngle=0, labelPadding=12, titlePadding=12) if x_axis_fix else alt.Axis())),
                     y=alt.Y("Total:Q", title=y_title),
                     color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
                     tooltip=[
@@ -2005,8 +2014,8 @@ if "Sera Gazı Emisyonları" in selected_panels:
             "Enerji Disi Emisyonlar ve Diger SGE (Tahmini)",
             "LULUCF (Net Yutak, Tahmini)",
         ],
+        x_axis_fix=True,
     )
-
     st.divider()
 
 with st.expander("Çalıştırma"):
