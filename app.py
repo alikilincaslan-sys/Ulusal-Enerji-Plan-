@@ -997,12 +997,6 @@ with st.sidebar:
         accept_multiple_files=True,
     )
 
-    show_security_note = st.checkbox("Güvenlik notunu göster", value=True)
-    if show_security_note:
-        st.info(
-            "Yüklenen Excel dosyaları yalnızca bu oturumda kullanılır, "
-            "kalıcı olarak saklanmaz ve başka kullanıcılar tarafından erişilemez."
-        )
 
     st.divider()
     st.header("Paneller (grafik grupları)")
