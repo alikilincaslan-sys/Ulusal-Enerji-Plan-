@@ -1455,6 +1455,7 @@ def _kpi_for_bundle(b):
     scn = b["scenario"]
     supply = b["total_supply"]
     ye = b["ye_both"]
+    gen_mix = b.get("gen_mix")
     cap_total = b["cap_total"]
     gdp = b["gdp"]
 
