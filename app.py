@@ -1456,6 +1456,7 @@ def _kpi_for_bundle(b):
     supply = b["total_supply"]
     ye = b["ye_both"]
     gen_mix = b.get("gen_mix")
+    cap_mix = b.get("cap_mix")
     cap_total = b["cap_total"]
     gdp = b["gdp"]
 
@@ -1652,6 +1653,8 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         return
 
     dfp = df.copy()
+    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
+    dfp = dfp.dropna(subset=["year"])
     dfp["year"] = dfp["year"].astype(int)
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
@@ -1692,6 +1695,8 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         st.warning("Veri bulunamadı.")
         return
     dfp = df.copy()
+    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
+    dfp = dfp.dropna(subset=["year"])
     dfp["year"] = dfp["year"].astype(int)
     dfp = dfp[dfp["year"].isin(list(years))]
     if dfp.empty:
