@@ -1383,7 +1383,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     style = chart_style or globals().get("ts_chart_style", "Bar (Gruplu)")
 
     base = alt.Chart(dfp).encode(
-        color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
+        color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(orient='right', direction='vertical', labelLimit=180, titleLimit=0)),
         tooltip=[
             alt.Tooltip("scenario:N", title="Senaryo"),
             alt.Tooltip("year:O", title="Yıl"),
@@ -1450,7 +1450,7 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
             theta=alt.Theta(f"{value_col}:Q", stack=True),
             color=alt.Color(
                 f"{category_col}:N",
-                legend=alt.Legend(orient="bottom", columns=3, labelLimit=0, titleLimit=0),
+                legend=alt.Legend(orient="right", direction="vertical", columns=1, labelLimit=180, titleLimit=0),
             ),
             tooltip=[
                 alt.Tooltip(f"{category_col}:N", title="Kategori"),
@@ -1460,11 +1460,11 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
         )
     )
 
-    arcs = base.mark_arc(innerRadius=55, outerRadius=85)
-    arcs_hi = base.transform_filter(sel).mark_arc(innerRadius=55, outerRadius=100)
+    arcs = base.mark_arc(innerRadius=50, outerRadius=80)
+    arcs_hi = base.transform_filter(sel).mark_arc(innerRadius=50, outerRadius=95)
 
     st.caption(title)
-    st.altair_chart((arcs + arcs_hi).properties(height=260), use_container_width=True)
+    st.altair_chart((arcs + arcs_hi).properties(height=240, padding={'top': 10, 'left': 5, 'right': 5, 'bottom': 5}), use_container_width=True)
 
 
 # -----------------------------
@@ -1502,7 +1502,8 @@ def _kpi_for_bundle(b):
     cap_total = b["cap_total"]
     gdp = b["gdp"]
 
-    latest_year = int(supply["year"].max()) if supply is not None and not supply.empty else None
+    available_max_year = int(supply["year"].max()) if supply is not None and not supply.empty else None
+    latest_year = int(min(int(MAX_YEAR), available_max_year)) if available_max_year is not None else None
     latest_total = float(supply.loc[supply["year"] == latest_year, "value"].iloc[0]) if latest_year else np.nan
 
     latest_ye_total = np.nan
