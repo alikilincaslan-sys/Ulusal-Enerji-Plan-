@@ -1402,6 +1402,47 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     st.altair_chart(chart.properties(height=320), use_container_width=True)
 
 
+
+# -----------------------------
+# Donut charts (KPI mini-pies)
+# -----------------------------
+def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str, value_format: str = ",.0f"):
+    """Small interactive donut chart: hover to 'grow' slice."""
+    if df is None or df.empty:
+        st.caption(f"{title}: veri yok")
+        return
+
+    d = df.copy()
+    d[category_col] = d[category_col].astype(str)
+    d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
+    d = d.dropna(subset=[category_col, value_col])
+    d = d[d[value_col] != 0]
+    if d.empty:
+        st.caption(f"{title}: veri yok")
+        return
+
+    hover = alt.selection_point(fields=[category_col], on="mouseover", empty="none")
+
+    ch = (
+        alt.Chart(d)
+        .add_params(hover)
+        .mark_arc(innerRadius=35)
+        .encode(
+            theta=alt.Theta(f"{value_col}:Q", stack=True),
+            color=alt.Color(f"{category_col}:N", legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0)),
+            radius=alt.condition(hover, alt.value(95), alt.value(70)),
+            tooltip=[
+                alt.Tooltip(f"{category_col}:N", title="Kategori"),
+                alt.Tooltip(f"{value_col}:Q", title="Değer", format=value_format),
+            ],
+        )
+        .properties(height=190)
+    )
+
+    st.caption(title)
+    st.altair_chart(ch, use_container_width=True)
+
+
 # -----------------------------
 # KPI row (per scenario)
 # -----------------------------
@@ -1414,6 +1455,8 @@ def _kpi_for_bundle(b):
     scn = b["scenario"]
     supply = b["total_supply"]
     ye = b["ye_both"]
+    gen_mix = b.get("gen_mix")
+    cap_mix = b.get("cap_mix")
     cap_total = b["cap_total"]
     gdp = b["gdp"]
 
@@ -1440,6 +1483,34 @@ def _kpi_for_bundle(b):
         v1 = float(g.iloc[-1]["value"])
         gdp_cagr = _cagr(v0, v1, int(y1 - y0))
 
+
+    # Mini pie verileri (son yıl)
+    pie_gen = pd.DataFrame(columns=["category", "value"])
+    if latest_year and gen_mix is not None and (not gen_mix.empty):
+        gm = gen_mix.copy()
+        # gen_mix kolon adı bazen group olabilir
+        if "group" in gm.columns and "category" not in gm.columns:
+            gm = gm.rename(columns={"group": "category"})
+        gm["year"] = pd.to_numeric(gm["year"], errors="coerce")
+        gm["value"] = pd.to_numeric(gm["value"], errors="coerce")
+        gm = gm.dropna(subset=["year", "category", "value"])
+        gm["year"] = gm["year"].astype(int)
+        gm = gm[gm["year"] == int(latest_year)]
+        if not gm.empty:
+            pie_gen = gm.groupby("category", as_index=False)["value"].sum().sort_values("value", ascending=False)
+
+    pie_cap = pd.DataFrame(columns=["category", "value"])
+    if latest_year and cap_mix is not None and (not cap_mix.empty):
+        cm = cap_mix.copy()
+        if "group" in cm.columns and "category" not in cm.columns:
+            cm = cm.rename(columns={"group": "category"})
+        cm["year"] = pd.to_numeric(cm["year"], errors="coerce")
+        cm["value"] = pd.to_numeric(cm["value"], errors="coerce")
+        cm = cm.dropna(subset=["year", "category", "value"])
+        cm["year"] = cm["year"].astype(int)
+        cm = cm[cm["year"] == int(latest_year)]
+        if not cm.empty:
+            pie_cap = cm.groupby("category", as_index=False)["value"].sum().sort_values("value", ascending=False)
     return {
         "scenario": scn,
         "latest_year": latest_year,
@@ -1448,6 +1519,8 @@ def _kpi_for_bundle(b):
         "ye_int": latest_ye_int,
         "cap_total": latest_cap,
         "gdp_cagr": gdp_cagr,
+        "pie_gen": pie_gen,
+        "pie_cap": pie_cap,
     }
 
 
@@ -1464,6 +1537,25 @@ for i, kpi in enumerate(kpis[:ncols]):
         )
         st.metric("YE Payı (%)", f"{kpi['ye_total']:.1f}% / {kpi['ye_int']:.1f}%" if np.isfinite(kpi["ye_total"]) else "—")
         st.metric("Elektrik Kurulu Gücü (GW)", f"{kpi['cap_total']:,.3f}" if np.isfinite(kpi["cap_total"]) else "—")
+
+        # Mini dağılım grafikleri (donut) — üzerine gelince dilim büyür
+        gcol, ccol = st.columns(2)
+        with gcol:
+            _donut_chart(
+                kpi.get("pie_gen"),
+                category_col="category",
+                value_col="value",
+                title=f"Üretim dağılımı ({kpi.get('latest_year')})",
+                value_format=",.0f",
+            )
+        with ccol:
+            _donut_chart(
+                kpi.get("pie_cap"),
+                category_col="category",
+                value_col="value",
+                title=f"Kurulu güç dağılımı ({kpi.get('latest_year')})",
+                value_format=",.2f",
+            )
 
 if len(kpis) > ncols:
     with st.expander("Diğer seçili senaryoların KPI’ları"):
@@ -1561,6 +1653,8 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         return
 
     dfp = df.copy()
+    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
+    dfp = dfp.dropna(subset=["year"])
     dfp["year"] = dfp["year"].astype(int)
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
@@ -1601,6 +1695,8 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         st.warning("Veri bulunamadı.")
         return
     dfp = df.copy()
+    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
+    dfp = dfp.dropna(subset=["year"])
     dfp["year"] = dfp["year"].astype(int)
     dfp = dfp[dfp["year"].isin(list(years))]
     if dfp.empty:
