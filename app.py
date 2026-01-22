@@ -1406,12 +1406,19 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 # -----------------------------
 # Donut charts (KPI mini-pies)
 # -----------------------------
-def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str, value_format: str = ",.0f"):
-    """Small interactive donut chart.
-
-    To keep compatibility across Altair/Vega-Lite versions, we avoid using the
-    "radius" encoding channel (which can trigger schema validation errors in
-    some environments). Instead, we highlight the hovered slice via opacity.
+def _donut_chart(
+    df: pd.DataFrame,
+    category_col: str,
+    value_col: str,
+    title: str,
+    value_format: str = ",.0f",
+    top_n: int = 6,
+    min_pct_label: float = 6.0,  # %6 altına etiket yazma (kalabalık olmasın)
+):
+    """Small interactive donut chart:
+    - Top N + 'Diğer' ile legend taşmasını engeller
+    - Donut üzerinde yüzde etiketleri
+    - Hover olunca dilim büyür ve ortada seçili dilim % görünür
     """
     if df is None or df.empty:
         st.caption(f"{title}: veri yok")
@@ -1426,30 +1433,76 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
         st.caption(f"{title}: veri yok")
         return
 
-    hover = alt.selection_point(fields=[category_col], on="mouseover", empty=False)
+    # --- Top N + Diğer ---
+    d = d.groupby(category_col, as_index=False)[value_col].sum()
+    d = d.sort_values(value_col, ascending=False)
 
-    ch = (
+    if len(d) > top_n:
+        top = d.head(top_n).copy()
+        other_sum = d.iloc[top_n:][value_col].sum()
+        other = pd.DataFrame([{category_col: "Diğer", value_col: other_sum}])
+        d = pd.concat([top, other], ignore_index=True)
+
+    total = float(d[value_col].sum()) if len(d) else 0.0
+    if total <= 0:
+        st.caption(f"{title}: veri yok")
+        return
+
+    d["pct"] = (d[value_col] / total) * 100.0
+
+    # Hover
+    hover = alt.selection_point(fields=[category_col], on="mouseover", empty="none")
+
+    # Donut ölçüleri: column içine daha iyi otursun
+    inner_r = 42
+    outer_r = 80
+
+    base = (
         alt.Chart(d)
         .add_params(hover)
-        .mark_arc(innerRadius=35, outerRadius=75)
         .encode(
             theta=alt.Theta(f"{value_col}:Q", stack=True),
             color=alt.Color(
                 f"{category_col}:N",
-                legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0),
+                legend=alt.Legend(
+                    orient="bottom",
+                    direction="horizontal",
+                    columns=2,
+                    labelLimit=160,
+                    title=None,
+                    symbolSize=90,
+                ),
             ),
-            opacity=alt.condition(hover, alt.value(1.0), alt.value(0.55)),
             tooltip=[
                 alt.Tooltip(f"{category_col}:N", title="Kategori"),
                 alt.Tooltip(f"{value_col}:Q", title="Değer", format=value_format),
+                alt.Tooltip("pct:Q", title="Pay (%)", format=".1f"),
             ],
         )
-        .properties(height=190)
     )
+
+    arcs = base.mark_arc(innerRadius=inner_r).encode(
+        radius=alt.condition(hover, alt.value(outer_r + 10), alt.value(outer_r))
+    )
+
+    # Yüzde etiketleri: sadece yeterince büyük dilimlerde göster
+    labels = (
+        base.transform_filter(f"datum.pct >= {float(min_pct_label)}")
+        .mark_text(radius=(inner_r + outer_r) / 2, size=11)
+        .encode(text=alt.Text("pct:Q", format=".0f"))
+    )
+
+    # Hover’da ortada seçili dilimin yüzdesi (okunurluk için)
+    center = (
+        base.transform_filter(hover)
+        .mark_text(size=16, fontWeight="bold")
+        .encode(text=alt.Text("pct:Q", format=".1f"))
+    )
+
+    ch = (arcs + labels + center).properties(height=230)
 
     st.caption(title)
     st.altair_chart(ch, use_container_width=True)
-
 
 # -----------------------------
 # KPI row (per scenario)
