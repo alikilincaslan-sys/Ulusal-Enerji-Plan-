@@ -1095,6 +1095,15 @@ with st.sidebar:
         index=0,
         help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
     )
+    st.divider()
+    st.header("KPI: Üretim dağılımı")
+    donut_year = st.select_slider(
+        "Üretim dağılımı yılı",
+        options=YEAR_OPTIONS,
+        value=max_year,
+        help="Bilgi kartlarındaki elektrik üretimi donut grafiği bu yıla göre hesaplanır.",
+    )
+
 
 if not uploaded_files:
     st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
@@ -1406,19 +1415,11 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 # -----------------------------
 # Donut charts (KPI mini-pies)
 # -----------------------------
-def _donut_chart(
-    df: pd.DataFrame,
-    category_col: str,
-    value_col: str,
-    title: str,
-    value_format: str = ",.0f",
-    top_n: int = 6,
-    min_pct_label: float = 6.0,  # %6 altına etiket yazma (kalabalık olmasın)
-):
-    """Small interactive donut chart:
-    - Top N + 'Diğer' ile legend taşmasını engeller
-    - Donut üzerinde yüzde etiketleri
-    - Hover olunca dilim büyür ve ortada seçili dilim % görünür
+
+def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str, value_format: str = ",.0f"):
+    """Küçük donut grafik (elektrik üretimi dağılımı gibi).
+    - Dilime tıklayınca (selection) aynı dilim bir katman daha büyük çizilir.
+    - Tooltip'te hem değer hem pay (%) görünür.
     """
     if df is None or df.empty:
         st.caption(f"{title}: veri yok")
@@ -1433,45 +1434,23 @@ def _donut_chart(
         st.caption(f"{title}: veri yok")
         return
 
-    # --- Top N + Diğer ---
-    d = d.groupby(category_col, as_index=False)[value_col].sum()
-    d = d.sort_values(value_col, ascending=False)
-
-    if len(d) > top_n:
-        top = d.head(top_n).copy()
-        other_sum = d.iloc[top_n:][value_col].sum()
-        other = pd.DataFrame([{category_col: "Diğer", value_col: other_sum}])
-        d = pd.concat([top, other], ignore_index=True)
-
-    total = float(d[value_col].sum()) if len(d) else 0.0
-    if total <= 0:
+    total = float(d[value_col].sum())
+    if not np.isfinite(total) or total == 0:
         st.caption(f"{title}: veri yok")
         return
-
     d["pct"] = (d[value_col] / total) * 100.0
 
-    # Hover
-    hover = alt.selection_point(fields=[category_col], on="mouseover", empty="none")
-
-    # Donut ölçüleri: column içine daha iyi otursun
-    inner_r = 42
-    outer_r = 80
+    # Click selection (legend tıklaması değil, dilim tıklaması)
+    sel = alt.selection_point(fields=[category_col], on="click", empty="none")
 
     base = (
         alt.Chart(d)
-        .add_params(hover)
+        .add_params(sel)
         .encode(
             theta=alt.Theta(f"{value_col}:Q", stack=True),
             color=alt.Color(
                 f"{category_col}:N",
-                legend=alt.Legend(
-                    orient="bottom",
-                    direction="horizontal",
-                    columns=2,
-                    labelLimit=160,
-                    title=None,
-                    symbolSize=90,
-                ),
+                legend=alt.Legend(orient="bottom", columns=3, labelLimit=0, titleLimit=0),
             ),
             tooltip=[
                 alt.Tooltip(f"{category_col}:N", title="Kategori"),
@@ -1481,28 +1460,12 @@ def _donut_chart(
         )
     )
 
-    arcs = base.mark_arc(innerRadius=inner_r).encode(
-        radius=alt.condition(hover, alt.value(outer_r + 10), alt.value(outer_r))
-    )
-
-    # Yüzde etiketleri: sadece yeterince büyük dilimlerde göster
-    labels = (
-        base.transform_filter(f"datum.pct >= {float(min_pct_label)}")
-        .mark_text(radius=(inner_r + outer_r) / 2, size=11)
-        .encode(text=alt.Text("pct:Q", format=".0f"))
-    )
-
-    # Hover’da ortada seçili dilimin yüzdesi (okunurluk için)
-    center = (
-        base.transform_filter(hover)
-        .mark_text(size=16, fontWeight="bold")
-        .encode(text=alt.Text("pct:Q", format=".1f"))
-    )
-
-    ch = (arcs + labels + center).properties(height=230)
+    arcs = base.mark_arc(innerRadius=55, outerRadius=85)
+    arcs_hi = base.transform_filter(sel).mark_arc(innerRadius=55, outerRadius=100)
 
     st.caption(title)
-    st.altair_chart(ch, use_container_width=True)
+    st.altair_chart((arcs + arcs_hi).properties(height=260), use_container_width=True)
+
 
 # -----------------------------
 # KPI row (per scenario)
@@ -1510,6 +1473,24 @@ def _donut_chart(
 st.subheader("Özet Bilgi Kartları (Seçili Senaryolar)")
 ncols = _ncols_for_selected(len(selected_scenarios))
 cols = st.columns(ncols)
+
+
+
+def _kpi_gen_bucket(cat: str) -> str:
+    s = (cat or "").strip().lower()
+    if "coal" in s and "lignite" not in s:
+        return "Coal"
+    if "lignite" in s:
+        return "Lignite"
+    if "natural gas" in s or "gas" == s:
+        return "Natural gas"
+    if "solar" in s:
+        return "Solar"
+    if "wind" in s:
+        return "Wind"
+    if "hydro" in s:
+        return "Hydro"
+    return "Others"
 
 
 def _kpi_for_bundle(b):
@@ -1545,9 +1526,18 @@ def _kpi_for_bundle(b):
         gdp_cagr = _cagr(v0, v1, int(y1 - y0))
 
 
-    # Mini pie verileri (son yıl)
+
+    # KPI donut (elektrik üretimi dağılımı) — seçili yıl
+    donut_y = globals().get("donut_year", None)
+    try:
+        donut_y = int(donut_y) if donut_y is not None else None
+    except Exception:
+        donut_y = None
+    if donut_y is None:
+        donut_y = latest_year
+
     pie_gen = pd.DataFrame(columns=["category", "value"])
-    if latest_year and gen_mix is not None and (not gen_mix.empty):
+    if donut_y and gen_mix is not None and (not gen_mix.empty):
         gm = gen_mix.copy()
         # gen_mix kolon adı bazen group olabilir
         if "group" in gm.columns and "category" not in gm.columns:
@@ -1556,22 +1546,23 @@ def _kpi_for_bundle(b):
         gm["value"] = pd.to_numeric(gm["value"], errors="coerce")
         gm = gm.dropna(subset=["year", "category", "value"])
         gm["year"] = gm["year"].astype(int)
-        gm = gm[gm["year"] == int(latest_year)]
-        if not gm.empty:
-            pie_gen = gm.groupby("category", as_index=False)["value"].sum().sort_values("value", ascending=False)
 
-    pie_cap = pd.DataFrame(columns=["category", "value"])
-    if latest_year and cap_mix is not None and (not cap_mix.empty):
-        cm = cap_mix.copy()
-        if "group" in cm.columns and "category" not in cm.columns:
-            cm = cm.rename(columns={"group": "category"})
-        cm["year"] = pd.to_numeric(cm["year"], errors="coerce")
-        cm["value"] = pd.to_numeric(cm["value"], errors="coerce")
-        cm = cm.dropna(subset=["year", "category", "value"])
-        cm["year"] = cm["year"].astype(int)
-        cm = cm[cm["year"] == int(latest_year)]
-        if not cm.empty:
-            pie_cap = cm.groupby("category", as_index=False)["value"].sum().sort_values("value", ascending=False)
+        # Eğer donut_y dosyada yoksa, en yakın (maks) yılı kullan
+        if int(donut_y) not in set(gm["year"].unique().tolist()):
+            donut_y = int(gm["year"].max())
+
+        gm = gm[gm["year"] == int(donut_y)]
+        if _energy_unit_is_ktoe():
+            gm["value"] = gm["value"] * float(GWH_TO_KTOE)
+
+        if not gm.empty:
+            gm["bucket"] = gm["category"].apply(_kpi_gen_bucket)
+            pie_gen = gm.groupby("bucket", as_index=False)["value"].sum().rename(columns={"bucket": "category"})
+            # Sabit sırayla göster
+            order = ["Coal", "Lignite", "Natural gas", "Solar", "Wind", "Hydro", "Others"]
+            pie_gen["category"] = pd.Categorical(pie_gen["category"], categories=order, ordered=True)
+            pie_gen = pie_gen.sort_values("category")
+
     return {
         "scenario": scn,
         "latest_year": latest_year,
@@ -1580,43 +1571,37 @@ def _kpi_for_bundle(b):
         "ye_int": latest_ye_int,
         "cap_total": latest_cap,
         "gdp_cagr": gdp_cagr,
+        "donut_year": donut_y,
         "pie_gen": pie_gen,
-        "pie_cap": pie_cap,
+        
     }
 
 
 kpis = [_kpi_for_bundle(b) for b in bundles]
 
+
 for i, kpi in enumerate(kpis[:ncols]):
     with cols[i]:
         st.markdown(f"**{kpi['scenario']}**")
         st.metric("GSYH CAGR (%)", f"{kpi['gdp_cagr']*100:.2f}%" if np.isfinite(kpi["gdp_cagr"]) else "—")
+
         supply_display = (kpi["total_supply"] * GWH_TO_KTOE) if (_energy_unit_is_ktoe() and np.isfinite(kpi["total_supply"])) else kpi["total_supply"]
         st.metric(
             f"Toplam Arz ({_energy_unit_label()}) – {kpi['latest_year'] or ''}",
             f"{supply_display:{_energy_value_format()}}" if np.isfinite(supply_display) else "—",
         )
+
         st.metric("YE Payı (%)", f"{kpi['ye_total']:.1f}% / {kpi['ye_int']:.1f}%" if np.isfinite(kpi["ye_total"]) else "—")
         st.metric("Elektrik Kurulu Gücü (GW)", f"{kpi['cap_total']:,.3f}" if np.isfinite(kpi["cap_total"]) else "—")
 
-        # Mini dağılım grafikleri (donut) — üzerine gelince dilim büyür
-        gcol, ccol = st.columns(2)
-        with gcol:
-            _donut_chart(
-                kpi.get("pie_gen"),
-                category_col="category",
-                value_col="value",
-                title=f"Üretim dağılımı ({kpi.get('latest_year')})",
-                value_format=",.0f",
-            )
-        with ccol:
-            _donut_chart(
-                kpi.get("pie_cap"),
-                category_col="category",
-                value_col="value",
-                title=f"Kurulu güç dağılımı ({kpi.get('latest_year')})",
-                value_format=",.2f",
-            )
+        # Mini dağılım grafiği (donut) — dilime tıklayınca büyür
+        _donut_chart(
+            kpi.get("pie_gen"),
+            category_col="category",
+            value_col="value",
+            title=f"Elektrik üretimi dağılımı ({kpi.get('donut_year')}) — {_energy_unit_label()}",
+            value_format=_energy_value_format(),
+        )
 
 if len(kpis) > ncols:
     with st.expander("Diğer seçili senaryoların KPI’ları"):
@@ -1629,6 +1614,7 @@ if len(kpis) > ncols:
                 f"YE Payı: {kpi['ye_total']:.1f}%/{kpi['ye_int']:.1f}% | "
                 f"KG: {kpi['cap_total']:,.3f} GW"
             )
+
 
 st.divider()
 
