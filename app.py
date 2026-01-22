@@ -1097,7 +1097,6 @@ with st.sidebar:
     )
     st.divider()
     st.header("KPI: Üretim dağılımı")
-    donut_year = st.select_slider(
         "Üretim dağılımı yılı",
         options=YEAR_OPTIONS,
         value=max_year,
