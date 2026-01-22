@@ -1407,7 +1407,12 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 # Donut charts (KPI mini-pies)
 # -----------------------------
 def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str, value_format: str = ",.0f"):
-    """Small interactive donut chart: hover to 'grow' slice."""
+    """Small interactive donut chart.
+
+    To keep compatibility across Altair/Vega-Lite versions, we avoid using the
+    "radius" encoding channel (which can trigger schema validation errors in
+    some environments). Instead, we highlight the hovered slice via opacity.
+    """
     if df is None or df.empty:
         st.caption(f"{title}: veri yok")
         return
@@ -1421,16 +1426,19 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
         st.caption(f"{title}: veri yok")
         return
 
-    hover = alt.selection_point(fields=[category_col], on="mouseover", empty="none")
+    hover = alt.selection_point(fields=[category_col], on="mouseover", empty=False)
 
     ch = (
         alt.Chart(d)
         .add_params(hover)
-        .mark_arc(innerRadius=35)
+        .mark_arc(innerRadius=35, outerRadius=75)
         .encode(
             theta=alt.Theta(f"{value_col}:Q", stack=True),
-            color=alt.Color(f"{category_col}:N", legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0)),
-            radius=alt.condition(hover, alt.value(95), alt.value(70)),
+            color=alt.Color(
+                f"{category_col}:N",
+                legend=alt.Legend(orient="right", labelLimit=0, titleLimit=0),
+            ),
+            opacity=alt.condition(hover, alt.value(1.0), alt.value(0.55)),
             tooltip=[
                 alt.Tooltip(f"{category_col}:N", title="Kategori"),
                 alt.Tooltip(f"{value_col}:Q", title="Değer", format=value_format),
