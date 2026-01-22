@@ -1095,13 +1095,6 @@ with st.sidebar:
         index=0,
         help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
     )
-    st.divider()
-    st.header("KPI: Üretim dağılımı")
-        "Üretim dağılımı yılı",
-        options=YEAR_OPTIONS,
-        value=max_year,
-        help="Bilgi kartlarındaki elektrik üretimi donut grafiği bu yıla göre hesaplanır.",
-    )
 
 
 if not uploaded_files:
