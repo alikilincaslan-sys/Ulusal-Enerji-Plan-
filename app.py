@@ -1499,20 +1499,32 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
         fontWeight="bold",
     ).encode(text=alt.Text("pct_label:N"))
 
-    # Ortada toplam (iki satır)
+    # Ortada toplam (iki satır) — piksel koordinatı ile (render hatalarını önler)
+    W, H = 260, 260
+    cx, cy = W / 2, H / 2
+
     center_df = pd.DataFrame(
         {
             "line1": [f"{total:{value_format}}"],
             "line2": [f"{_energy_unit_label()}"],
         }
     )
-    center = alt.Chart(center_df)
-    txt1 = center.mark_text(fontSize=22, fontWeight="bold").encode(text="line1:N")
-    txt2 = center.mark_text(dy=22, fontSize=12, opacity=0.85).encode(text="line2:N")
+
+    txt1 = (
+        alt.Chart(center_df)
+        .mark_text(align="center", baseline="middle", fontSize=22, fontWeight="bold")
+        .encode(x=alt.value(cx), y=alt.value(cy - 6), text="line1:N")
+    )
+    txt2 = (
+        alt.Chart(center_df)
+        .mark_text(align="center", baseline="middle", fontSize=12, opacity=0.85)
+        .encode(x=alt.value(cx), y=alt.value(cy + 16), text="line2:N")
+    )
 
     st.caption(title)
     chart = (arcs + arcs_hi + pct_text + txt1 + txt2).properties(
-        height=270,
+        width=W,
+        height=H,
         padding={"top": 8, "left": 8, "right": 8, "bottom": 8},
     )
     st.altair_chart(chart, use_container_width=True)
