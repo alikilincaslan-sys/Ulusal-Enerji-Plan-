@@ -1,4 +1,4 @@
-Özet Bilgi Kartı# app.py
+# app.py
 import re
 from pathlib import Path
 
