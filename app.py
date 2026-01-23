@@ -1409,10 +1409,11 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 # -----------------------------
 
 def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str, value_format: str = ",.0f"):
-    """KPI donut (uyumlu/sabit) + yüzde etiketi.
+    """KPI altındaki donut grafiği (uyumlu sürüm) + yüzde etiketleri.
 
-    Bu sürüm, daha önce çalışan "uyumlu" donut'u bozmayacak şekilde sadece
-    dışarıda yüzde (% pay) etiketlerini ekler.
+    - 4 sabit kategori (Fossil fuels / Renewables / Nuclear / Other) + sabit renk
+    - Dilime tıklayınca büyür
+    - Dışarıda yüzde etiketi (kalabalık olmasın diye varsayılan eşik: %4 altını göstermez)
     """
     if df is None or df.empty:
         st.caption(f"{title}: veri yok")
@@ -1432,6 +1433,7 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
         st.caption(f"{title}: veri yok")
         return
 
+    # yüzde
     d["pct"] = (d[value_col] / total) * 100.0
     d["pct_label"] = d["pct"].map(lambda x: f"{x:.0f}%")
 
@@ -1469,15 +1471,24 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
     arcs = base.mark_arc(innerRadius=62, outerRadius=98)
     arcs_hi = base.transform_filter(sel).mark_arc(innerRadius=60, outerRadius=112)
 
-    # Yüzde etiketi (çok küçük dilimleri gizle: <4%)
+    # % etiketi (küçük dilimleri gizle)
     pct_text = (
         base.transform_filter(alt.datum.pct >= 4)
-        .mark_text(radius=112, size=12, fontWeight="bold")
+        .mark_text(radius=118, size=12, fontWeight="bold")
         .encode(text=alt.Text("pct_label:N"))
     )
 
     st.caption(title)
     st.altair_chart((arcs + arcs_hi + pct_text).properties(height=260), use_container_width=True)
+
+# -----------------------------
+# KPI row (per scenario)
+# -----------------------------
+st.subheader("Özet Bilgi Kartları (Seçili Senaryolar)")
+ncols = _ncols_for_selected(len(selected_scenarios))
+cols = st.columns(ncols)
+
+
 
 def _kpi_gen_bucket(cat: str) -> str:
     """KPI donut için 4'lü sınıflama."""
