@@ -1409,11 +1409,13 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 # -----------------------------
 
 def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str, value_format: str = ",.0f"):
-    """KPI altındaki donut grafiği (uyumlu sürüm) + yüzde etiketleri.
+    """KPI donut (uyumlu/sabit).
 
-    - 4 sabit kategori (Fossil fuels / Renewables / Nuclear / Other) + sabit renk
+    Not: Bazı Streamlit/Altair sürümlerinde padAngle/cornerRadius/radius gibi
+    gelişmiş özellikler chart'ı boş gösterebiliyor. Bu sürüm en uyumlu şekilde:
+    - 4 kategori (Fossil fuels / Renewables / Nuclear / Other)
+    - Sabit renkler + sabit legend sırası
     - Dilime tıklayınca büyür
-    - Dışarıda yüzde etiketi (kalabalık olmasın diye varsayılan eşik: %4 altını göstermez)
     """
     if df is None or df.empty:
         st.caption(f"{title}: veri yok")
@@ -1432,10 +1434,6 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
     if not np.isfinite(total) or total == 0:
         st.caption(f"{title}: veri yok")
         return
-
-    # yüzde
-    d["pct"] = (d[value_col] / total) * 100.0
-    d["pct_label"] = d["pct"].map(lambda x: f"{x:.0f}%")
 
     DONUT_DOMAIN = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
     DONUT_RANGE = ["#F39C12", "#2ECC71", "#9B59B6", "#95A5A6"]
@@ -1463,7 +1461,6 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
             tooltip=[
                 alt.Tooltip(f"{category_col}:N", title="Kategori"),
                 alt.Tooltip(f"{value_col}:Q", title="Değer", format=value_format),
-                alt.Tooltip("pct:Q", title="Pay (%)", format=".1f"),
             ],
         )
     )
@@ -1471,15 +1468,9 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
     arcs = base.mark_arc(innerRadius=62, outerRadius=98)
     arcs_hi = base.transform_filter(sel).mark_arc(innerRadius=60, outerRadius=112)
 
-    # % etiketi (küçük dilimleri gizle)
-    pct_text = (
-        base.transform_filter(alt.datum.pct >= 4)
-        .mark_text(radius=118, size=12, fontWeight="bold")
-        .encode(text=alt.Text("pct_label:N"))
-    )
-
     st.caption(title)
-    st.altair_chart((arcs + arcs_hi + pct_text).properties(height=260), use_container_width=True)
+    st.altair_chart((arcs + arcs_hi).properties(height=260), use_container_width=True)
+
 
 # -----------------------------
 # KPI row (per scenario)
