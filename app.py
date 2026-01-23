@@ -294,6 +294,29 @@ def _convert_energy_df(df: pd.DataFrame, value_col: str = "value") -> pd.DataFra
 
 
 # -----------------------------
+# Chart-specific unit scalers (do not affect global unit toggles)
+# -----------------------------
+def _scale_energy_to_twh_if_gwh(df: pd.DataFrame, value_col: str = "value") -> pd.DataFrame:
+    """If global energy unit is GWh, scale values to TWh (divide by 1000) for display."""
+    if df is None or df.empty or value_col not in df.columns:
+        return df
+    if _energy_unit_is_ktoe():
+        return df  # keep ktoe as-is
+    out = df.copy()
+    out[value_col] = pd.to_numeric(out[value_col], errors="coerce") / 1000.0
+    return out
+
+
+def _scale_kt_to_mt(df: pd.DataFrame, value_col: str = "value") -> pd.DataFrame:
+    """Scale kiloton (kt) values to million ton (Mt) for display."""
+    if df is None or df.empty or value_col not in df.columns:
+        return df
+    out = df.copy()
+    out[value_col] = pd.to_numeric(out[value_col], errors="coerce") / 1000.0
+    return out
+
+
+# -----------------------------
 # Reading: Power_Generation
 # -----------------------------
 @st.cache_data(show_spinner=False)
@@ -2114,13 +2137,13 @@ if "Enerji" in selected_panels:
     st.divider()
 
     _render_stacked(
-        _convert_energy_df(df_final).rename(columns={"source": "category"}),
-        title=f"Kaynaklarına Göre Nihai Enerji Tüketimi ({_energy_unit_label()})",
+        _scale_energy_to_twh_if_gwh(_convert_energy_df(df_final)).rename(columns={"source": "category"}),
+        title=f"Kaynaklarına Göre Nihai Enerji Tüketimi ({'TWh' if not _energy_unit_is_ktoe() else _energy_unit_label()})",
         x_field="year",
         stack_field="category",
-        y_title=_energy_unit_label(),
+        y_title=("TWh" if not _energy_unit_is_ktoe() else _energy_unit_label()),
         category_title="Kaynak",
-        value_format=_energy_value_format(),
+        value_format=(",.1f" if not _energy_unit_is_ktoe() else _energy_value_format()),
     )
 
     st.divider()
@@ -2129,7 +2152,7 @@ if "Enerji" in selected_panels:
 if "Sera Gazı Emisyonları" in selected_panels:
     st.markdown("## Sera Gazı Emisyonları")
 
-    _line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
+    _line_chart(_scale_kt_to_mt(df_co2), "CO₂ Emisyonları (Mt CO₂)", "Mt CO₂", value_format=",.2f")
     _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
 
     st.divider()
@@ -2145,13 +2168,13 @@ if "Sera Gazı Emisyonları" in selected_panels:
         df_nz_plot = df_nz_plot[df_nz_plot["category"] != "LULUCF (Net Yutak, Tahmini)"]
 
     _render_stacked(
-        df_nz_plot,
-        title="CO₂e Emisyon Bileşenleri (ktn CO₂e)",
+        _scale_kt_to_mt(df_nz_plot),
+        title="CO₂e Emisyon Bileşenleri (Mt CO₂e)",
         x_field="year",
         stack_field="category",
-        y_title="ktn CO₂e",
+        y_title="Mt CO₂e",
         category_title="Bileşen",
-        value_format=",.0f",
+        value_format=",.2f",
         order=[
             "Enerji Kaynakli (Model, CO2e)",
             "Enerji Disi Emisyonlar ve Diger SGE (Tahmini)",
