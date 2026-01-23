@@ -294,29 +294,6 @@ def _convert_energy_df(df: pd.DataFrame, value_col: str = "value") -> pd.DataFra
 
 
 # -----------------------------
-# Chart-specific unit scalers (do not affect global unit toggles)
-# -----------------------------
-def _scale_energy_to_twh_if_gwh(df: pd.DataFrame, value_col: str = "value") -> pd.DataFrame:
-    """If global energy unit is GWh, scale values to TWh (divide by 1000) for display."""
-    if df is None or df.empty or value_col not in df.columns:
-        return df
-    if _energy_unit_is_ktoe():
-        return df  # keep ktoe as-is
-    out = df.copy()
-    out[value_col] = pd.to_numeric(out[value_col], errors="coerce") / 1000.0
-    return out
-
-
-def _scale_kt_to_mt(df: pd.DataFrame, value_col: str = "value") -> pd.DataFrame:
-    """Scale kiloton (kt) values to million ton (Mt) for display."""
-    if df is None or df.empty or value_col not in df.columns:
-        return df
-    out = df.copy()
-    out[value_col] = pd.to_numeric(out[value_col], errors="coerce") / 1000.0
-    return out
-
-
-# -----------------------------
 # Reading: Power_Generation
 # -----------------------------
 @st.cache_data(show_spinner=False)
@@ -1484,6 +1461,7 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
             tooltip=[
                 alt.Tooltip(f"{category_col}:N", title="Kategori"),
                 alt.Tooltip(f"{value_col}:Q", title="Değer", format=value_format),
+                alt.Tooltip("pct:Q", title="Pay (%)", format=".1f"),
             ],
         )
     )
@@ -1493,6 +1471,19 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
 
     st.caption(title)
     st.altair_chart((arcs + arcs_hi).properties(height=260), use_container_width=True)
+
+    # NOTE: Bazı Streamlit/Altair sürümlerinde donut'un üzerine yazı (mark_text + radius)
+    # chart'ı tamamen boş gösterebiliyor. Bu yüzden yüzdeleri "donut üstüne" değil,
+    # grafiğin hemen altında kompakt şekilde veriyoruz (bozulma riski yok).
+    if "pct" in d.columns:
+        order = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
+        dd = d.copy()
+        dd[category_col] = dd[category_col].astype(str)
+        dd["_cat"] = pd.Categorical(dd[category_col], categories=order, ordered=True)
+        dd = dd.sort_values("_cat")
+        parts = [f"{row[category_col]}: {row['pct']:.0f}%" for _, row in dd.iterrows()]
+        if parts:
+            st.caption("Pay (%) — " + " • ".join(parts))
 
 
 # -----------------------------
@@ -1594,6 +1585,16 @@ def _kpi_for_bundle(b):
             order = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
             pie_gen["category"] = pd.Categorical(pie_gen["category"], categories=order, ordered=True)
             pie_gen = pie_gen.sort_values("category")
+
+            # Donut için yüzde (Pay %) hesapla (gösterim için; hesaplamaları etkilemez)
+            _tot = float(pd.to_numeric(pie_gen["value"], errors="coerce").sum())
+            if np.isfinite(_tot) and _tot != 0:
+                pie_gen["pct"] = (pd.to_numeric(pie_gen["value"], errors="coerce") / _tot) * 100.0
+            else:
+                pie_gen["pct"] = np.nan
+
+            # Yüzde (pay) değerini donut üstüne yazmak bazı ortamlarda grafiği boş gösterebildiği için
+            # yüzdeyi tooltip + grafiğin altında kompakt metin olarak gösteriyoruz.
 
     return {
         "scenario": scn,
@@ -2137,13 +2138,13 @@ if "Enerji" in selected_panels:
     st.divider()
 
     _render_stacked(
-        _scale_energy_to_twh_if_gwh(_convert_energy_df(df_final)).rename(columns={"source": "category"}),
-        title=f"Kaynaklarına Göre Nihai Enerji Tüketimi ({'TWh' if not _energy_unit_is_ktoe() else _energy_unit_label()})",
+        _convert_energy_df(df_final).rename(columns={"source": "category"}),
+        title=f"Kaynaklarına Göre Nihai Enerji Tüketimi ({_energy_unit_label()})",
         x_field="year",
         stack_field="category",
-        y_title=("TWh" if not _energy_unit_is_ktoe() else _energy_unit_label()),
+        y_title=_energy_unit_label(),
         category_title="Kaynak",
-        value_format=(",.1f" if not _energy_unit_is_ktoe() else _energy_value_format()),
+        value_format=_energy_value_format(),
     )
 
     st.divider()
@@ -2152,7 +2153,7 @@ if "Enerji" in selected_panels:
 if "Sera Gazı Emisyonları" in selected_panels:
     st.markdown("## Sera Gazı Emisyonları")
 
-    _line_chart(_scale_kt_to_mt(df_co2), "CO₂ Emisyonları (Mt CO₂)", "Mt CO₂", value_format=",.2f")
+    _line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
     _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
 
     st.divider()
@@ -2168,13 +2169,13 @@ if "Sera Gazı Emisyonları" in selected_panels:
         df_nz_plot = df_nz_plot[df_nz_plot["category"] != "LULUCF (Net Yutak, Tahmini)"]
 
     _render_stacked(
-        _scale_kt_to_mt(df_nz_plot),
-        title="CO₂e Emisyon Bileşenleri (Mt CO₂e)",
+        df_nz_plot,
+        title="CO₂e Emisyon Bileşenleri (ktn CO₂e)",
         x_field="year",
         stack_field="category",
-        y_title="Mt CO₂e",
+        y_title="ktn CO₂e",
         category_title="Bileşen",
-        value_format=",.2f",
+        value_format=",.0f",
         order=[
             "Enerji Kaynakli (Model, CO2e)",
             "Enerji Disi Emisyonlar ve Diger SGE (Tahmini)",
