@@ -1409,14 +1409,13 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 # -----------------------------
 
 def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str, value_format: str = ",.0f"):
-    """Profesyonel donut (KPI mini-pie).
+    """KPI donut (uyumlu/sabit).
 
-    Özellikler:
-    - 4 kategori için sabit renk (Fossil fuels / Renewables / Nuclear / Other)
-    - Yuvarlatılmış dilim uçları (cornerRadius) + dilimler arası boşluk (padAngle)
-    - Dilime tıklayınca büyür (selection)
-    - Dışarıda % etiketi (küçük dilimler otomatik gizlenir)
-    - Ortada toplam + birim
+    Not: Bazı Streamlit/Altair sürümlerinde padAngle/cornerRadius/radius gibi
+    gelişmiş özellikler chart'ı boş gösterebiliyor. Bu sürüm en uyumlu şekilde:
+    - 4 kategori (Fossil fuels / Renewables / Nuclear / Other)
+    - Sabit renkler + sabit legend sırası
+    - Dilime tıklayınca büyür
     """
     if df is None or df.empty:
         st.caption(f"{title}: veri yok")
@@ -1436,14 +1435,9 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
         st.caption(f"{title}: veri yok")
         return
 
-    d["pct"] = (d[value_col] / total) * 100.0
-    d["pct_label"] = d["pct"].map(lambda x: f"{x:.0f}%")
-
-    # Donut renkleri (sabit)
     DONUT_DOMAIN = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
     DONUT_RANGE = ["#F39C12", "#2ECC71", "#9B59B6", "#95A5A6"]
 
-    # Click selection (dilim tıklama)
     sel = alt.selection_point(fields=[category_col], on="click", empty="none")
 
     base = (
@@ -1467,68 +1461,15 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
             tooltip=[
                 alt.Tooltip(f"{category_col}:N", title="Kategori"),
                 alt.Tooltip(f"{value_col}:Q", title="Değer", format=value_format),
-                alt.Tooltip("pct:Q", title="Pay (%)", format=".1f"),
             ],
         )
     )
 
-    # Donut dilimleri (profesyonel)
-    arcs = base.mark_arc(
-        innerRadius=62,
-        outerRadius=98,
-        padAngle=0.02,
-        cornerRadius=10,
-        stroke="rgba(255,255,255,0.55)",
-        strokeWidth=1,
-    )
-
-    # Seçili dilimi büyüt
-    arcs_hi = base.transform_filter(sel).mark_arc(
-        innerRadius=60,
-        outerRadius=112,
-        padAngle=0.02,
-        cornerRadius=12,
-        stroke="rgba(255,255,255,0.70)",
-        strokeWidth=1.2,
-    )
-
-    # % etiketi: çok küçük dilimleri yazma (kalabalığı azaltır)
-    pct_text = base.transform_filter(alt.datum.pct >= 4).mark_text(
-        radius=122,
-        size=12,
-        fontWeight="bold",
-    ).encode(text=alt.Text("pct_label:N"))
-
-    # Ortada toplam (iki satır) — piksel koordinatı ile (render hatalarını önler)
-    W, H = 260, 260
-    cx, cy = W / 2, H / 2
-
-    center_df = pd.DataFrame(
-        {
-            "line1": [f"{total:{value_format}}"],
-            "line2": [f"{_energy_unit_label()}"],
-        }
-    )
-
-    txt1 = (
-        alt.Chart(center_df)
-        .mark_text(align="center", baseline="middle", fontSize=22, fontWeight="bold")
-        .encode(x=alt.value(cx), y=alt.value(cy - 6), text="line1:N")
-    )
-    txt2 = (
-        alt.Chart(center_df)
-        .mark_text(align="center", baseline="middle", fontSize=12, opacity=0.85)
-        .encode(x=alt.value(cx), y=alt.value(cy + 16), text="line2:N")
-    )
+    arcs = base.mark_arc(innerRadius=62, outerRadius=98)
+    arcs_hi = base.transform_filter(sel).mark_arc(innerRadius=60, outerRadius=112)
 
     st.caption(title)
-    chart = (arcs + arcs_hi + pct_text + txt1 + txt2).properties(
-        width=W,
-        height=H,
-        padding={"top": 8, "left": 8, "right": 8, "bottom": 8},
-    )
-    st.altair_chart(chart, use_container_width=True)
-
+    st.altair_chart((arcs + arcs_hi).properties(height=260), use_container_width=True)
 
 
 # -----------------------------
