@@ -1465,8 +1465,8 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
         )
     )
 
-    arcs = base.mark_arc(innerRadius=62, outerRadius=98)
-    arcs_hi = base.transform_filter(sel).mark_arc(innerRadius=60, outerRadius=112)
+    arcs = base.mark_arc(innerRadius=62, outerRadius=98, padAngle=0.02, cornerRadius=10, stroke='white', strokeWidth=1)
+    arcs_hi = base.transform_filter(sel).mark_arc(innerRadius=60, outerRadius=112, padAngle=0.02, cornerRadius=12, stroke='white', strokeWidth=1)
 
     st.caption(title)
     st.altair_chart((arcs + arcs_hi).properties(height=260), use_container_width=True)
