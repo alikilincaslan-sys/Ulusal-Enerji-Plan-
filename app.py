@@ -1409,9 +1409,14 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 # -----------------------------
 
 def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str, value_format: str = ",.0f"):
-    """Küçük donut grafik (elektrik üretimi dağılımı gibi).
-    - Dilime tıklayınca (selection) aynı dilim bir katman daha büyük çizilir.
-    - Tooltip'te hem değer hem pay (%) görünür.
+    """Profesyonel donut (KPI mini-pie).
+
+    Özellikler:
+    - 4 kategori için sabit renk (Fossil fuels / Renewables / Nuclear / Other)
+    - Yuvarlatılmış dilim uçları (cornerRadius) + dilimler arası boşluk (padAngle)
+    - Dilime tıklayınca büyür (selection)
+    - Dışarıda % etiketi (küçük dilimler otomatik gizlenir)
+    - Ortada toplam + birim
     """
     if df is None or df.empty:
         st.caption(f"{title}: veri yok")
@@ -1430,9 +1435,15 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
     if not np.isfinite(total) or total == 0:
         st.caption(f"{title}: veri yok")
         return
-    d["pct"] = (d[value_col] / total) * 100.0
 
-    # Click selection (legend tıklaması değil, dilim tıklaması)
+    d["pct"] = (d[value_col] / total) * 100.0
+    d["pct_label"] = d["pct"].map(lambda x: f"{x:.0f}%")
+
+    # Donut renkleri (sabit)
+    DONUT_DOMAIN = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
+    DONUT_RANGE = ["#F39C12", "#2ECC71", "#9B59B6", "#95A5A6"]
+
+    # Click selection (dilim tıklama)
     sel = alt.selection_point(fields=[category_col], on="click", empty="none")
 
     base = (
@@ -1442,7 +1453,16 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
             theta=alt.Theta(f"{value_col}:Q", stack=True),
             color=alt.Color(
                 f"{category_col}:N",
-                legend=alt.Legend(orient="right", direction="vertical", columns=1, labelLimit=180, titleLimit=0),
+                sort=DONUT_DOMAIN,
+                scale=alt.Scale(domain=DONUT_DOMAIN, range=DONUT_RANGE),
+                legend=alt.Legend(
+                    orient="right",
+                    direction="vertical",
+                    columns=1,
+                    labelLimit=180,
+                    titleLimit=0,
+                    symbolType="circle",
+                ),
             ),
             tooltip=[
                 alt.Tooltip(f"{category_col}:N", title="Kategori"),
@@ -1452,11 +1472,51 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
         )
     )
 
-    arcs = base.mark_arc(innerRadius=50, outerRadius=80)
-    arcs_hi = base.transform_filter(sel).mark_arc(innerRadius=50, outerRadius=95)
+    # Donut dilimleri (profesyonel)
+    arcs = base.mark_arc(
+        innerRadius=62,
+        outerRadius=98,
+        padAngle=0.02,
+        cornerRadius=10,
+        stroke="rgba(255,255,255,0.55)",
+        strokeWidth=1,
+    )
+
+    # Seçili dilimi büyüt
+    arcs_hi = base.transform_filter(sel).mark_arc(
+        innerRadius=60,
+        outerRadius=112,
+        padAngle=0.02,
+        cornerRadius=12,
+        stroke="rgba(255,255,255,0.70)",
+        strokeWidth=1.2,
+    )
+
+    # % etiketi: çok küçük dilimleri yazma (kalabalığı azaltır)
+    pct_text = base.transform_filter(alt.datum.pct >= 4).mark_text(
+        radius=122,
+        size=12,
+        fontWeight="bold",
+    ).encode(text=alt.Text("pct_label:N"))
+
+    # Ortada toplam (iki satır)
+    center_df = pd.DataFrame(
+        {
+            "line1": [f"{total:{value_format}}"],
+            "line2": [f"{_energy_unit_label()}"],
+        }
+    )
+    center = alt.Chart(center_df)
+    txt1 = center.mark_text(fontSize=22, fontWeight="bold").encode(text="line1:N")
+    txt2 = center.mark_text(dy=22, fontSize=12, opacity=0.85).encode(text="line2:N")
 
     st.caption(title)
-    st.altair_chart((arcs + arcs_hi).properties(height=240, padding={'top': 10, 'left': 5, 'right': 5, 'bottom': 5}), use_container_width=True)
+    chart = (arcs + arcs_hi + pct_text + txt1 + txt2).properties(
+        height=270,
+        padding={"top": 8, "left": 8, "right": 8, "bottom": 8},
+    )
+    st.altair_chart(chart, use_container_width=True)
+
 
 
 # -----------------------------
@@ -1469,22 +1529,23 @@ cols = st.columns(ncols)
 
 
 def _kpi_gen_bucket(cat: str) -> str:
+    """KPI donut için 4'lü sınıflama."""
     s = (cat or "").strip().lower()
-    if "coal" in s and "lignite" not in s:
-        return "Coal"
-    if "lignite" in s:
-        return "Lignite"
-    if "natural gas" in s or "gas" == s:
-        return "Natural gas"
+
+    # Fossil fuels
+    if ("coal" in s and "lignite" not in s) or ("lignite" in s) or ("natural gas" in s) or (s == "gas"):
+        return "Fossil fuels"
+
+    # Renewables
+    if "solar" in s or "wind" in s or "hydro" in s:
+        return "Renewables"
+
+    # Nuclear
     if "nuclear" in s:
         return "Nuclear"
-    if "solar" in s:
-        return "Solar"
-    if "wind" in s:
-        return "Wind"
-    if "hydro" in s:
-        return "Hydro"
-    return "Others"
+
+    return "Other"
+
 
 
 def _kpi_for_bundle(b):
@@ -1554,7 +1615,7 @@ def _kpi_for_bundle(b):
             gm["bucket"] = gm["category"].apply(_kpi_gen_bucket)
             pie_gen = gm.groupby("bucket", as_index=False)["value"].sum().rename(columns={"bucket": "category"})
             # Sabit sırayla göster
-            order = ["Coal", "Lignite", "Natural gas", "Nuclear", "Solar", "Wind", "Hydro", "Others"]
+            order = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
             pie_gen["category"] = pd.Categorical(pie_gen["category"], categories=order, ordered=True)
             pie_gen = pie_gen.sort_values("category")
 
