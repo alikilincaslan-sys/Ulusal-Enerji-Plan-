@@ -1476,6 +1476,8 @@ def _kpi_gen_bucket(cat: str) -> str:
         return "Lignite"
     if "natural gas" in s or "gas" == s:
         return "Natural gas"
+    if "nuclear" in s:
+        return "Nuclear"
     if "solar" in s:
         return "Solar"
     if "wind" in s:
@@ -1552,7 +1554,7 @@ def _kpi_for_bundle(b):
             gm["bucket"] = gm["category"].apply(_kpi_gen_bucket)
             pie_gen = gm.groupby("bucket", as_index=False)["value"].sum().rename(columns={"bucket": "category"})
             # Sabit sırayla göster
-            order = ["Coal", "Lignite", "Natural gas", "Solar", "Wind", "Hydro", "Others"]
+            order = ["Coal", "Lignite", "Natural gas", "Nuclear", "Solar", "Wind", "Hydro", "Others"]
             pie_gen["category"] = pd.Categorical(pie_gen["category"], categories=order, ordered=True)
             pie_gen = pie_gen.sort_values("category")
 
