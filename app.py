@@ -7,14 +7,6 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
-
-from io import BytesIO
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.units import inch
-from reportlab.lib.utils import ImageReader
-from reportlab.lib import colors
-
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 
 # -----------------------------
@@ -1052,19 +1044,16 @@ uploaded_files = st.file_uploader(
 st.divider()
 
 with st.sidebar:
-    st.header("Paneller")
+    st.header("Paneller (grafik grupları)")
 
-    show_electric = st.checkbox("Elektrik", value=True)
-    show_energy = st.checkbox("Enerji", value=True)
-    show_emissions = st.checkbox("Sera Gazı Emisyonları", value=True)
+    panel_options = ["Elektrik", "Enerji", "Sera Gazı Emisyonları"]
+    selected_panels = st.multiselect(
+        "Hangi grafik grupları görünsün?",
+        options=panel_options,
+        default=panel_options,
+        help="Sadeleştirmek için bir grubu kapatırsanız o bölüm tamamen gizlenir.",
+    )
 
-    selected_panels = []
-    if show_electric:
-        selected_panels.append("Elektrik")
-    if show_energy:
-        selected_panels.append("Enerji")
-    if show_emissions:
-        selected_panels.append("Sera Gazı Emisyonları")
     st.divider()
     st.header("Ayarlar")
 
@@ -1091,17 +1080,11 @@ with st.sidebar:
     )
 
     st.divider()
-    st.header("Karşılaştırma")
+    st.header("Karşılaştırma modu")
     compare_mode = st.radio(
-        label="",
-        options=[
-            "Küçük paneller (Ayrı Grafikler)",
-            "Yan yana sütun — aynı yılda kıyas",
-            "Snapshot 2035–2050 — iki yıl odak",
-            "Snapshot 2025–2035 — iki yıl odak",
-        ],
+        "Stacked grafikler",
+        ["Small multiples (önerilen)", "Yıl içinde yan yana (clustered)", "2035/2050 snapshot", "2025/2035 snapshot"],
         index=0,
-        help="Birden fazla senaryoyu farklı görünümlerle kıyaslayın. Okunabilirlik için çoğu durumda 'Küçük paneller' önerilir.",
     )
 
     stacked_value_mode = st.select_slider(
@@ -1115,8 +1098,8 @@ with st.sidebar:
     st.header("Grafik tipi")
     ts_chart_style = st.selectbox(
         "Zaman serisi grafikleri",
-        ["Bar (Gruplu)", "Çizgi"],
-        index=1,
+        ["Bar (Gruplu)", "Çizgi", "Bar (Stack)"],
+        index=0,
         help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
     )
 
@@ -1170,7 +1153,7 @@ if not selected_scenarios:
     st.info("En az 1 senaryo seçin.")
     st.stop()
 
-if len(selected_scenarios) >= 4 and compare_mode not in {"Snapshot 2035–2050 — iki yıl odak", "Snapshot 2025–2035 — iki yıl odak"}:
+if len(selected_scenarios) >= 4 and compare_mode not in {"2035/2050 snapshot", "2025/2035 snapshot"}:
     st.warning("4+ senaryoda okunabilirlik için snapshot modları önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
 
@@ -1365,355 +1348,6 @@ df_storage_ptx = _concat("storage_ptx")
 
 
 # -----------------------------
-# Infographic export (PDF)
-# -----------------------------
-
-def _kw_any(s: str, kws: list[str]) -> bool:
-    s2 = (s or "").lower()
-    return any(k in s2 for k in kws)
-
-def _renew_share_primary(df_primary_src: pd.DataFrame) -> pd.DataFrame:
-    """Compute renewables share (%) in primary energy by scenario-year."""
-    if df_primary_src is None or df_primary_src.empty:
-        return pd.DataFrame(columns=["year", "scenario", "value"])
-    renew_kws = ["renew", "yenilen", "solar", "güneş", "wind", "rüz", "hydro", "hidro", "geo", "jeot", "biom", "biyok", "waste", "atık"]
-    d = df_primary_src.copy()
-    d["is_renew"] = d["source"].astype(str).apply(lambda x: _kw_any(x, renew_kws))
-    tot = d.groupby(["scenario", "year"], as_index=False)["value"].sum().rename(columns={"value": "total"})
-    ren = d[d["is_renew"]].groupby(["scenario", "year"], as_index=False)["value"].sum().rename(columns={"value": "renew"})
-    m = tot.merge(ren, on=["scenario", "year"], how="left").fillna({"renew": 0.0})
-    m["value"] = np.where(m["total"] > 0, (m["renew"] / m["total"]) * 100.0, np.nan)
-    return m[["year", "scenario", "value"]]
-
-def _renew_share_electric(df_gen_mix: pd.DataFrame) -> pd.DataFrame:
-    """Compute renewables share (%) in electricity generation by scenario-year."""
-    if df_gen_mix is None or df_gen_mix.empty:
-        return pd.DataFrame(columns=["year", "scenario", "value"])
-    renew_groups = {"Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables"}
-    d = df_gen_mix.copy()
-    d["is_renew"] = d["group"].astype(str).isin(renew_groups)
-    tot = d.groupby(["scenario", "year"], as_index=False)["value"].sum().rename(columns={"value": "total"})
-    ren = d[d["is_renew"]].groupby(["scenario", "year"], as_index=False)["value"].sum().rename(columns={"value": "renew"})
-    m = tot.merge(ren, on=["scenario", "year"], how="left").fillna({"renew": 0.0})
-    m["value"] = np.where(m["total"] > 0, (m["renew"] / m["total"]) * 100.0, np.nan)
-    return m[["year", "scenario", "value"]]
-
-def _value_at(df: pd.DataFrame, scenario: str, year: int, value_col="value") -> float:
-    if df is None or df.empty:
-        return float("nan")
-    q = df[(df["scenario"] == scenario) & (df["year"] == year)]
-    if q.empty:
-        return float("nan")
-    return float(q.iloc[0][value_col])
-
-def _top_changes_by_group(df: pd.DataFrame, scenario: str, y1: int, y2: int, group_col: str, value_col="value", topn: int = 3):
-    """Return (top_increases, top_decreases) as list of (group, delta)."""
-    if df is None or df.empty:
-        return [], []
-    a = df[(df["scenario"] == scenario) & (df["year"].isin([y1, y2]))].copy()
-    if a.empty:
-        return [], []
-    p = a.pivot_table(index=group_col, columns="year", values=value_col, aggfunc="sum").fillna(0.0)
-    if y1 not in p.columns or y2 not in p.columns:
-        return [], []
-    p["delta"] = p[y2] - p[y1]
-    inc = p.sort_values("delta", ascending=False).head(topn)["delta"].to_dict()
-    dec = p.sort_values("delta", ascending=True).head(topn)["delta"].to_dict()
-    inc_list = [(k, float(v)) for k, v in inc.items() if float(v) > 0]
-    dec_list = [(k, float(v)) for k, v in dec.items() if float(v) < 0]
-    return inc_list, dec_list
-
-def build_infographic_pdf(
-    page_format: str,
-    lang: str,
-    scenario_a: str,
-    scenario_b: str,
-    y1: int,
-    y2: int,
-    df_gdp: pd.DataFrame,
-    df_primary_total: pd.DataFrame,
-    df_primary_src: pd.DataFrame,
-    df_gen_total: pd.DataFrame,
-    df_gen_mix: pd.DataFrame,
-    df_cap_total: pd.DataFrame,
-    df_cap_mix: pd.DataFrame,
-    df_ghg_total: pd.DataFrame,
-):
-    """Build a one-page PDF infographic and return bytes."""
-    import matplotlib.pyplot as plt
-
-    def tr_en(tr: str, en: str) -> str:
-        return tr if lang == "TR" else en
-
-    # Page size
-    if page_format == "A4":
-        W, H = landscape(A4)
-    else:
-        W, H = (13.333 * 72.0, 7.5 * 72.0)  # 16:9
-
-    margin = 0.45 * inch
-    gutter = 0.22 * inch
-    col_w = (W - 2 * margin - 2 * gutter) / 3.0
-    header_h = 0.75 * inch
-    footer_h = 0.35 * inch
-    body_top = H - margin - header_h
-    body_bottom = margin + footer_h
-    body_h = body_top - body_bottom
-
-    def _mini_line_png(series_df: pd.DataFrame, title: str, ylab: str) -> BytesIO:
-        fig = plt.figure(figsize=(3.2, 1.55), dpi=150)
-        ax = fig.add_subplot(111)
-        for scen in [scenario_a, scenario_b]:
-            d = series_df[series_df["scenario"] == scen].sort_values("year")
-            ax.plot(d["year"].values, d["value"].values, label=scen)
-            for yy in [y1, y2]:
-                q = d[d["year"] == yy]
-                if not q.empty:
-                    ax.scatter([yy], [q["value"].iloc[0]], s=18)
-        ax.set_title(title, fontsize=9, pad=6)
-        ax.set_xlabel(tr_en("Yıl", "Year"), fontsize=8)
-        ax.set_ylabel(ylab, fontsize=8)
-        ax.tick_params(axis="both", labelsize=7)
-        ax.grid(True, linewidth=0.3, alpha=0.35)
-        ax.legend(fontsize=6, loc="upper left", frameon=False)
-        fig.tight_layout(pad=0.6)
-        bio = BytesIO()
-        fig.savefig(bio, format="png", transparent=True)
-        plt.close(fig)
-        bio.seek(0)
-        return bio
-
-    df_ren_el = _renew_share_electric(df_gen_mix)
-    df_ren_pr = _renew_share_primary(df_primary_src)
-
-    title = tr_en("Senaryo Karşılaştırma Özeti", "Scenario Comparison Summary")
-    subtitle = tr_en(
-        f"{scenario_a} vs {scenario_b}  |  Odak Yıllar: {y1}-{y2}",
-        f"{scenario_a} vs {scenario_b}  |  Focus Years: {y1}-{y2}",
-    )
-
-    out = BytesIO()
-    c = canvas.Canvas(out, pagesize=(W, H))
-    c.setTitle("Infographic")
-
-    # Header band
-    c.setFillColor(colors.HexColor("#0B1220"))
-    c.rect(0, H - header_h - margin, W, header_h + margin, stroke=0, fill=1)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(margin, H - margin - 0.45 * inch, title)
-    c.setFont("Helvetica", 10)
-    c.setFillColor(colors.HexColor("#D5DBE5"))
-    c.drawString(margin, H - margin - 0.65 * inch, subtitle)
-
-    def box(x, y, w, h, header_text):
-        c.setFillColor(colors.white)
-        c.setStrokeColor(colors.HexColor("#D7DDE8"))
-        c.roundRect(x, y, w, h, 10, stroke=1, fill=1)
-        c.setFillColor(colors.HexColor("#0B1220"))
-        c.setFont("Helvetica-Bold", 10)
-        c.drawString(x + 10, y + h - 16, header_text)
-
-    def kpi(x, y, w, h, label, val_a, val_b, unit=""):
-        c.setStrokeColor(colors.HexColor("#E2E8F0"))
-        c.setFillColor(colors.HexColor("#F8FAFC"))
-        c.roundRect(x, y, w, h, 8, stroke=1, fill=1)
-        c.setFillColor(colors.HexColor("#0B1220"))
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(x + 8, y + h - 14, label)
-        c.setFont("Helvetica", 8)
-        c.setFillColor(colors.HexColor("#475569"))
-        c.drawString(x + 8, y + 6, f"{scenario_a}: {val_a}{unit}   |   {scenario_b}: {val_b}{unit}")
-
-    col_x = [margin, margin + col_w + gutter, margin + 2 * (col_w + gutter)]
-    row_h = (body_h - 2 * gutter) / 3.0
-    row_y = [body_bottom + 2 * (row_h + gutter), body_bottom + (row_h + gutter), body_bottom]
-
-    # Column 1
-    box(col_x[0], row_y[0], col_w, row_h, tr_en("GSYH", "GDP"))
-    c.drawImage(ImageReader(_mini_line_png(df_gdp, tr_en("GSYH gelişimi", "GDP trend"), tr_en("Birim", "Unit"))),
-                col_x[0] + 10, row_y[0] + 18, width=col_w - 20, height=row_h - 42, mask="auto")
-
-    box(col_x[0], row_y[1], col_w, row_h, tr_en("Birincil Enerji", "Primary Energy"))
-    c.drawImage(ImageReader(_mini_line_png(df_primary_total, tr_en("Birincil enerji toplamı", "Total primary energy"), tr_en("Birim", "Unit"))),
-                col_x[0] + 10, row_y[1] + 18, width=col_w - 20, height=row_h - 42, mask="auto")
-
-    box(col_x[0], row_y[2], col_w, row_h, tr_en("Sera Gazı Emisyonları", "GHG Emissions"))
-    ghg_png = _mini_line_png(df_ghg_total, tr_en("Toplam emisyon", "Total emissions"), tr_en("MtCO2e", "MtCO2e"))
-    c.drawImage(ImageReader(ghg_png), col_x[0] + 10, row_y[2] + 18, width=col_w - 20, height=row_h - 62, mask="auto")
-    a1, a2 = _value_at(df_ghg_total, scenario_a, y1), _value_at(df_ghg_total, scenario_a, y2)
-    b1, b2 = _value_at(df_ghg_total, scenario_b, y1), _value_at(df_ghg_total, scenario_b, y2)
-    da = a2 - a1 if np.isfinite(a1) and np.isfinite(a2) else np.nan
-    db = b2 - b1 if np.isfinite(b1) and np.isfinite(b2) else np.nan
-    kpi(col_x[0] + 10, row_y[2] + 12, col_w - 20, 22, tr_en(f"Degisim ({y1}->{y2})", f"Change ({y1}->{y2})"),
-        f"{da:,.1f}", f"{db:,.1f}", unit="")
-
-    # Column 2
-    box(col_x[1], row_y[0], col_w, row_h, tr_en("Yenilenebilir Payı", "Renewables Share"))
-    el_png = _mini_line_png(df_ren_el, tr_en("Elektrikte YE payı (%)", "Electricity RES share (%)"), "%")
-    pr_png = _mini_line_png(df_ren_pr, tr_en("Birincilde YE payı (%)", "Primary RES share (%)"), "%")
-    c.drawImage(ImageReader(el_png), col_x[1] + 10, row_y[0] + row_h/2 + 4, width=col_w - 20, height=row_h/2 - 26, mask="auto")
-    c.drawImage(ImageReader(pr_png), col_x[1] + 10, row_y[0] + 18, width=col_w - 20, height=row_h/2 - 26, mask="auto")
-
-    box(col_x[1], row_y[1], col_w, row_h, tr_en("Elektrik Uretimi", "Electricity Generation"))
-    c.drawImage(ImageReader(_mini_line_png(df_gen_total, tr_en("Toplam uretim", "Total generation"), tr_en("TWh", "TWh"))),
-                col_x[1] + 10, row_y[1] + 18, width=col_w - 20, height=row_h - 42, mask="auto")
-
-    box(col_x[1], row_y[2], col_w, row_h, tr_en("Kaynak Bazinda Degisim", "Source-based Change"))
-    inc_a, dec_a = _top_changes_by_group(df_gen_mix, scenario_a, y1, y2, "group", topn=3)
-    inc_b, dec_b = _top_changes_by_group(df_gen_mix, scenario_b, y1, y2, "group", topn=3)
-
-    def _draw_list(x, y, title_txt, items, unit):
-        c.setFillColor(colors.HexColor("#0B1220"))
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(x, y, title_txt)
-        c.setFont("Helvetica", 8)
-        c.setFillColor(colors.HexColor("#334155"))
-        yy = y - 12
-        if not items:
-            c.drawString(x, yy, tr_en("Veri yok", "No data"))
-            return
-        for g, dv in items:
-            c.drawString(x, yy, f"{g}: {dv:,.1f} {unit}")
-            yy -= 11
-
-    left_x = col_x[1] + 12
-    top_y = row_y[2] + row_h - 28
-    _draw_list(left_x, top_y, f"{scenario_a}  (+)", inc_a, tr_en("TWh", "TWh"))
-    _draw_list(left_x, top_y - 48, f"{scenario_a}  (-)", dec_a, tr_en("TWh", "TWh"))
-    right_x = col_x[1] + col_w/2 + 4
-    _draw_list(right_x, top_y, f"{scenario_b}  (+)", inc_b, tr_en("TWh", "TWh"))
-    _draw_list(right_x, top_y - 48, f"{scenario_b}  (-)", dec_b, tr_en("TWh", "TWh"))
-
-    # Column 3
-    box(col_x[2], row_y[0], col_w, row_h, tr_en("Kurulu Guc Vurgulari", "Capacity Highlights"))
-    cap_a1, cap_a2 = _value_at(df_cap_total, scenario_a, y1), _value_at(df_cap_total, scenario_a, y2)
-    cap_b1, cap_b2 = _value_at(df_cap_total, scenario_b, y1), _value_at(df_cap_total, scenario_b, y2)
-
-    tile_w = (col_w - 24) / 2.0
-    tile_h = (row_h - 46) / 2.0
-    base_x = col_x[2] + 10
-    base_y = row_y[0] + 18
-
-    def tile(x, y, title_txt, val):
-        c.setStrokeColor(colors.HexColor("#E2E8F0"))
-        c.setFillColor(colors.HexColor("#F8FAFC"))
-        c.roundRect(x, y, tile_w, tile_h, 8, stroke=1, fill=1)
-        c.setFillColor(colors.HexColor("#0B1220"))
-        c.setFont("Helvetica-Bold", 8)
-        c.drawString(x + 8, y + tile_h - 14, title_txt)
-        c.setFont("Helvetica-Bold", 14)
-        c.drawRightString(x + tile_w - 8, y + 10, f"{val:,.1f}" if np.isfinite(val) else "-")
-
-    tile(base_x, base_y + tile_h + 8, f"{scenario_a} ({y1})", cap_a1)
-    tile(base_x + tile_w + 4, base_y + tile_h + 8, f"{scenario_a} ({y2})", cap_a2)
-    tile(base_x, base_y, f"{scenario_b} ({y1})", cap_b1)
-    tile(base_x + tile_w + 4, base_y, f"{scenario_b} ({y2})", cap_b2)
-
-    box(col_x[2], row_y[1], col_w, row_h, tr_en("Kurulu Guc Kaynak Degisimi", "Capacity Mix Change"))
-    inc_ca, dec_ca = _top_changes_by_group(df_cap_mix, scenario_a, y1, y2, "group", topn=3)
-    inc_cb, dec_cb = _top_changes_by_group(df_cap_mix, scenario_b, y1, y2, "group", topn=3)
-    top_y2 = row_y[1] + row_h - 28
-    _draw_list(col_x[2] + 12, top_y2, f"{scenario_a}  (+)", inc_ca, tr_en("GW", "GW"))
-    _draw_list(col_x[2] + 12, top_y2 - 48, f"{scenario_a}  (-)", dec_ca, tr_en("GW", "GW"))
-    _draw_list(col_x[2] + col_w/2 + 4, top_y2, f"{scenario_b}  (+)", inc_cb, tr_en("GW", "GW"))
-    _draw_list(col_x[2] + col_w/2 + 4, top_y2 - 48, f"{scenario_b}  (-)", dec_cb, tr_en("GW", "GW"))
-
-    box(col_x[2], row_y[2], col_w, row_h, tr_en("One Cikan Mesajlar", "Key Messages"))
-    c.setFont("Helvetica", 9)
-    c.setFillColor(colors.HexColor("#334155"))
-    bullets = []
-    if np.isfinite(da):
-        bullets.append(tr_en(f"Emisyon degisimi ({scenario_a}): {da:,.1f} MtCO2e", f"Emissions change ({scenario_a}): {da:,.1f} MtCO2e"))
-    if np.isfinite(db):
-        bullets.append(tr_en(f"Emisyon degisimi ({scenario_b}): {db:,.1f} MtCO2e", f"Emissions change ({scenario_b}): {db:,.1f} MtCO2e"))
-    ytxt = row_y[2] + row_h - 34
-    for b in bullets[:4]:
-        c.drawString(col_x[2] + 14, ytxt, f"• {b}")
-        ytxt -= 14
-
-    c.setFillColor(colors.HexColor("#64748B"))
-    c.setFont("Helvetica", 7)
-    c.drawRightString(W - margin, margin * 0.55, tr_en("Kaynak: Yuklenen senaryo dosyalari", "Source: Uploaded scenario files"))
-
-    c.showPage()
-    c.save()
-    out.seek(0)
-    return out.getvalue()
-
-
-
-
-st.divider()
-st.subheader("İnfografik (PDF)")
-
-info_col1, info_col2, info_col3, info_col4, info_col5 = st.columns([2, 2, 1.2, 1.2, 1.6], vertical_alignment="bottom")
-
-scenario_options = selected_scenarios if isinstance(selected_scenarios, list) and len(selected_scenarios) > 0 else scenario_names_unique
-default_a = scenario_options[0] if len(scenario_options) > 0 else None
-default_b = scenario_options[1] if len(scenario_options) > 1 else default_a
-
-with info_col1:
-    info_scen_a = st.selectbox("Senaryo A", options=scenario_options, index=0)
-with info_col2:
-    info_scen_b = st.selectbox("Senaryo B", options=scenario_options, index=1 if len(scenario_options) > 1 else 0)
-
-year_options = sorted(list(set(df_gdp["year"].tolist()))) if df_gdp is not None and not df_gdp.empty else []
-with info_col3:
-    info_y1 = st.selectbox("Yıl 1", options=year_options, index=0)
-with info_col4:
-    info_y2 = st.selectbox("Yıl 2", options=year_options, index=len(year_options) - 1 if len(year_options) > 1 else 0)
-
-with info_col5:
-    info_layout = st.selectbox("Sayfa", options=["A4", "16:9"], index=0)
-    info_lang = st.selectbox("Dil", options=["TR", "EN"], index=0)
-
-st.caption("Seçilen 2 senaryo ve 2 odak yıla göre tek sayfalık infografik PDF üretir.")
-
-# Derive totals (only for infographic; dashboard charts stay unchanged)
-_pe_tot = df_primary.groupby(["scenario", "year"], as_index=False)["value"].sum() if df_primary is not None and not df_primary.empty else pd.DataFrame(columns=["scenario","year","value"])
-_gen_tot = df_genmix.groupby(["scenario", "year"], as_index=False)["value"].sum() if df_genmix is not None and not df_genmix.empty else pd.DataFrame(columns=["scenario","year","value"])
-_cap_tot = df_capmix.groupby(["scenario", "year"], as_index=False)["value"].sum() if df_capmix is not None and not df_capmix.empty else pd.DataFrame(columns=["scenario","year","value"])
-
-# GHG total (use co2_nz_stack if present, else df_co2_total)
-if 'co2_nz_stack' in globals() and co2_nz_stack is not None and not co2_nz_stack.empty:
-    _ghg_tot = co2_nz_stack.groupby(["scenario", "year"], as_index=False)["value"].sum()
-else:
-    _ghg_tot = df_co2_total.groupby(["scenario", "year"], as_index=False)["value"].sum() if 'df_co2_total' in globals() and df_co2_total is not None and not df_co2_total.empty else pd.DataFrame(columns=["scenario","year","value"])
-
-btn_col_a, btn_col_b = st.columns([1, 3])
-with btn_col_a:
-    make_pdf = st.button("PDF oluştur", type="primary")
-with btn_col_b:
-    st.caption("Not: En iyi sonuç için iki farklı senaryo seçin ve Yıl 1 < Yıl 2 olacak şekilde belirleyin.")
-
-if make_pdf:
-    if info_scen_a == info_scen_b:
-        st.warning("Senaryo A ve B aynı. Karşılaştırma için farklı iki senaryo seçmeniz önerilir.")
-    if int(info_y1) == int(info_y2):
-        st.warning("Yıl 1 ve Yıl 2 aynı. Karşılaştırma için farklı iki yıl seçmeniz önerilir.")
-
-    pdf_bytes = build_infographic_pdf(
-        page_format=info_layout,
-        lang=info_lang,
-        scenario_a=info_scen_a,
-        scenario_b=info_scen_b,
-        y1=int(info_y1),
-        y2=int(info_y2),
-        df_gdp=df_gdp[["scenario", "year", "value"]],
-        df_primary_total=_pe_tot,
-        df_primary_src=df_primary,
-        df_gen_total=_gen_tot,
-        df_gen_mix=df_genmix,
-        df_cap_total=_cap_tot,
-        df_cap_mix=df_capmix,
-        df_ghg_total=_ghg_tot,
-    )
-    fname = f"infografik_{info_scen_a}_vs_{info_scen_b}_{info_y1}-{info_y2}_{info_layout}_{info_lang}.pdf"
-    st.download_button("PDF indir", data=pdf_bytes, file_name=fname, mime="application/pdf", use_container_width=True)
-
-
-# -----------------------------
 # Line charts (single axis, scenario colors)
 # -----------------------------
 def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_style: str | None = None):
@@ -1728,7 +1362,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
     dfp["year"] = dfp["year"].astype(int)
 
-    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)") and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)")
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Small multiples (önerilen)") and (globals().get("compare_mode") != "Small multiples (önerilen)")
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
     if diff_on and a and b:
@@ -1757,34 +1391,10 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     )
 
     if style == "Çizgi":
-        hover = alt.selection_point(
-            fields=["scenario"],
-            on="mouseover",
-            nearest=True,
-            clear="mouseout",
-            empty="all",
-        )
-
-        base = base.add_params(hover)
-
-        chart = base.mark_line(interpolate="monotone", strokeWidth=2).encode(
-            x=alt.X(
-                "year:Q",
-                title="Yıl",
-                scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
-                axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
-            ),
+        chart = base.mark_line(point=True).encode(
+            x=alt.X("year:Q", title="Yıl", scale=alt.Scale(domain=[min(year_vals), max(year_vals)]), axis=alt.Axis(values=year_vals, format="d", labelAngle=0)),
             y=alt.Y("value:Q", title=y_title),
-            opacity=alt.condition(hover, alt.value(1.0), alt.value(0.25)),
         )
-
-        points = base.mark_point(size=70).encode(
-            x="year:Q",
-            y="value:Q",
-            opacity=alt.condition(hover, alt.value(1.0), alt.value(0.0)),
-        )
-
-        chart = chart + points
     elif style == "Bar (Stack)":
         chart = base.mark_bar().encode(
             x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
@@ -2219,7 +1829,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     value_format_use = value_format
     is_percent = False
 
-    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)") and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)")
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Small multiples (önerilen)") and (globals().get("compare_mode") != "Small multiples (önerilen)")
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
     if diff_on and a and b and (globals().get("stacked_value_mode") != "Pay (%)"):
@@ -2258,11 +1868,11 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     )
 
     def _render_main():
-        if compare_mode == "Küçük paneller (Ayrı Grafikler)":
+        if compare_mode == "Small multiples (önerilen)":
             _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
-        elif compare_mode == "Yan yana sütun — aynı yılda kıyas":
+        elif compare_mode == "Yıl içinde yan yana (clustered)":
             _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
-        elif compare_mode == "Snapshot 2035–2050 — iki yıl odak":
+        elif compare_mode == "2035/2050 snapshot":
             _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2035, 2050), order=order, is_percent=is_percent)
         else:
             _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2025, 2035), order=order, is_percent=is_percent)
@@ -2272,9 +1882,9 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
             return
         totals = df_use.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "Total"})
 
-        if compare_mode == "Snapshot 2035–2050 — iki yıl odak":
+        if compare_mode == "2035/2050 snapshot":
             totals = totals[totals[x_field].isin([2035, 2050])]
-        elif compare_mode == "Snapshot 2025–2035 — iki yıl odak":
+        elif compare_mode == "2025/2035 snapshot":
             totals = totals[totals[x_field].isin([2025, 2035])]
 
         if totals.empty:
@@ -2282,7 +1892,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
 
         st.markdown("**Toplam (Total) — ayrı grafik**")
 
-        if compare_mode == "Küçük paneller (Ayrı Grafikler)":
+        if compare_mode == "Small multiples (önerilen)":
             scenarios_to_show = list(dict.fromkeys(totals["scenario"].tolist()))
             n = len(scenarios_to_show)
             ncols = _ncols_for_selected(n)
