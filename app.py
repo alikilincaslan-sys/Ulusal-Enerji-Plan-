@@ -1044,16 +1044,19 @@ uploaded_files = st.file_uploader(
 st.divider()
 
 with st.sidebar:
-    st.header("Paneller (grafik grupları)")
+    st.header("Paneller")
 
-    panel_options = ["Elektrik", "Enerji", "Sera Gazı Emisyonları"]
-    selected_panels = st.multiselect(
-        "Hangi grafik grupları görünsün?",
-        options=panel_options,
-        default=panel_options,
-        help="Sadeleştirmek için bir grubu kapatırsanız o bölüm tamamen gizlenir.",
-    )
+    show_electric = st.checkbox("Elektrik", value=True)
+    show_energy = st.checkbox("Enerji", value=True)
+    show_emissions = st.checkbox("Sera Gazı Emisyonları", value=True)
 
+    selected_panels = []
+    if show_electric:
+        selected_panels.append("Elektrik")
+    if show_energy:
+        selected_panels.append("Enerji")
+    if show_emissions:
+        selected_panels.append("Sera Gazı Emisyonları")
     st.divider()
     st.header("Ayarlar")
 
@@ -1080,11 +1083,17 @@ with st.sidebar:
     )
 
     st.divider()
-    st.header("Karşılaştırma modu")
+    st.header("Karşılaştırma")
     compare_mode = st.radio(
-        "Stacked grafikler",
-        ["Küçük paneller (Ayrı Grafikler)", "Yan yana sütun — aynı yılda kıyas", "Snapshot 2035–2050 — iki yıl odak", "Snapshot 2025–2035 — iki yıl odak"],
+        label="",
+        options=[
+            "Küçük paneller (Ayrı Grafikler)",
+            "Yan yana sütun — aynı yılda kıyas",
+            "Snapshot 2035–2050 — iki yıl odak",
+            "Snapshot 2025–2035 — iki yıl odak",
+        ],
         index=0,
+        help="Birden fazla senaryoyu farklı görünümlerle kıyaslayın. Okunabilirlik için çoğu durumda 'Küçük paneller' önerilir.",
     )
 
     stacked_value_mode = st.select_slider(
@@ -1160,7 +1169,7 @@ if len(selected_scenarios) >= 4 and compare_mode not in {"Snapshot 2035–2050 �
 if len(selected_scenarios) == 2:
     with st.sidebar:
         st.divider()
-        st.caption("ℹ️ **2 Senaryo Fark Modu**, *Küçük paneller* dışındaki karşılaştırma modlarında çalışır.")
+        st.caption("ℹ️ **2 Senaryo Fark Modu**, *Small multiples* dışındaki karşılaştırma modlarında çalışır.")
         diff_mode_enabled = st.checkbox(
             "Farkı göster (A - B)",
             value=False,
