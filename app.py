@@ -1045,20 +1045,14 @@ st.divider()
 
 with st.sidebar:
     st.header("Paneller (grafik grupları)")
-    st.caption("Görünmesini istediğiniz bölümleri aç/kapatın.")
 
-    # Multiselect 'pill' görünümü yerine daha şık ve kompakt aç/kapat listesi
-    _p_electric = st.checkbox("Elektrik", value=True)
-    _p_energy = st.checkbox("Enerji", value=True)
-    _p_emis = st.checkbox("Sera Gazı Emisyonları", value=True)
-
-    selected_panels = []
-    if _p_electric:
-        selected_panels.append("Elektrik")
-    if _p_energy:
-        selected_panels.append("Enerji")
-    if _p_emis:
-        selected_panels.append("Sera Gazı Emisyonları")
+    panel_options = ["Elektrik", "Enerji", "Sera Gazı Emisyonları"]
+    selected_panels = st.multiselect(
+        "Hangi grafik grupları görünsün?",
+        options=panel_options,
+        default=panel_options,
+        help="Sadeleştirmek için bir grubu kapatırsanız o bölüm tamamen gizlenir.",
+    )
 
     st.divider()
     st.header("Ayarlar")
@@ -1086,15 +1080,14 @@ with st.sidebar:
     )
 
     st.divider()
-    st.header("Karşılaştırma")
-
+    st.header("Karşılaştırma modu")
     compare_mode = st.radio(
-        "Görünüm",
-        ["Küçük paneller", "Yan yana (yıl)", "Snapshot 2035–2050", "Snapshot 2025–2035"],
+        "Stacked grafikler",
+        ["Small multiples (önerilen)", "Yıl içinde yan yana (clustered)", "2035/2050 snapshot", "2025/2035 snapshot"],
         index=0,
-        help="Birden fazla senaryoyu farklı görünümlerle kıyaslayın. Okunabilirlik için çoğu durumda 'Küçük paneller' önerilir.",
     )
-stacked_value_mode = st.select_slider(
+
+    stacked_value_mode = st.select_slider(
         "Stacked gösterim",
         options=["Mutlak", "Pay (%)"],
         value="Mutlak",
@@ -1160,7 +1153,7 @@ if not selected_scenarios:
     st.info("En az 1 senaryo seçin.")
     st.stop()
 
-if len(selected_scenarios) >= 4 and compare_mode not in {"Snapshot 2035–2050", "Snapshot 2025–2035"}:
+if len(selected_scenarios) >= 4 and compare_mode not in {"2035/2050 snapshot", "2025/2035 snapshot"}:
     st.warning("4+ senaryoda okunabilirlik için snapshot modları önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
 
@@ -1369,7 +1362,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
     dfp["year"] = dfp["year"].astype(int)
 
-    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Küçük paneller") and (globals().get("compare_mode") != "Küçük paneller")
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Small multiples (önerilen)") and (globals().get("compare_mode") != "Small multiples (önerilen)")
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
     if diff_on and a and b:
@@ -1836,7 +1829,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     value_format_use = value_format
     is_percent = False
 
-    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Küçük paneller") and (globals().get("compare_mode") != "Küçük paneller")
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Small multiples (önerilen)") and (globals().get("compare_mode") != "Small multiples (önerilen)")
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
     if diff_on and a and b and (globals().get("stacked_value_mode") != "Pay (%)"):
@@ -1875,11 +1868,11 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     )
 
     def _render_main():
-        if compare_mode == "Küçük paneller":
+        if compare_mode == "Small multiples (önerilen)":
             _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
-        elif compare_mode == "Yan yana (yıl)":
+        elif compare_mode == "Yıl içinde yan yana (clustered)":
             _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
-        elif compare_mode == "Snapshot 2035–2050":
+        elif compare_mode == "2035/2050 snapshot":
             _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2035, 2050), order=order, is_percent=is_percent)
         else:
             _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2025, 2035), order=order, is_percent=is_percent)
@@ -1889,9 +1882,9 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
             return
         totals = df_use.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "Total"})
 
-        if compare_mode == "Snapshot 2035–2050":
+        if compare_mode == "2035/2050 snapshot":
             totals = totals[totals[x_field].isin([2035, 2050])]
-        elif compare_mode == "Snapshot 2025–2035":
+        elif compare_mode == "2025/2035 snapshot":
             totals = totals[totals[x_field].isin([2025, 2035])]
 
         if totals.empty:
@@ -1899,7 +1892,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
 
         st.markdown("**Toplam (Total) — ayrı grafik**")
 
-        if compare_mode == "Küçük paneller":
+        if compare_mode == "Small multiples (önerilen)":
             scenarios_to_show = list(dict.fromkeys(totals["scenario"].tolist()))
             n = len(scenarios_to_show)
             ncols = _ncols_for_selected(n)
