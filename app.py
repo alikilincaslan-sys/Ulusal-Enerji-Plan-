@@ -1045,14 +1045,20 @@ st.divider()
 
 with st.sidebar:
     st.header("Paneller (grafik grupları)")
+    st.caption("Görünmesini istediğiniz bölümleri aç/kapatın.")
 
-    panel_options = ["Elektrik", "Enerji", "Sera Gazı Emisyonları"]
-    selected_panels = st.multiselect(
-        "Hangi grafik grupları görünsün?",
-        options=panel_options,
-        default=panel_options,
-        help="Sadeleştirmek için bir grubu kapatırsanız o bölüm tamamen gizlenir.",
-    )
+    # Multiselect 'pill' görünümü yerine daha şık ve kompakt aç/kapat listesi
+    _p_electric = st.checkbox("Elektrik", value=True)
+    _p_energy = st.checkbox("Enerji", value=True)
+    _p_emis = st.checkbox("Sera Gazı Emisyonları", value=True)
+
+    selected_panels = []
+    if _p_electric:
+        selected_panels.append("Elektrik")
+    if _p_energy:
+        selected_panels.append("Enerji")
+    if _p_emis:
+        selected_panels.append("Sera Gazı Emisyonları")
 
     st.divider()
     st.header("Ayarlar")
