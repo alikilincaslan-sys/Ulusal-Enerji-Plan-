@@ -1107,7 +1107,7 @@ with st.sidebar:
     st.header("Grafik tipi")
     ts_chart_style = st.selectbox(
         "Zaman serisi grafikleri",
-        ["Bar (Gruplu)", "Çizgi"],
+        ["Bar (Gruplu)", "Çizgi", "Bar (Stack)"],
         index=0,
         help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
     )
@@ -1404,7 +1404,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
             x=alt.X("year:Q", title="Yıl", scale=alt.Scale(domain=[min(year_vals), max(year_vals)]), axis=alt.Axis(values=year_vals, format="d", labelAngle=0)),
             y=alt.Y("value:Q", title=y_title),
         )
-    elif style == "Bar (Stack)"  # deprecated:
+    elif style == "Bar (Stack)":
         chart = base.mark_bar().encode(
             x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
             y=alt.Y("value:Q", title=y_title, stack="zero"),
