@@ -1108,7 +1108,7 @@ with st.sidebar:
     ts_chart_style = st.selectbox(
         "Zaman serisi grafikleri",
         ["Bar (Gruplu)", "Çizgi"],
-        index=0,
+        index=1,
         help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
     )
 
@@ -1400,11 +1400,47 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     )
 
     if style == "Çizgi":
-        chart = base.mark_line(point=True).encode(
-            x=alt.X("year:Q", title="Yıl", scale=alt.Scale(domain=[min(year_vals), max(year_vals)]), axis=alt.Axis(values=year_vals, format="d", labelAngle=0)),
+    hover = alt.selection_point(
+        fields=["scenario"],
+        on="mouseover",
+        empty="none",
+        clear="mouseout",
+    )
+
+    lines = (
+        base.add_params(hover)
+        .mark_line(interpolate="monotone")
+        .encode(
+            x=alt.X(
+                "year:Q",
+                title="Yıl",
+                scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
+                axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
+            ),
             y=alt.Y("value:Q", title=y_title),
+            opacity=alt.condition(hover, alt.value(1.0), alt.value(0.25)),
+            strokeWidth=alt.condition(hover, alt.value(3), alt.value(2)),
         )
-    elif style == "Bar (Stack)":
+    )
+
+    points = (
+        base.add_params(hover)
+        .mark_circle(size=70)
+        .encode(
+            x=alt.X(
+                "year:Q",
+                title="Yıl",
+                scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
+                axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
+            ),
+            y=alt.Y("value:Q", title=y_title),
+            opacity=alt.condition(hover, alt.value(1.0), alt.value(0.0)),
+        )
+        .transform_filter(hover)
+    )
+
+    chart = (lines + points).configure_axis(grid=True, gridOpacity=0.15)
+elif style == "Bar (Stack)":
         chart = base.mark_bar().encode(
             x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
             y=alt.Y("value:Q", title=y_title, stack="zero"),
