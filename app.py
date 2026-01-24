@@ -1027,18 +1027,23 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
 # -----------------------------
 st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü")
 
-with st.sidebar:
-    st.header("Dosya yükleme")
-    st.caption("Excel (.xlsx) • Çoklu senaryo • Maks. 12 dosya")
-    uploaded_files = st.file_uploader(
-        "Excel dosyaları",
-        type=["xlsx"],
-        accept_multiple_files=True,
-        help="Bir dosya = bir senaryo. Dosya adları senaryo adı olarak kullanılır.",
-        label_visibility="collapsed",
-    )
+# -----------------------------
+# Main (top) – File upload (professional, compact)
+# -----------------------------
+st.subheader("Senaryo dosyaları")
+st.caption("Excel (.xlsx) • Çoklu senaryo • Maks. 12 dosya")
 
-    st.divider()
+uploaded_files = st.file_uploader(
+    "Excel dosyaları",
+    type=["xlsx"],
+    accept_multiple_files=True,
+    help="Bir dosya = bir senaryo. Dosya adları senaryo adı olarak kullanılır.",
+    label_visibility="collapsed",
+)
+
+st.divider()
+
+with st.sidebar:
     st.header("Paneller (grafik grupları)")
 
     panel_options = ["Elektrik", "Enerji", "Sera Gazı Emisyonları"]
