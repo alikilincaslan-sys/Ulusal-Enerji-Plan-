@@ -1372,6 +1372,70 @@ df_electrification = _concat("electrification_ratio")
 df_storage_ptx = _concat("storage_ptx")
 
 # PDF export panel
+def render_pdf_export_panel():
+    if not REPORTLAB_AVAILABLE:
+        st.warning("PDF export için 'reportlab' kurulumu gerekli. requirements.txt içinde reportlab olduğundan emin olun.")
+        return
+
+    if len(selected_scenarios) < 1:
+        return
+
+    st.subheader("İnfografik (PDF)")
+    c1, c2, c3, c4 = st.columns([1.2, 1.2, 1, 1])
+
+    with c1:
+        lang = st.selectbox("Dil / Language", options=["TR", "EN"], index=0)
+    with c2:
+        page_choice = st.selectbox("Sayfa", options=["A4 (Yatay)", "16:9"], index=0)
+    with c3:
+        y_opts = sorted(set(df_supply["year"].astype(int).tolist())) if (df_supply is not None and not df_supply.empty) else YEAR_OPTIONS
+        y1 = st.selectbox("Odak yıl 1", options=y_opts, index=max(0, len(y_opts) - 2))
+    with c4:
+        y_opts2 = y_opts
+        y2 = st.selectbox("Odak yıl 2", options=y_opts2, index=max(0, len(y_opts2) - 1))
+
+    d1, d2, d3 = st.columns([1.3, 1.3, 1.2])
+    with d1:
+        scenario_a = st.selectbox("Senaryo A", options=selected_scenarios, index=0)
+    with d2:
+        scenario_b = st.selectbox("Senaryo B", options=selected_scenarios, index=min(1, len(selected_scenarios)-1))
+    with d3:
+        st.caption("Seç → Oluştur → İndir")
+
+    if scenario_a == scenario_b and len(selected_scenarios) > 1:
+        # auto pick different
+        scenario_b = selected_scenarios[1] if selected_scenarios[0] == scenario_a else selected_scenarios[0]
+
+    create = st.button("PDF Oluştur", type="primary", use_container_width=True)
+
+    if create:
+        with st.spinner("PDF hazırlanıyor..."):
+            pdf_bytes = build_infographic_pdf_bytes(
+                lang="tr" if lang == "TR" else "en",
+                page_choice=page_choice,
+                scenario_a=scenario_a,
+                scenario_b=scenario_b,
+                y1=int(y1),
+                y2=int(y2),
+                df_gdp_=df_gdp,
+                df_primary_=df_primary,
+                df_supply_=df_supply,
+                df_ye_=df_ye,
+                df_cap_total_=df_cap_total,
+                df_genmix_=df_genmix,
+                df_capmix_=df_capmix,
+                df_ghg_stack_=df_co2_nz_stack,
+            )
+        fname = f"infografik_{scenario_a}_vs_{scenario_b}_{y1}_{y2}.pdf"
+        st.download_button("PDF'yi indir", data=pdf_bytes, file_name=fname, mime="application/pdf", use_container_width=True)
+        st.success("Hazır!")
+
+
+# -----------------------------
+# Line charts (single axis, scenario colors)
+# -----------------------------
+def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_style: str | None = None):
+
 render_pdf_export_panel()
 
 
@@ -1652,69 +1716,6 @@ def build_infographic_pdf_bytes(
     return buff.getvalue()
 
 
-def render_pdf_export_panel():
-    if not REPORTLAB_AVAILABLE:
-        st.warning("PDF export için 'reportlab' kurulumu gerekli. requirements.txt içinde reportlab olduğundan emin olun.")
-        return
-
-    if len(selected_scenarios) < 1:
-        return
-
-    st.subheader("İnfografik (PDF)")
-    c1, c2, c3, c4 = st.columns([1.2, 1.2, 1, 1])
-
-    with c1:
-        lang = st.selectbox("Dil / Language", options=["TR", "EN"], index=0)
-    with c2:
-        page_choice = st.selectbox("Sayfa", options=["A4 (Yatay)", "16:9"], index=0)
-    with c3:
-        y_opts = sorted(set(df_supply["year"].astype(int).tolist())) if (df_supply is not None and not df_supply.empty) else YEAR_OPTIONS
-        y1 = st.selectbox("Odak yıl 1", options=y_opts, index=max(0, len(y_opts) - 2))
-    with c4:
-        y_opts2 = y_opts
-        y2 = st.selectbox("Odak yıl 2", options=y_opts2, index=max(0, len(y_opts2) - 1))
-
-    d1, d2, d3 = st.columns([1.3, 1.3, 1.2])
-    with d1:
-        scenario_a = st.selectbox("Senaryo A", options=selected_scenarios, index=0)
-    with d2:
-        scenario_b = st.selectbox("Senaryo B", options=selected_scenarios, index=min(1, len(selected_scenarios)-1))
-    with d3:
-        st.caption("Seç → Oluştur → İndir")
-
-    if scenario_a == scenario_b and len(selected_scenarios) > 1:
-        # auto pick different
-        scenario_b = selected_scenarios[1] if selected_scenarios[0] == scenario_a else selected_scenarios[0]
-
-    create = st.button("PDF Oluştur", type="primary", use_container_width=True)
-
-    if create:
-        with st.spinner("PDF hazırlanıyor..."):
-            pdf_bytes = build_infographic_pdf_bytes(
-                lang="tr" if lang == "TR" else "en",
-                page_choice=page_choice,
-                scenario_a=scenario_a,
-                scenario_b=scenario_b,
-                y1=int(y1),
-                y2=int(y2),
-                df_gdp_=df_gdp,
-                df_primary_=df_primary,
-                df_supply_=df_supply,
-                df_ye_=df_ye,
-                df_cap_total_=df_cap_total,
-                df_genmix_=df_genmix,
-                df_capmix_=df_capmix,
-                df_ghg_stack_=df_co2_nz_stack,
-            )
-        fname = f"infografik_{scenario_a}_vs_{scenario_b}_{y1}_{y2}.pdf"
-        st.download_button("PDF'yi indir", data=pdf_bytes, file_name=fname, mime="application/pdf", use_container_width=True)
-        st.success("Hazır!")
-
-
-# -----------------------------
-# Line charts (single axis, scenario colors)
-# -----------------------------
-def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_style: str | None = None):
     if df is None or df.empty:
         st.subheader(title)
         st.warning("Veri bulunamadı.")
