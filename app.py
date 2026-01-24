@@ -1107,7 +1107,7 @@ with st.sidebar:
     st.header("Grafik tipi")
     ts_chart_style = st.selectbox(
         "Zaman serisi grafikleri",
-        ["Bar (Gruplu)", "Çizgi", "Bar (Stack)"],
+        ["Bar (Gruplu)", "Çizgi"],
         index=0,
         help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
     )
