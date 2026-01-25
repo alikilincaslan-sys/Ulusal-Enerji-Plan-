@@ -1848,6 +1848,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
 
     dfp = df.copy()
     dfp["year"] = dfp["year"].astype(int)
+    year_vals = sorted(pd.to_numeric(dfp[x_field], errors="coerce").dropna().astype(int).unique().tolist())
 
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
@@ -1874,7 +1875,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         bars = (
             bars_src.mark_bar()
             .encode(
-                x=alt.X(f"{x_field}:O", title="Yıl"),
+                x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
                 y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
                 color=alt.Color(f"{stack_field}:N", title=category_title),
                 opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
@@ -1890,7 +1891,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
 
         with cols[idx % ncols]:
             st.markdown(f"**{scn}**")
-            st.altair_chart(bars.properties(height=380), use_container_width=True)
+            st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
 
 
 def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
@@ -1903,6 +1904,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
     dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
     dfp = dfp.dropna(subset=["year"])
     dfp["year"] = dfp["year"].astype(int)
+    year_vals = sorted(pd.to_numeric(dfp[x_field], errors="coerce").dropna().astype(int).unique().tolist())
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
@@ -1918,7 +1920,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
     bars = (
         bars_src.mark_bar()
         .encode(
-            x=alt.X(f"{x_field}:O", title="Yıl"),
+            x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=alt.Color(f"{stack_field}:N", title=category_title),
@@ -1933,7 +1935,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         )
         .add_params(sel)
     )
-    st.altair_chart(bars.properties(height=420), use_container_width=True)
+    st.altair_chart(bars.properties(height=420, padding={"bottom": 28}), use_container_width=True)
 
 
 def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False):
