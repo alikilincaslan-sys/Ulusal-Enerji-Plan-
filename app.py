@@ -1137,6 +1137,13 @@ with st.sidebar:
         help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
 
+    st.caption(
+        "Metodolojik not: Model çıktıları 5 yıllık zaman adımlarında üretilmiştir. "
+        "Görsel süreklilik ve eğilimlerin okunabilirliği için ara yıllar lineer interpolasyon yöntemiyle "
+        "tahmini olarak doldurulmuştur. Bu değerler doğrudan model çıktısı değildir."
+    )
+
+
     # --- UI polish: smaller, stacked preset buttons (visual only) ---
     st.markdown(
         """
@@ -1180,14 +1187,6 @@ with st.sidebar:
         index=0,
         disabled=not fill_years_enabled,
     )
-    if fill_years_enabled:
-        st.caption(
-            "Metodolojik not: Model çıktıları 5 yıllık zaman adımlarında üretilmiştir. "
-            "Görsel süreklilik ve eğilimlerin okunabilirliği için ara yıllar lineer interpolasyon yöntemiyle "
-            "tahmini olarak doldurulmuştur. Bu değerler doğrudan model çıktısı değildir."
-        )
-
-
     MAX_YEAR = int(max_year)
 
     st.divider()
