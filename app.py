@@ -251,6 +251,66 @@ def _filter_years(df: pd.DataFrame, start_year: int, end_year: int) -> pd.DataFr
     return df[(df["year"] >= start_year) & (df["year"] <= end_year)].copy()
 
 
+
+def _interpolate_years_long(df: pd.DataFrame, start_year: int, end_year: int, value_col: str = "value") -> pd.DataFrame:
+    """Fill intermediate *annual* years by linear interpolation within each series/group.
+
+    Notes:
+    - Expects a long dataframe with at least: year + value columns.
+    - Grouping columns are inferred as all columns except year/value.
+    """
+    if df is None or df.empty:
+        return df
+
+    if "year" not in df.columns or value_col not in df.columns:
+        return df
+
+    out = df.copy()
+
+    # Normalize dtypes
+    out["year"] = pd.to_numeric(out["year"], errors="coerce").astype("Int64")
+    out[value_col] = pd.to_numeric(out[value_col], errors="coerce")
+
+    out = out.dropna(subset=["year"])
+    if out.empty:
+        return out
+
+    out["year"] = out["year"].astype(int)
+
+    group_cols = [c for c in out.columns if c not in {"year", value_col}]
+    year_full = pd.Index(range(int(start_year), int(end_year) + 1), name="year")
+
+    def _fill_one(g: pd.DataFrame) -> pd.DataFrame:
+        g = g.sort_values("year")
+        s = g.set_index("year")[value_col]
+        s = s.reindex(year_full)
+        # Linear interpolation only inside the known range; keep edges as is (forward/backward).
+        s = s.interpolate(method="linear", limit_direction="both")
+        gg = s.reset_index().rename(columns={0: value_col})
+        for c in group_cols:
+            gg[c] = g.iloc[0][c]
+        return gg
+
+    if group_cols:
+        filled = (
+            out.groupby(group_cols, dropna=False, as_index=False, sort=False)
+            .apply(_fill_one, include_groups=False)
+            .reset_index(drop=True)
+        )
+    else:
+        filled = _fill_one(out)
+
+    # Keep column order stable
+    cols = ["year"] + [c for c in out.columns if c not in {"year"}]
+    filled = filled[cols]
+    return filled
+
+
+def _maybe_fill_years(df: pd.DataFrame, start_year: int, end_year: int, enabled: bool) -> pd.DataFrame:
+    if not enabled:
+        return df
+    return _interpolate_years_long(df, start_year, end_year, value_col="value")
+
 def _cagr(start_value: float, end_value: float, n_years: int) -> float:
     if n_years <= 0:
         return np.nan
@@ -1105,6 +1165,29 @@ with st.sidebar:
 
     start_year, max_year = year_range
 
+
+    # -----------------------------
+    # Ara yılları doldurma (opsiyonel)
+    # -----------------------------
+    fill_years_enabled = st.checkbox(
+        "Ara yılları doldur (tahmini)",
+        value=False,
+        help="Model çıktıları 5 yıllık zaman adımlarındadır. Okunabilirlik için ara yıllar lineer interpolasyonla tahmini doldurulur.",
+    )
+    fill_method = st.selectbox(
+        "Doldurma yöntemi",
+        options=["Lineer interpolasyon"],
+        index=0,
+        disabled=not fill_years_enabled,
+    )
+    if fill_years_enabled:
+        st.caption(
+            "Metodolojik not: Model çıktıları 5 yıllık zaman adımlarında üretilmiştir. "
+            "Görsel süreklilik ve eğilimlerin okunabilirliği için ara yıllar lineer interpolasyon yöntemiyle "
+            "tahmini olarak doldurulmuştur. Bu değerler doğrudan model çıktısı değildir."
+        )
+
+
     MAX_YEAR = int(max_year)
 
     st.divider()
@@ -1229,7 +1312,7 @@ def _ncols_for_selected(n: int) -> int:
 # Scenario read/compute
 # -----------------------------
 @st.cache_data(show_spinner=False)
-def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year: int):
+def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year: int, interpolate_years: bool):
     blocks = read_power_generation(xlsx_file)
     balance = blocks["electricity_balance"]
     gross_gen = blocks["gross_generation"]
@@ -1335,27 +1418,32 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         out["scenario"] = scenario
         return out
 
+
+    def _add_scn_filled(df: pd.DataFrame) -> pd.DataFrame:
+        df2 = _add_scn(df)
+        return _maybe_fill_years(df2, start_year, max_year, interpolate_years)
+
     bundle = {
         "scenario": scenario,
-        "pop": _add_scn(pop),
-        "gdp": _add_scn(gdp),
-        "carbon_price": _add_scn(carbon_price),
-        "co2": _add_scn(co2),
-        "energy_em_sector_co2e": _add_scn(energy_em_sector_co2e),
-        "energy_em_total_co2e": _add_scn(energy_em_total_co2e),
+        "pop": _add_scn_filled(pop),
+        "gdp": _add_scn_filled(gdp),
+        "carbon_price": _add_scn_filled(carbon_price),
+        "co2": _add_scn_filled(co2),
+        "energy_em_sector_co2e": _add_scn_filled(energy_em_sector_co2e),
+        "energy_em_total_co2e": _add_scn_filled(energy_em_total_co2e),
         "co2_nz_stack": co2_nz_stack,
-        "total_supply": _add_scn(total_supply),
-        "gen_mix": _add_scn(gen_mix),
-        "cap_total": _add_scn(cap_total),
-        "cap_mix": _add_scn(cap_mix),
-        "electricity_by_sector": _add_scn(electricity_by_sector),
-        "primary_energy_source": _add_scn(primary_energy_source),
-        "final_energy_source": _add_scn(final_energy_source),
-        "dependency_ratio": _add_scn(dependency_ratio),
-        "electrification_ratio": _add_scn(electrification_ratio),
-        "ye_both": _add_scn(ye_both),
-        "per_capita_el": _add_scn(per_capita),
-        "storage_ptx": _add_scn(storage_ptx),
+        "total_supply": _add_scn_filled(total_supply),
+        "gen_mix": _add_scn_filled(gen_mix),
+        "cap_total": _add_scn_filled(cap_total),
+        "cap_mix": _add_scn_filled(cap_mix),
+        "electricity_by_sector": _add_scn_filled(electricity_by_sector),
+        "primary_energy_source": _add_scn_filled(primary_energy_source),
+        "final_energy_source": _add_scn_filled(final_energy_source),
+        "dependency_ratio": _add_scn_filled(dependency_ratio),
+        "electrification_ratio": _add_scn_filled(electrification_ratio),
+        "ye_both": _add_scn_filled(ye_both),
+        "per_capita_el": _add_scn_filled(per_capita),
+        "storage_ptx": _add_scn_filled(storage_ptx),
     }
     return bundle
 
@@ -1363,7 +1451,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
 bundles = []
 for scn in selected_scenarios:
     f = scenario_to_file[scn]
-    bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR))
+    bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR, fill_years_enabled))
 
 
 def _concat(key: str):
