@@ -1064,12 +1064,29 @@ with st.sidebar:
     year_min_default = 2018
     year_max_default = 2050
     YEAR_OPTIONS = [2018, 2020, 2025, 2030, 2035, 2040, 2045, 2050]
+
+    # Preset buttons will drive the slider via session_state (no changes to calculations/plots)
+    if "year_range" not in st.session_state:
+        st.session_state["year_range"] = (2025, 2050)
+
     year_range = st.select_slider(
         "Senaryo yıl aralığı",
         options=YEAR_OPTIONS,
-        value=(2025, 2050),
+        value=st.session_state["year_range"],
+        key="year_range",
         help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Net Zero (2025–2050)", use_container_width=True):
+            st.session_state["year_range"] = (2025, 2050)
+            st.rerun()
+    with c2:
+        if st.button("TUEP (2025–2035)", use_container_width=True):
+            st.session_state["year_range"] = (2025, 2035)
+            st.rerun()
+
     start_year, max_year = year_range
     MAX_YEAR = int(max_year)
 
