@@ -4,4 +4,4 @@ openpyxl
 altair
 numpy
 reportlab
-plotly>=5.0
+
