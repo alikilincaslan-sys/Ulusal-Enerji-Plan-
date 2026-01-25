@@ -1059,11 +1059,13 @@ with st.sidebar:
         selected_panels.append("Sera Gazı Emisyonları")
     st.divider()
     st.header("Ayarlar")
-    # Year range slider (default: 2025–2050) + reset button
+
+    # Year range slider (replaces start_year + max_year)
     DEFAULT_START_YEAR = 2025
     DEFAULT_END_YEAR = 2050
     YEAR_OPTIONS = [2018, 2020, 2025, 2030, 2035, 2040, 2045, 2050]
 
+    # Session-state controlled slider (so we can reset to defaults)
     if "year_range" not in st.session_state:
         st.session_state.year_range = (DEFAULT_START_YEAR, DEFAULT_END_YEAR)
 
