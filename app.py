@@ -1059,17 +1059,26 @@ with st.sidebar:
         selected_panels.append("Sera Gazı Emisyonları")
     st.divider()
     st.header("Ayarlar")
-
-    # Year range slider (replaces start_year + max_year)
-    year_min_default = 2018
-    year_max_default = 2050
+    # Year range slider (default: 2025–2050) + reset button
+    DEFAULT_START_YEAR = 2025
+    DEFAULT_END_YEAR = 2050
     YEAR_OPTIONS = [2018, 2020, 2025, 2030, 2035, 2040, 2045, 2050]
+
+    if "year_range" not in st.session_state:
+        st.session_state.year_range = (DEFAULT_START_YEAR, DEFAULT_END_YEAR)
+
     year_range = st.select_slider(
         "Senaryo yıl aralığı",
         options=YEAR_OPTIONS,
-        value=(2025, 2050),
+        value=st.session_state.year_range,
+        key="year_range",
         help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
+
+    if st.button("🔄 Varsayılan yıla dön (2025–2050)"):
+        st.session_state.year_range = (DEFAULT_START_YEAR, DEFAULT_END_YEAR)
+        st.rerun()
+
     start_year, max_year = year_range
     MAX_YEAR = int(max_year)
 
