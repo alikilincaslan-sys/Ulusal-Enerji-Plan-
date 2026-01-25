@@ -1077,6 +1077,22 @@ with st.sidebar:
         help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
 
+    # --- UI polish: smaller, stacked preset buttons (visual only) ---
+    st.markdown(
+        """
+        <style>
+        /* Make sidebar preset buttons compact */
+        section[data-testid="stSidebar"] button[kind="secondary"] {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.78rem;
+            line-height: 1.2;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption("Hızlı seçim")
+
     # Preset buttons (safe via callbacks)
     def _preset_netzero():
         st.session_state["year_range"] = (2025, 2050)
@@ -1084,13 +1100,11 @@ with st.sidebar:
     def _preset_tuep():
         st.session_state["year_range"] = (2025, 2035)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.button("Net Zero (2025–2050)", use_container_width=True, on_click=_preset_netzero)
-    with c2:
-        st.button("TUEP (2025–2035)", use_container_width=True, on_click=_preset_tuep)
+    st.button("Net Zero (2025–2050)", use_container_width=True, on_click=_preset_netzero)
+    st.button("TUEP (2025–2035)", use_container_width=True, on_click=_preset_tuep)
 
     start_year, max_year = year_range
+
     MAX_YEAR = int(max_year)
 
     st.divider()
