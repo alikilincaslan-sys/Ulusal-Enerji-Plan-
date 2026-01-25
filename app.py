@@ -292,9 +292,10 @@ def _interpolate_years_long(df: pd.DataFrame, start_year: int, end_year: int, va
         return gg
 
     if group_cols:
+        # NOTE: keep grouping columns available inside _fill_one (pandas include_groups=True)
         filled = (
-            out.groupby(group_cols, dropna=False, as_index=False, sort=False)
-            .apply(_fill_one, include_groups=False)
+            out.groupby(group_cols, dropna=False, sort=False)
+            .apply(_fill_one, include_groups=True)
             .reset_index(drop=True)
         )
     else:
