@@ -251,6 +251,35 @@ def _filter_years(df: pd.DataFrame, start_year: int, end_year: int) -> pd.DataFr
     return df[(df["year"] >= start_year) & (df["year"] <= end_year)].copy()
 
 
+
+def _compare_years_selected() -> list[int] | None:
+    """2 yıl karşılaştırma modunda seçili yılları döndür."""
+    if globals().get("compare_mode") != "2 yıl karşılaştırma — iki yıl seç":
+        return None
+    ya = globals().get("compare_year_a")
+    yb = globals().get("compare_year_b")
+    try:
+        ya = int(ya)
+        yb = int(yb)
+    except Exception:
+        return None
+    yrs = sorted({ya, yb})
+    return yrs
+
+
+def _apply_two_year_filter(df: pd.DataFrame) -> pd.DataFrame:
+    """2 yıl karşılaştırma modunda sadece seçili 2 yılı tut."""
+    yrs = _compare_years_selected()
+    if yrs is None or df is None or df.empty:
+        return df
+    if "year" not in df.columns:
+        return df
+    out = df.copy()
+    out["year"] = pd.to_numeric(out["year"], errors="coerce")
+    out = out.dropna(subset=["year"])
+    out["year"] = out["year"].astype(int)
+    return out[out["year"].isin(yrs)].copy()
+
 def _cagr(start_value: float, end_value: float, n_years: int) -> float:
     if n_years <= 0:
         return np.nan
@@ -1109,10 +1138,33 @@ with st.sidebar:
         options=[
             "Küçük paneller (Ayrı Grafikler)",
             "Yan yana sütun — aynı yılda kıyas",
+            "2 yıl karşılaştırma — iki yıl seç",
         ],
         index=0,
         help="Birden fazla senaryoyu farklı görünümlerle kıyaslayın. Okunabilirlik için çoğu durumda 'Küçük paneller' önerilir.",
     )
+
+    
+    # 2 yıl karşılaştırma: seçili iki yıl (dropdown)
+    if compare_mode == "2 yıl karşılaştırma — iki yıl seç":
+        c1, c2 = st.columns(2)
+        with c1:
+            compare_year_a = st.selectbox(
+                "Karşılaştırma Yıl A",
+                options=YEAR_OPTIONS,
+                index=YEAR_OPTIONS.index(2025) if 2025 in YEAR_OPTIONS else 0,
+                key="compare_year_a",
+            )
+        with c2:
+            compare_year_b = st.selectbox(
+                "Karşılaştırma Yıl B",
+                options=YEAR_OPTIONS,
+                index=YEAR_OPTIONS.index(2035) if 2035 in YEAR_OPTIONS else min(1, len(YEAR_OPTIONS)-1),
+                key="compare_year_b",
+            )
+
+        if compare_year_a == compare_year_b:
+            st.warning("Yıl A ve Yıl B aynı. İki farklı yıl seçerseniz karşılaştırma daha anlamlı olur.")
 
     stacked_value_mode = st.select_slider(
         "Stacked gösterim",
@@ -1389,6 +1441,9 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
     dfp["year"] = dfp["year"].astype(int)
 
+    # 2 yıl karşılaştırma modunda sadece seçili yılları göster
+    dfp = _apply_two_year_filter(dfp)
+
     diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)") and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)")
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
@@ -1591,6 +1646,13 @@ def _kpi_for_bundle(b):
 
     available_max_year = int(supply["year"].max()) if supply is not None and not supply.empty else None
     latest_year = int(min(int(MAX_YEAR), available_max_year)) if available_max_year is not None else None
+    # 2 yıl karşılaştırma modunda KPI yılını seçili yılların en büyüğüne çek
+    cmp_years = _compare_years_selected()
+    if cmp_years and available_max_year is not None:
+        valid = [y for y in cmp_years if y <= int(available_max_year)]
+        if valid:
+            latest_year = int(max(valid))
+
     latest_total = float(supply.loc[supply["year"] == latest_year, "value"].iloc[0]) if latest_year else np.nan
 
     latest_ye_total = np.nan
@@ -1882,7 +1944,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
 
 
 def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None):
-    df_use = df
+    df_use = _apply_two_year_filter(df)
     y_title_use = y_title
     value_format_use = value_format
     is_percent = False
