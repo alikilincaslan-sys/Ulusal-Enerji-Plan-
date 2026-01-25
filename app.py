@@ -1077,15 +1077,18 @@ with st.sidebar:
         help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
 
+    # Preset buttons (safe via callbacks)
+    def _preset_netzero():
+        st.session_state["year_range"] = (2025, 2050)
+
+    def _preset_tuep():
+        st.session_state["year_range"] = (2025, 2035)
+
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("Net Zero (2025–2050)", use_container_width=True):
-            st.session_state["year_range"] = (2025, 2050)
-            st.rerun()
+        st.button("Net Zero (2025–2050)", use_container_width=True, on_click=_preset_netzero)
     with c2:
-        if st.button("TUEP (2025–2035)", use_container_width=True):
-            st.session_state["year_range"] = (2025, 2035)
-            st.rerun()
+        st.button("TUEP (2025–2035)", use_container_width=True, on_click=_preset_tuep)
 
     start_year, max_year = year_range
     MAX_YEAR = int(max_year)
