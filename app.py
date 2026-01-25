@@ -1109,8 +1109,6 @@ with st.sidebar:
         options=[
             "Küçük paneller (Ayrı Grafikler)",
             "Yan yana sütun — aynı yılda kıyas",
-            "Snapshot 2035–2050 — iki yıl odak",
-            "Snapshot 2025–2035 — iki yıl odak",
         ],
         index=0,
         help="Birden fazla senaryoyu farklı görünümlerle kıyaslayın. Okunabilirlik için çoğu durumda 'Küçük paneller' önerilir.",
@@ -1182,8 +1180,8 @@ if not selected_scenarios:
     st.info("En az 1 senaryo seçin.")
     st.stop()
 
-if len(selected_scenarios) >= 4 and compare_mode not in {"Snapshot 2035–2050 — iki yıl odak", "Snapshot 2025–2035 — iki yıl odak"}:
-    st.warning("4+ senaryoda okunabilirlik için snapshot modları önerilir. Şimdilik en fazla 3 senaryo gösterilecek.")
+if len(selected_scenarios) >= 4:
+    st.warning("4+ senaryoda okunabilirlik için en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
 
 if len(selected_scenarios) == 2:
@@ -1930,22 +1928,13 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     def _render_main():
         if compare_mode == "Küçük paneller (Ayrı Grafikler)":
             _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
-        elif compare_mode == "Yan yana sütun — aynı yılda kıyas":
-            _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
-        elif compare_mode == "Snapshot 2035–2050 — iki yıl odak":
-            _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2035, 2050), order=order, is_percent=is_percent)
         else:
-            _stacked_snapshot(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, years=(2025, 2035), order=order, is_percent=is_percent)
+            _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
 
     def _render_total():
         if df_use is None or df_use.empty:
             return
         totals = df_use.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "Total"})
-
-        if compare_mode == "Snapshot 2035–2050 — iki yıl odak":
-            totals = totals[totals[x_field].isin([2035, 2050])]
-        elif compare_mode == "Snapshot 2025–2035 — iki yıl odak":
-            totals = totals[totals[x_field].isin([2025, 2035])]
 
         if totals.empty:
             return
