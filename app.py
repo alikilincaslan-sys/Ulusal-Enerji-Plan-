@@ -1854,8 +1854,32 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["scenario", "year", stack_field])
 
-    ymax = 100.0 if is_percent else float(dfp.groupby(["scenario", "year"])["value"].sum().max()) if len(dfp) else None
-    yscale = alt.Scale(domain=[0, ymax]) if ymax and np.isfinite(ymax) else alt.Undefined
+    # --- FIX: Negatif (örn. LULUCF) varsa y-domain'i aşağı doğru aç ---
+    if is_percent:
+        yscale = alt.Scale(domain=[0, 100])
+    else:
+        # Pozitif üst sınır: yıl bazında toplam pozitif katkı (yaklaşık)
+        pos_sum = (
+            dfp[dfp["value"] > 0]
+            .groupby(["scenario", x_field], as_index=False)["value"]
+            .sum()["value"]
+        )
+        ymax = float(pos_sum.max()) if len(pos_sum) else None
+
+        # Negatif alt sınır: yıl bazında negatif katkıların toplamı (LULUCF gibi)
+        neg_sum = (
+            dfp[dfp["value"] < 0]
+            .groupby(["scenario", x_field], as_index=False)["value"]
+            .sum()["value"]
+        )
+        ymin = float(neg_sum.min()) if len(neg_sum) else 0.0
+
+        if ymax is not None and np.isfinite(ymax) and np.isfinite(ymin):
+            # Biraz nefes payı (etiket/axis clipping azaltır)
+            pad = 0.05 * (ymax - ymin) if (ymax - ymin) > 0 else 0.0
+            yscale = alt.Scale(domain=[ymin - pad, ymax + pad])
+        else:
+            yscale = alt.Undefined
 
     n = len(selected_scenarios)
     ncols = _ncols_for_selected(n)
@@ -1909,7 +1933,16 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
-    yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
+    if is_percent:
+        yscale = alt.Scale(domain=[0, 100])
+    else:
+        ymin = float(pd.to_numeric(dfp["value"], errors="coerce").min())
+        ymax = float(pd.to_numeric(dfp["value"], errors="coerce").max())
+        if np.isfinite(ymin) and np.isfinite(ymax):
+            pad = 0.05 * (ymax - ymin) if (ymax - ymin) > 0 else 0.0
+            yscale = alt.Scale(domain=[ymin - pad, ymax + pad])
+        else:
+            yscale = alt.Undefined
 
     sel = _legend_filter_params(stack_field)
 
