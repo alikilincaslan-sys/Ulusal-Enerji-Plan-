@@ -1508,6 +1508,39 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 
     st.subheader(title)
     year_vals = sorted(dfp["year"].unique().tolist())
+
+    # --- Y-axis domain override for selected KPI time-series ---
+    # For these indicators, starting the Y-axis at 0 reduces readability; we start near the series minimum instead.
+    _NONZERO_AXIS_KEYS = [
+        "Türkiye Nüfus Gelişimi",
+        "GSYH (Milyar ABD Doları",
+        "Kişi Başına Elektrik Tüketimi",
+        "Nihai Enerjide Elektrifikasyon Oranı",
+        "CO2 Emisyonları (ktn CO2)",
+    ]
+    _use_nonzero_axis = any(k in str(title) for k in _NONZERO_AXIS_KEYS)
+
+    y_scale = None
+    if _use_nonzero_axis:
+        y_min = float(dfp["value"].min())
+        y_max = float(dfp["value"].max())
+        span = y_max - y_min
+        if np.isfinite(span) and span > 0:
+            pad = span * 0.03
+        else:
+            pad = max(abs(y_min) * 0.05, 1.0)
+        lo = y_min - pad
+        hi = y_max + pad
+
+        # For percentage-like series, keep within a reasonable [0, 100] range.
+        if "%" in str(y_title):
+            lo = max(0.0, lo)
+            hi = min(100.0, hi)
+
+        y_scale = alt.Scale(domain=[lo, hi], zero=False)
+
+    def _y_enc():
+        return alt.Y("value:Q", title=y_title, scale=y_scale) if y_scale is not None else alt.Y("value:Q", title=y_title)
     style = chart_style or globals().get("ts_chart_style", "Bar (Gruplu)")
 
     base = alt.Chart(dfp).encode(
@@ -1536,7 +1569,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
                 scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
                 axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
             ),
-            y=alt.Y("value:Q", title=y_title),
+            y=_y_enc(),
             opacity=alt.condition(hover, alt.value(1.0), alt.value(0.25)),
             strokeWidth=alt.condition(hover, alt.value(3), alt.value(2)),
         )
@@ -1548,7 +1581,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
                 scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
                 axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
             ),
-            y=alt.Y("value:Q", title=y_title),
+            y=_y_enc(),
             opacity=alt.condition(hover, alt.value(1.0), alt.value(0.0)),
         ).transform_filter(hover)
 
@@ -1564,7 +1597,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
         chart = base.mark_bar().encode(
             x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
             xOffset=alt.XOffset("scenario:N"),
-            y=alt.Y("value:Q", title=y_title),
+            y=_y_enc(),
         )
 
     st.altair_chart(chart.properties(height=320), use_container_width=True)
