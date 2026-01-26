@@ -1094,33 +1094,6 @@ st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü")
 st.subheader("Senaryo dosyaları")
 st.caption("Excel (.xlsx) • Çoklu senaryo • Maks. 12 dosya")
 
-# =========================================================
-# BIG DROPZONE – only visual (NO logic change)
-# =========================================================
-st.markdown(
-    """
-    <style>
-    /* Minimal dropzone look — no layout/height changes */
-    div[data-testid="stFileUploader"] {
-        border: 1.5px dashed rgba(49, 51, 63, 0.28);
-        border-radius: 12px;
-        padding: 10px 12px;
-        margin-top: 6px;
-        margin-bottom: 10px;
-        background: rgba(240, 242, 246, 0.25);
-    }
-    /* IMPORTANT: don't touch section height */
-    div[data-testid="stFileUploader"] section {
-        min-height: unset !important;
-        display: block !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.info("📥 Excel dosyalarını sayfaya sürükleyip bırakın veya tıklayıp seçin")
-
 uploaded_files = st.file_uploader(
     "Excel dosyaları",
     type=["xlsx"],
@@ -2472,6 +2445,5 @@ if "Sera Gazı Emisyonları" in selected_panels:
     )
 
     st.divider()
-
 with st.expander("Çalıştırma"):
     st.code("pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py", language="bash")
