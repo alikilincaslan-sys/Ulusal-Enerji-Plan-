@@ -1474,25 +1474,6 @@ df_storage_ptx = _concat("storage_ptx")
 def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_style: str | None = None):
     if df is None or df.empty:
         st.subheader(title)
-
-    # --- CAGR mini badge (ilk–son yıl) ---
-    try:
-        _df_cagr = dfp.copy()
-        _y0 = int(_df_cagr["year"].min())
-        _y1 = int(_df_cagr["year"].max())
-        if _y1 > _y0:
-            _cagr_vals = []
-            for scn, g in _df_cagr.groupby("scenario"):
-                g2 = g.sort_values("year")
-                v0 = float(g2[g2["year"] == _y0]["value"].mean())
-                v1 = float(g2[g2["year"] == _y1]["value"].mean())
-                if np.isfinite(v0) and np.isfinite(v1) and v0 > 0 and v1 > 0:
-                    _cagr = (v1 / v0) ** (1.0 / (_y1 - _y0)) - 1.0
-                    _cagr_vals.append(f"{scn}: {_cagr*100:.2f}%/yıl")
-            if _cagr_vals:
-                st.caption("📈 CAGR (" + str(_y0) + "–" + str(_y1) + "): " + " • ".join(_cagr_vals))
-    except Exception:
-        pass
         st.warning("Veri bulunamadı.")
         return
 
@@ -1519,42 +1500,6 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 
     st.subheader(title)
     year_vals = sorted(dfp["year"].unique().tolist())
-
-    # --- Mini CAGR badge (ilk-yıl → son-yıl) ---
-    # Yalnızca KPI zaman serilerinde gösterelim (ekranı kalabalıklaştırmamak için).
-    _CAGR_KEYS = [
-        "türkiye nüfus gelişimi",
-        "nüfus",
-        "gsyh",
-        "kişi başına elektrik tüketimi",
-        "kişi basina elektrik tüketimi",
-        "nihai enerjide elektrifikasyon oranı",
-        "nihai enerjide elektrifikasyon orani",
-        "co2 emisyonları",
-        "co2 emisyonlari",
-    ]
-    _show_cagr = any(k in str(title).lower() for k in _CAGR_KEYS)
-
-    if _show_cagr and len(year_vals) >= 2:
-        y0 = int(min(year_vals))
-        y1 = int(max(year_vals))
-        n_years = int(y1 - y0)
-
-        cagr_parts = []
-        for scn, g in dfp.groupby("scenario", sort=False):
-            v0s = pd.to_numeric(g.loc[g["year"] == y0, "value"], errors="coerce")
-            v1s = pd.to_numeric(g.loc[g["year"] == y1, "value"], errors="coerce")
-            v0 = float(v0s.mean()) if len(v0s) else np.nan
-            v1 = float(v1s.mean()) if len(v1s) else np.nan
-
-            c = _cagr(v0, v1, n_years)
-            if np.isfinite(c):
-                cagr_parts.append(f"{scn}: {c*100:.2f}%/yıl")
-            else:
-                cagr_parts.append(f"{scn}: —")
-
-        if cagr_parts:
-            st.caption(f"CAGR ({y0}–{y1}): " + " | ".join(cagr_parts))
 
     # --- Y-axis domain override for selected KPI time-series ---
     # For these indicators, starting the Y-axis at 0 reduces readability; we start near the series minimum instead.
