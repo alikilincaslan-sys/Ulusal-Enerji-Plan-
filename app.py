@@ -9,17 +9,6 @@ import altair as alt
 
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 
-def _is_dark_theme() -> bool:
-    """Best-effort theme detection for Altair annotation colors."""
-    try:
-        return (st.get_option("theme.base") or "").lower() == "dark"
-    except Exception:
-        return False
-
-def _anno_color() -> str:
-    return "#E6E6E6" if _is_dark_theme() else "#1A1A1A"
-
-
 # -----------------------------
 # Units
 # -----------------------------
@@ -1149,6 +1138,12 @@ with st.sidebar:
         help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
 
+    st.caption(
+        "Metodolojik not: Model çıktıları 5 yıllık zaman adımlarında üretilmiştir. "
+        "Görsel süreklilik ve eğilimlerin okunabilirliği için ara yıllar lineer interpolasyon yöntemiyle "
+        "tahmini olarak doldurulmuştur. Bu değerler doğrudan model çıktısı değildir."
+    )
+
 
     # --- UI polish: smaller, stacked preset buttons (visual only) ---
     st.markdown(
@@ -1988,21 +1983,10 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             )
             .add_params(sel)
         )
-        chart = bars
-        if not is_percent:
-            labels = (
-                bars_src.mark_text(dy=-6, color=_anno_color(), fontSize=11)
-                .encode(
-                    x=alt.X(f"{x_field}:O", title="Yıl"),
-                    y=alt.Y("total:Q", title=y_title, stack=None),
-                    text=alt.Text("total:Q", format=value_format),
-                )
-            )
-            chart = bars + labels
 
         with cols[idx % ncols]:
             st.markdown(f"**{scn}**")
-            st.altair_chart(chart.properties(height=380, padding={"bottom": 28}), use_container_width=True)
+            st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
 
 
 def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
@@ -2071,21 +2055,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         )
         .add_params(sel)
     )
-    chart = bars
-    if not is_percent:
-        labels = (
-            bars_src.mark_text(dy=-6, color=_anno_color(), fontSize=11)
-            .encode(
-                x=alt.X(f"{x_field}:O", title="Yıl"),
-                xOffset=alt.XOffset("scenario:N"),
-                y=alt.Y("total:Q", title=y_title, stack=None),
-                text=alt.Text("total:Q", format=value_format),
-            )
-        )
-        chart = bars + labels
-
-    st.altair_chart(chart.properties(height=420, padding={"bottom": 28}), use_container_width=True)
-
+    st.altair_chart(bars.properties(height=420, padding={"bottom": 28}), use_container_width=True)
 
 
 def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False):
@@ -2169,12 +2139,81 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
         is_percent = True
 
     title_use = title + (" (Pay %)" if is_percent else "")
+
+    safe_key = re.sub(r"[^a-zA-Z0-9_]+", "_", f"show_total_{title}")
+    show_total_panel = st.checkbox(
+        "Sadece toplamı (Total) ayrı grafikte göster",
+        key=safe_key,
+        value=False,
+        help="Stacked grafikte toplamı okumak zor olursa açın: altta sadece toplam çizgi grafiği gösterilir.",
+        disabled=is_percent,
+    )
+
     def _render_main():
         if compare_mode == "Küçük paneller (Ayrı Grafikler)":
             _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
         else:
             _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
+
+    def _render_total():
+        if df_use is None or df_use.empty:
+            return
+        totals = df_use.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "Total"})
+
+        if totals.empty:
+            return
+
+        st.markdown("**Toplam (Total) — ayrı grafik**")
+
+        if compare_mode == "Küçük paneller (Ayrı Grafikler)":
+            scenarios_to_show = list(dict.fromkeys(totals["scenario"].tolist()))
+            n = len(scenarios_to_show)
+            ncols = _ncols_for_selected(n)
+            cols = st.columns(ncols)
+            for idx, scn in enumerate(scenarios_to_show):
+                sub = totals[totals["scenario"] == scn]
+                if sub.empty:
+                    continue
+                with cols[idx % ncols]:
+                    st.caption(scn)
+                    ch = (
+                        alt.Chart(sub)
+                        .mark_line(point=True)
+                        .encode(
+                            x=alt.X(f"{x_field}:O", title="Yıl"),
+                            y=alt.Y("Total:Q", title=y_title),
+                            tooltip=[
+                                alt.Tooltip("scenario:N", title="Senaryo"),
+                                alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                                alt.Tooltip("Total:Q", title="Total", format=value_format_use),
+                            ],
+                        )
+                        .properties(height=220)
+                    )
+                    st.altair_chart(ch, use_container_width=True)
+        else:
+            ch = (
+                alt.Chart(totals)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X(f"{x_field}:O", title="Yıl"),
+                    y=alt.Y("Total:Q", title=y_title),
+                    color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
+                    tooltip=[
+                        alt.Tooltip("scenario:N", title="Senaryo"),
+                        alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                        alt.Tooltip("Total:Q", title="Total", format=value_format_use),
+                    ],
+                )
+                .properties(height=320)
+            )
+            st.altair_chart(ch, use_container_width=True)
+
     _render_main()
+    if show_total_panel and (not is_percent):
+        _render_total()
+
+
 # =========================
 # Waterfall helpers (unchanged)
 # =========================
