@@ -1218,14 +1218,6 @@ with st.sidebar:
         help="Stacked grafiklerde mutlak değer yerine yıl içi pay (%) göstermek için Pay (%) seçin.",
     )
 
-    st.divider()
-    st.header("Grafik tipi")
-    ts_chart_style = st.selectbox(
-        "Zaman serisi grafikleri",
-        ["Bar (Gruplu)", "Çizgi"],
-        index=1,
-        help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
-    )
 
 
 if not uploaded_files:
@@ -1584,7 +1576,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
         if y_scale is not None:
             return alt.Y("value:Q", title=y_title, scale=y_scale, axis=y_axis)
         return alt.Y("value:Q", title=y_title)
-    style = chart_style or globals().get("ts_chart_style", "Bar (Gruplu)")
+    style = "Çizgi"  # zaman serilerinde bar kapatıldı
 
     base = alt.Chart(dfp).encode(
         color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(orient='right', direction='vertical', labelLimit=180, titleLimit=0)),
