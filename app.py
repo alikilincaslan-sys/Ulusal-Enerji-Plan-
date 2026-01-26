@@ -2139,81 +2139,12 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
         is_percent = True
 
     title_use = title + (" (Pay %)" if is_percent else "")
-
-    safe_key = re.sub(r"[^a-zA-Z0-9_]+", "_", f"show_total_{title}")
-    show_total_panel = st.checkbox(
-        "Sadece toplamı (Total) ayrı grafikte göster",
-        key=safe_key,
-        value=False,
-        help="Stacked grafikte toplamı okumak zor olursa açın: altta sadece toplam çizgi grafiği gösterilir.",
-        disabled=is_percent,
-    )
-
     def _render_main():
         if compare_mode == "Küçük paneller (Ayrı Grafikler)":
             _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
         else:
             _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
-
-    def _render_total():
-        if df_use is None or df_use.empty:
-            return
-        totals = df_use.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "Total"})
-
-        if totals.empty:
-            return
-
-        st.markdown("**Toplam (Total) — ayrı grafik**")
-
-        if compare_mode == "Küçük paneller (Ayrı Grafikler)":
-            scenarios_to_show = list(dict.fromkeys(totals["scenario"].tolist()))
-            n = len(scenarios_to_show)
-            ncols = _ncols_for_selected(n)
-            cols = st.columns(ncols)
-            for idx, scn in enumerate(scenarios_to_show):
-                sub = totals[totals["scenario"] == scn]
-                if sub.empty:
-                    continue
-                with cols[idx % ncols]:
-                    st.caption(scn)
-                    ch = (
-                        alt.Chart(sub)
-                        .mark_line(point=True)
-                        .encode(
-                            x=alt.X(f"{x_field}:O", title="Yıl"),
-                            y=alt.Y("Total:Q", title=y_title),
-                            tooltip=[
-                                alt.Tooltip("scenario:N", title="Senaryo"),
-                                alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                                alt.Tooltip("Total:Q", title="Total", format=value_format_use),
-                            ],
-                        )
-                        .properties(height=220)
-                    )
-                    st.altair_chart(ch, use_container_width=True)
-        else:
-            ch = (
-                alt.Chart(totals)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X(f"{x_field}:O", title="Yıl"),
-                    y=alt.Y("Total:Q", title=y_title),
-                    color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
-                    tooltip=[
-                        alt.Tooltip("scenario:N", title="Senaryo"),
-                        alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                        alt.Tooltip("Total:Q", title="Total", format=value_format_use),
-                    ],
-                )
-                .properties(height=320)
-            )
-            st.altair_chart(ch, use_container_width=True)
-
     _render_main()
-    if show_total_panel and (not is_percent):
-        _render_total()
-
-
 # =========================
 # Waterfall helpers (unchanged)
 # =========================
