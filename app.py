@@ -1138,6 +1138,12 @@ with st.sidebar:
         help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
 
+    st.caption(
+        "Metodolojik not: Model çıktıları 5 yıllık zaman adımlarında üretilmiştir. "
+        "Görsel süreklilik ve eğilimlerin okunabilirliği için ara yıllar lineer interpolasyon yöntemiyle "
+        "tahmini olarak doldurulmuştur. Bu değerler doğrudan model çıktısı değildir."
+    )
+
 
     # --- UI polish: smaller, stacked preset buttons (visual only) ---
     st.markdown(
