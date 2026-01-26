@@ -1094,6 +1094,38 @@ st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü")
 st.subheader("Senaryo dosyaları")
 st.caption("Excel (.xlsx) • Çoklu senaryo • Maks. 12 dosya")
 
+# =========================================================
+# BIG DROPZONE – only visual (NO logic change)
+# =========================================================
+st.markdown(
+    """
+    <style>
+    /* Make the uploader look like a big dropzone */
+    div[data-testid="stFileUploader"] {
+        border: 2px dashed rgba(49, 51, 63, 0.35);
+        border-radius: 16px;
+        padding: 18px;
+        margin-top: 8px;
+        margin-bottom: 8px;
+        background: rgba(240, 242, 246, 0.35);
+    }
+    /* Increase internal height so the drop target becomes "page-like" */
+    div[data-testid="stFileUploader"] section {
+        min-height: 55vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    div[data-testid="stFileUploader"] small {
+        font-size: 0.95rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.info("📥 Excel dosyalarını sayfaya sürükleyip bırakın veya tıklayıp seçin")
+
 uploaded_files = st.file_uploader(
     "Excel dosyaları",
     type=["xlsx"],
