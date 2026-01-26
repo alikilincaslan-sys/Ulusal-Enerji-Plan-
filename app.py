@@ -7,6 +7,9 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
+import plotly.express as px
+import plotly.graph_objects as go
+
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 
 # -----------------------------
@@ -1218,6 +1221,29 @@ with st.sidebar:
         help="Stacked grafiklerde mutlak değer yerine yıl içi pay (%) göstermek için Pay (%) seçin.",
     )
 
+    st.divider()
+    st.header("Grafik tipi")
+    ts_chart_style = st.selectbox(
+        "Zaman serisi grafikleri",
+        ["Bar (Gruplu)", "Çizgi"],
+        index=1,
+        help="Nüfus, GSYH, kişi başına tüketim gibi tek-değer zaman serilerini bu seçenekle çizdirirsiniz.",
+    )
+
+    st.divider()
+    st.header("Animasyon / Plotly")
+    use_plotly = st.checkbox(
+        "Plotly grafikleri kullan (zoom + daha akıcı etkileşim)",
+        value=True,
+        help="Plotly ile grafikler daha etkileşimli olur. İstersen Altair'e geri dönebilirsin.",
+    )
+    animate_charts = st.checkbox(
+        "Grafikler animasyonlu açılsın (Play/Slider)",
+        value=True,
+        help="Grafiklerin üstüne Play/Pause + slider ekler (özellikle çizgi/stacked grafiklerde).",
+    )
+
+
 
 
 if not uploaded_files:
@@ -1468,31 +1494,57 @@ df_electrification = _concat("electrification_ratio")
 df_storage_ptx = _concat("storage_ptx")
 
 
+
 # -----------------------------
-# Line charts (single axis, scenario colors)
+# Line charts (Plotly + optional animation)
 # -----------------------------
+def _plotly_add_play_slider(fig: go.Figure, frame_years: list[int], title: str | None = None):
+    """Adds a Play/Pause button + year slider (Plotly frames)."""
+    if not frame_years:
+        return fig
+
+    fig.update_layout(
+        updatemenus=[
+            dict(
+                type="buttons",
+                direction="left",
+                x=0.0,
+                y=1.15,
+                buttons=[
+                    dict(
+                        label="▶ Play",
+                        method="animate",
+                        args=[None, {"frame": {"duration": 350, "redraw": True}, "transition": {"duration": 200}, "fromcurrent": True}],
+                    ),
+                    dict(
+                        label="❚❚ Pause",
+                        method="animate",
+                        args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}],
+                    ),
+                ],
+            )
+        ],
+        sliders=[
+            dict(
+                active=0,
+                x=0.05,
+                y=1.05,
+                len=0.9,
+                currentvalue={"prefix": "Yıl: "},
+                steps=[
+                    dict(method="animate", args=[[str(y)], {"mode": "immediate", "frame": {"duration": 0, "redraw": True}, "transition": {"duration": 200}}], label=str(y))
+                    for y in frame_years
+                ],
+            )
+        ],
+        title=title or fig.layout.title.text,
+    )
+    return fig
+
+
 def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_style: str | None = None):
     if df is None or df.empty:
         st.subheader(title)
-
-    # --- CAGR mini badge (ilk–son yıl) ---
-    try:
-        _df_cagr = dfp.copy()
-        _y0 = int(_df_cagr["year"].min())
-        _y1 = int(_df_cagr["year"].max())
-        if _y1 > _y0:
-            _cagr_vals = []
-            for scn, g in _df_cagr.groupby("scenario"):
-                g2 = g.sort_values("year")
-                v0 = float(g2[g2["year"] == _y0]["value"].mean())
-                v1 = float(g2[g2["year"] == _y1]["value"].mean())
-                if np.isfinite(v0) and np.isfinite(v1) and v0 > 0 and v1 > 0:
-                    _cagr = (v1 / v0) ** (1.0 / (_y1 - _y0)) - 1.0
-                    _cagr_vals.append(f"{scn}: {_cagr*100:.2f}%/yıl")
-            if _cagr_vals:
-                st.caption("📈 CAGR (" + str(_y0) + "–" + str(_y1) + "): " + " • ".join(_cagr_vals))
-    except Exception:
-        pass
         st.warning("Veri bulunamadı.")
         return
 
@@ -1502,7 +1554,8 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
     dfp["year"] = dfp["year"].astype(int)
 
-    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)") and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)")
+    # 2-senaryo fark modu (tek seri)
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)")
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
     if diff_on and a and b:
@@ -1518,121 +1571,73 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
                 title = f"{title} — Fark ({a} - {b})"
 
     st.subheader(title)
-    year_vals = sorted(dfp["year"].unique().tolist())
 
-    # --- Mini CAGR badge (ilk-yıl → son-yıl) ---
-    # Yalnızca KPI zaman serilerinde gösterelim (ekranı kalabalıklaştırmamak için).
-    _CAGR_KEYS = [
-        "türkiye nüfus gelişimi",
-        "nüfus",
-        "gsyh",
-        "kişi başına elektrik tüketimi",
-        "kişi basina elektrik tüketimi",
-        "nihai enerjide elektrifikasyon oranı",
-        "nihai enerjide elektrifikasyon orani",
-        "co2 emisyonları",
-        "co2 emisyonlari",
-    ]
-    _show_cagr = any(k in str(title).lower() for k in _CAGR_KEYS)
+    use_plotly = bool(globals().get("use_plotly", True))
+    animate_charts = bool(globals().get("animate_charts", True))
+    style = chart_style or globals().get("ts_chart_style", "Çizgi")
 
-    if _show_cagr and len(year_vals) >= 2:
-        y0 = int(min(year_vals))
-        y1 = int(max(year_vals))
-        n_years = int(y1 - y0)
+    # Plotly
+    if use_plotly:
+        year_vals = sorted(dfp["year"].unique().tolist())
 
-        cagr_parts = []
-        for scn, g in dfp.groupby("scenario", sort=False):
-            v0s = pd.to_numeric(g.loc[g["year"] == y0, "value"], errors="coerce")
-            v1s = pd.to_numeric(g.loc[g["year"] == y1, "value"], errors="coerce")
-            v0 = float(v0s.mean()) if len(v0s) else np.nan
-            v1 = float(v1s.mean()) if len(v1s) else np.nan
+        if style == "Bar (Gruplu)":
+            fig = px.bar(
+                dfp,
+                x="year",
+                y="value",
+                color="scenario",
+                barmode="group",
+                labels={"year": "Yıl", "value": y_title, "scenario": "Senaryo"},
+            )
+            fig.update_layout(margin=dict(l=10, r=10, t=35, b=10), height=340)
 
-            c = _cagr(v0, v1, n_years)
-            if np.isfinite(c):
-                cagr_parts.append(f"{scn}: {c*100:.2f}%/yıl")
-            else:
-                cagr_parts.append(f"{scn}: —")
-
-        if cagr_parts:
-            st.caption(f"CAGR ({y0}–{y1}): " + " | ".join(cagr_parts))
-
-    # --- Y-axis domain override for selected KPI time-series ---
-    # For these indicators, starting the Y-axis at 0 reduces readability; we start near the series minimum instead.
-    _NONZERO_AXIS_KEYS = [
-        "Türkiye Nüfus Gelişimi",
-        "GSYH (Milyar ABD Doları",
-        "Kişi Başına Elektrik Tüketimi",
-        "Nihai Enerjide Elektrifikasyon Oranı",
-        "CO2 Emisyonları (ktn CO2)",
-    ]
-    _use_nonzero_axis = any(k in str(title) for k in _NONZERO_AXIS_KEYS)
-
-    # --- Y ekseni: bazı tek-seri metriklerde 0'dan başlamak okunabilirliği düşürüyor.
-    # Bu metriklerde ekseni serinin minimumuna yakın bir yerden başlatıyoruz ve
-    # ayrıca ilk (minimum) değeri eksen üzerinde bir tick olarak özellikle gösteriyoruz.
-    _use_nonzero_axis = any(
-        k in str(title).lower()
-        for k in [
-            "türkiye nüfus gelişimi",
-            "nüfus",
-            "gsyh",
-            "kişi başına elektrik tüketimi",
-            "kişi basina elektrik tüketimi",
-            "nihai enerjide elektrifikasyon oranı",
-            "nihai enerjide elektrifikasyon orani",
-            "co2 emisyonları",
-            "co2 emisyonlari",
-        ]
-    )
-
-    y_scale = None
-    y_axis = None
-    if _use_nonzero_axis:
-        y_min = float(dfp["value"].min())
-        y_max = float(dfp["value"].max())
-        span = y_max - y_min
-
-        if np.isfinite(span) and span > 0:
-            pad = span * 0.03
         else:
-            pad = max(abs(y_min) * 0.05, 1.0)
+            # Çizgi: İsteğe bağlı "çizilerek gelme" animasyonu
+            if animate_charts and len(year_vals) >= 2:
+                scenarios = list(dict.fromkeys(dfp["scenario"].tolist()))
+                # Initial traces (first year only)
+                init_year = year_vals[0]
+                fig = go.Figure()
+                for scn in scenarios:
+                    sub = dfp[dfp["scenario"] == scn].sort_values("year")
+                    sub0 = sub[sub["year"] <= init_year]
+                    fig.add_trace(go.Scatter(x=sub0["year"], y=sub0["value"], mode="lines+markers", name=str(scn)))
 
-        lo = y_min - pad
-        hi = y_max + pad
+                frames = []
+                for y in year_vals:
+                    frame_traces = []
+                    for scn in scenarios:
+                        sub = dfp[dfp["scenario"] == scn].sort_values("year")
+                        suby = sub[sub["year"] <= y]
+                        frame_traces.append(go.Scatter(x=suby["year"], y=suby["value"], mode="lines+markers", name=str(scn)))
+                    frames.append(go.Frame(data=frame_traces, name=str(y)))
+                fig.frames = frames
 
-        # Yüzde serilerinde (özellikle elektrifikasyon) 0–100 bandı mantıklı
-        if "%" in str(y_title):
-            lo = max(0.0, lo)
-            hi = min(100.0, hi)
+                fig.update_layout(
+                    xaxis=dict(title="Yıl", tickmode="array", tickvals=year_vals),
+                    yaxis=dict(title=y_title),
+                    legend_title_text="Senaryo",
+                    margin=dict(l=10, r=10, t=35, b=10),
+                    height=340,
+                )
+                fig = _plotly_add_play_slider(fig, year_vals, title=None)
+            else:
+                fig = px.line(
+                    dfp.sort_values("year"),
+                    x="year",
+                    y="value",
+                    color="scenario",
+                    markers=True,
+                    labels={"year": "Yıl", "value": y_title, "scenario": "Senaryo"},
+                )
+                fig.update_layout(margin=dict(l=10, r=10, t=35, b=10), height=340)
+                fig.update_layout(transition={"duration": 300})
 
-        y_scale = alt.Scale(domain=[lo, hi], zero=False)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+        return
 
-        # Tick değerleri: min değeri mutlaka göster + birkaç "nice" ara tick
-        tick_count = 6
-        ticks = []
-        if np.isfinite(y_min):
-            ticks.append(float(y_min))
-
-        if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
-            lin = np.linspace(lo, hi, tick_count)
-            ticks.extend([float(v) for v in lin])
-
-        # unique + sorted (float hassasiyeti için yuvarla)
-        ticks = sorted({round(t, 6) for t in ticks})
-
-        # Çok fazla tick olursa sadeleştir
-        if len(ticks) > 10 and np.isfinite(lo) and np.isfinite(hi) and hi > lo:
-            ticks = [round(float(v), 6) for v in np.linspace(lo, hi, 7)]
-            ticks = sorted({round(t, 6) for t in ticks})
-
-        y_axis = alt.Axis(values=ticks, format=value_format)
-
-    def _y_enc():
-        if y_scale is not None:
-            return alt.Y("value:Q", title=y_title, scale=y_scale, axis=y_axis)
-        return alt.Y("value:Q", title=y_title)
-    style = "Çizgi"  # zaman serilerinde bar kapatıldı
-
+    # Altair fallback (eski davranış)
+    year_vals = sorted(dfp["year"].unique().tolist())
     base = alt.Chart(dfp).encode(
         color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(orient='right', direction='vertical', labelLimit=180, titleLimit=0)),
         tooltip=[
@@ -1642,54 +1647,16 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
         ],
     )
     if style == "Çizgi":
-        hover = alt.selection_point(
-            fields=["scenario"],
-            on="mouseover",
-            nearest=True,
-            clear="mouseout",
-            empty="all",
+        chart = base.mark_line(point=True).encode(
+            x=alt.X("year:Q", title="Yıl", axis=alt.Axis(values=year_vals, format="d", labelAngle=0)),
+            y=alt.Y("value:Q", title=y_title),
         )
-
-        base_h = base.add_params(hover)
-
-        lines = base_h.mark_line(interpolate="monotone").encode(
-            x=alt.X(
-                "year:Q",
-                title="Yıl",
-                scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
-                axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
-            ),
-            y=_y_enc(),
-            opacity=alt.condition(hover, alt.value(1.0), alt.value(0.25)),
-            strokeWidth=alt.condition(hover, alt.value(3), alt.value(2)),
-        )
-
-        points = base_h.mark_circle(size=70).encode(
-            x=alt.X(
-                "year:Q",
-                title="Yıl",
-                scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
-                axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
-            ),
-            y=_y_enc(),
-            opacity=alt.condition(hover, alt.value(1.0), alt.value(0.0)),
-        ).transform_filter(hover)
-
-        chart = (lines + points).configure_axis(grid=True, gridOpacity=0.15)
-
-    elif style == "Bar (Stack)":
-        chart = base.mark_bar().encode(
-            x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
-            y=alt.Y("value:Q", title=y_title, stack="zero"),
-        )
-
     else:
         chart = base.mark_bar().encode(
             x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
             xOffset=alt.XOffset("scenario:N"),
-            y=_y_enc(),
+            y=alt.Y("value:Q", title=y_title),
         )
-
     st.altair_chart(chart.properties(height=320), use_container_width=True)
 
 
@@ -1963,6 +1930,7 @@ def _legend_filter_params(stack_field: str):
     return sel
 
 
+
 def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
     st.subheader(title)
     if df is None or df.empty:
@@ -1970,75 +1938,118 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         return
 
     dfp = df.copy()
+    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
+    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
+    dfp = dfp.dropna(subset=["year", "value", "scenario", stack_field])
     dfp["year"] = dfp["year"].astype(int)
-    year_vals = sorted(pd.to_numeric(dfp[x_field], errors="coerce").dropna().astype(int).unique().tolist())
 
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
-        dfp = dfp.sort_values(["scenario", "year", stack_field])
 
-    # --- FIX: Negatif (örn. LULUCF) varsa y-domain'i aşağı doğru aç ---
-    if is_percent:
-        yscale = alt.Scale(domain=[0, 100])
-    else:
-        # Pozitif üst sınır: yıl bazında toplam pozitif katkı (yaklaşık)
-        pos_sum = (
-            dfp[dfp["value"] > 0]
-            .groupby(["scenario", x_field], as_index=False)["value"]
-            .sum()["value"]
-        )
-        ymax = float(pos_sum.max()) if len(pos_sum) else None
+    use_plotly = bool(globals().get("use_plotly", True))
+    animate_charts = bool(globals().get("animate_charts", True))
 
-        # Negatif alt sınır: yıl bazında negatif katkıların toplamı (LULUCF gibi)
-        neg_sum = (
-            dfp[dfp["value"] < 0]
-            .groupby(["scenario", x_field], as_index=False)["value"]
-            .sum()["value"]
-        )
-        ymin = float(neg_sum.min()) if len(neg_sum) else 0.0
-
-        if ymax is not None and np.isfinite(ymax) and np.isfinite(ymin):
-            # Biraz nefes payı (etiket/axis clipping azaltır)
-            pad = 0.05 * (ymax - ymin) if (ymax - ymin) > 0 else 0.0
-            yscale = alt.Scale(domain=[ymin - pad, ymax + pad])
-        else:
-            yscale = alt.Undefined
-
-    n = len(selected_scenarios)
+    scenarios_to_show = list(dict.fromkeys(dfp["scenario"].tolist()))
+    n = len(scenarios_to_show)
     ncols = _ncols_for_selected(n)
     cols = st.columns(ncols)
 
-    for idx, scn in enumerate(selected_scenarios):
-        sub = dfp[dfp["scenario"] == scn]
+    for idx, scn in enumerate(scenarios_to_show):
+        sub = dfp[dfp["scenario"] == scn].copy()
         if sub.empty:
             continue
 
-        sel = _legend_filter_params(stack_field)
+        if use_plotly:
+            year_vals = sorted(pd.to_numeric(sub[x_field], errors="coerce").dropna().astype(int).unique().tolist())
 
-        bars_src = alt.Chart(sub)
-        if not is_percent:
-            bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=[x_field])
+            # (Pay %) için y eksenini sabitle
+            yrange = [0, 100] if is_percent else None
 
-        bars = (
-            bars_src.mark_bar()
-            .encode(
-                x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
-                y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-                color=alt.Color(f"{stack_field}:N", title=category_title),
-                opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
-                tooltip=[
-                    alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                    alt.Tooltip(f"{stack_field}:N", title=category_title),
-                    alt.Tooltip("value:Q", title=y_title, format=value_format),
-                    *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
-                ],
+            if animate_charts and len(year_vals) >= 2:
+                # Her frame'de yalnızca ilgili yılın stacked bar'ı gösterilir.
+                init_y = year_vals[0]
+                sub0 = sub[sub[x_field].astype(int) == init_y]
+
+                fig = px.bar(
+                    sub0,
+                    x=x_field,
+                    y="value",
+                    color=stack_field,
+                    barmode="stack",
+                    category_orders={stack_field: order} if order else None,
+                    labels={x_field: "Yıl", "value": y_title, stack_field: category_title},
+                )
+                frames = []
+                for y in year_vals:
+                    s = sub[sub[x_field].astype(int) == y]
+                    frames.append(go.Frame(data=px.bar(
+                        s,
+                        x=x_field,
+                        y="value",
+                        color=stack_field,
+                        barmode="stack",
+                        category_orders={stack_field: order} if order else None,
+                        labels={x_field: "Yıl", "value": y_title, stack_field: category_title},
+                    ).data, name=str(y)))
+                fig.frames = frames
+                fig.update_layout(
+                    xaxis=dict(title="Yıl", tickmode="array", tickvals=year_vals),
+                    yaxis=dict(title=y_title, range=yrange),
+                    margin=dict(l=10, r=10, t=30, b=10),
+                    height=380,
+                )
+                fig = _plotly_add_play_slider(fig, year_vals, title=None)
+            else:
+                fig = px.bar(
+                    sub,
+                    x=x_field,
+                    y="value",
+                    color=stack_field,
+                    barmode="stack",
+                    category_orders={stack_field: order} if order else None,
+                    labels={x_field: "Yıl", "value": y_title, stack_field: category_title},
+                )
+                fig.update_layout(
+                    xaxis=dict(title="Yıl", tickmode="array", tickvals=year_vals),
+                    yaxis=dict(title=y_title, range=yrange),
+                    margin=dict(l=10, r=10, t=30, b=10),
+                    height=380,
+                )
+                fig.update_layout(transition={"duration": 300})
+
+            with cols[idx % ncols]:
+                st.markdown(f"**{scn}**")
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+        else:
+            # Altair fallback (eski)
+            year_vals = sorted(pd.to_numeric(sub[x_field], errors="coerce").dropna().astype(int).unique().tolist())
+            yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
+            sel = _legend_filter_params(stack_field)
+
+            bars_src = alt.Chart(sub)
+            if not is_percent:
+                bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=[x_field])
+
+            bars = (
+                bars_src.mark_bar()
+                .encode(
+                    x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
+                    y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
+                    color=alt.Color(f"{stack_field}:N", title=category_title),
+                    opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
+                    tooltip=[
+                        alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                        alt.Tooltip(f"{stack_field}:N", title=category_title),
+                        alt.Tooltip("value:Q", title=y_title, format=value_format),
+                        *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
+                    ],
+                )
+                .add_params(sel)
             )
-            .add_params(sel)
-        )
 
-        with cols[idx % ncols]:
-            st.markdown(f"**{scn}**")
-            st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
+            with cols[idx % ncols]:
+                st.markdown(f"**{scn}**")
+                st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
 
 
 def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
@@ -2049,24 +2060,94 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
 
     dfp = df.copy()
     dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
-    dfp = dfp.dropna(subset=["year"])
+    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
+    dfp = dfp.dropna(subset=["year", "value", "scenario", stack_field])
     dfp["year"] = dfp["year"].astype(int)
-    year_vals = sorted(pd.to_numeric(dfp[x_field], errors="coerce").dropna().astype(int).unique().tolist())
+
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
-    if is_percent:
-        yscale = alt.Scale(domain=[0, 100])
-    else:
-        ymin = float(pd.to_numeric(dfp["value"], errors="coerce").min())
-        ymax = float(pd.to_numeric(dfp["value"], errors="coerce").max())
-        if np.isfinite(ymin) and np.isfinite(ymax):
-            pad = 0.05 * (ymax - ymin) if (ymax - ymin) > 0 else 0.0
-            yscale = alt.Scale(domain=[ymin - pad, ymax + pad])
-        else:
-            yscale = alt.Undefined
+    use_plotly = bool(globals().get("use_plotly", True))
+    animate_charts = bool(globals().get("animate_charts", True))
+    year_vals = sorted(pd.to_numeric(dfp[x_field], errors="coerce").dropna().astype(int).unique().tolist())
+    yrange = [0, 100] if is_percent else None
 
+    if use_plotly:
+        # Yan yana sütun: aynı yılda kıyas (scenario bazında xOffset muadili: x = year, facet = scenario değil;
+        # burada x = year, color = stack, bars grouped by scenario via "pattern_shape" mümkün ama sade tutuyoruz:
+        # x eksenine "year-scenario" kombinasyonu verip okunabilirliği koruyoruz.
+        dfp2 = dfp.copy()
+        dfp2["year_scn"] = dfp2[x_field].astype(int).astype(str) + " • " + dfp2["scenario"].astype(str)
+
+        order_year_scn = []
+        for y in year_vals:
+            for scn in list(dict.fromkeys(dfp2["scenario"].tolist())):
+                order_year_scn.append(f"{y} • {scn}")
+
+        if animate_charts and len(year_vals) >= 2:
+            init_y = year_vals[0]
+            sub0 = dfp2[dfp2[x_field].astype(int) == init_y].copy()
+
+            fig0 = px.bar(
+                sub0,
+                x="year_scn",
+                y="value",
+                color=stack_field,
+                barmode="stack",
+                category_orders={
+                    "year_scn": [f"{init_y} • {s}" for s in list(dict.fromkeys(dfp2["scenario"].tolist()))],
+                    stack_field: order if order else None,
+                },
+                labels={"year_scn": "Yıl • Senaryo", "value": y_title, stack_field: category_title},
+            )
+            frames = []
+            for y in year_vals:
+                s = dfp2[dfp2[x_field].astype(int) == y].copy()
+                figy = px.bar(
+                    s,
+                    x="year_scn",
+                    y="value",
+                    color=stack_field,
+                    barmode="stack",
+                    category_orders={
+                        "year_scn": [f"{y} • {scn}" for scn in list(dict.fromkeys(dfp2["scenario"].tolist()))],
+                        stack_field: order if order else None,
+                    },
+                    labels={"year_scn": "Yıl • Senaryo", "value": y_title, stack_field: category_title},
+                )
+                frames.append(go.Frame(data=figy.data, name=str(y)))
+            fig0.frames = frames
+            fig0.update_layout(
+                xaxis=dict(title="Yıl • Senaryo", categoryorder="array", categoryarray=order_year_scn),
+                yaxis=dict(title=y_title, range=yrange),
+                margin=dict(l=10, r=10, t=30, b=10),
+                height=430,
+            )
+            fig0 = _plotly_add_play_slider(fig0, year_vals, title=None)
+            st.plotly_chart(fig0, use_container_width=True, config={"displayModeBar": True})
+        else:
+            fig = px.bar(
+                dfp2,
+                x="year_scn",
+                y="value",
+                color=stack_field,
+                barmode="stack",
+                category_orders={"year_scn": order_year_scn, stack_field: order} if order else {"year_scn": order_year_scn},
+                labels={"year_scn": "Yıl • Senaryo", "value": y_title, stack_field: category_title},
+            )
+            fig.update_layout(
+                xaxis=dict(title="Yıl • Senaryo", categoryorder="array", categoryarray=order_year_scn),
+                yaxis=dict(title=y_title, range=yrange),
+                margin=dict(l=10, r=10, t=30, b=10),
+                height=430,
+            )
+            fig.update_layout(transition={"duration": 300})
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+        return
+
+    # Altair fallback (eski)
+    yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
     sel = _legend_filter_params(stack_field)
 
     bars_src = alt.Chart(dfp)
@@ -2086,7 +2167,6 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
-                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
             ],
         )
         .add_params(sel)
@@ -2101,7 +2181,8 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         return
     dfp = df.copy()
     dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
-    dfp = dfp.dropna(subset=["year"])
+    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
+    dfp = dfp.dropna(subset=["year", "value", "scenario", stack_field])
     dfp["year"] = dfp["year"].astype(int)
     dfp = dfp[dfp["year"].isin(list(years))]
     if dfp.empty:
@@ -2112,16 +2193,41 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
+    use_plotly = bool(globals().get("use_plotly", True))
+    yrange = [0, 100] if is_percent else None
+
+    if use_plotly:
+        dfp2 = dfp.copy()
+        dfp2["year_scn"] = dfp2[x_field].astype(int).astype(str) + " • " + dfp2["scenario"].astype(str)
+        order_year_scn = []
+        for y in sorted(set(years)):
+            for scn in list(dict.fromkeys(dfp2["scenario"].tolist())):
+                order_year_scn.append(f"{int(y)} • {scn}")
+
+        fig = px.bar(
+            dfp2,
+            x="year_scn",
+            y="value",
+            color=stack_field,
+            barmode="stack",
+            category_orders={"year_scn": order_year_scn, stack_field: order} if order else {"year_scn": order_year_scn},
+            labels={"year_scn": "Yıl • Senaryo", "value": y_title, stack_field: category_title},
+        )
+        fig.update_layout(
+            xaxis=dict(title="Yıl • Senaryo", categoryorder="array", categoryarray=order_year_scn),
+            yaxis=dict(title=y_title, range=yrange),
+            margin=dict(l=10, r=10, t=30, b=10),
+            height=430,
+        )
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+        return
+
+    # Altair fallback
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
-
     sel = _legend_filter_params(stack_field)
-
-    bars_src = alt.Chart(dfp)
-    if not is_percent:
-        bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
-
     bars = (
-        bars_src.mark_bar()
+        alt.Chart(dfp)
+        .mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
             xOffset=alt.XOffset("scenario:N"),
@@ -2133,7 +2239,6 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
-                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
             ],
         )
         .add_params(sel)
@@ -2191,61 +2296,140 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
         else:
             _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
 
-    def _render_total():
-        if df_use is None or df_use.empty:
-            return
-        totals = df_use.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "Total"})
+    
+def _render_total():
+    if df_use is None or df_use.empty:
+        return
+    totals = df_use.groupby(["scenario", x_field], as_index=False)["value"].sum().rename(columns={"value": "Total"})
+    if totals.empty:
+        return
 
-        if totals.empty:
-            return
+    st.markdown("**Toplam (Total) — ayrı grafik**")
 
-        st.markdown("**Toplam (Total) — ayrı grafik**")
+    use_plotly = bool(globals().get("use_plotly", True))
+    animate_charts = bool(globals().get("animate_charts", True))
+    year_vals = sorted(pd.to_numeric(totals[x_field], errors="coerce").dropna().astype(int).unique().tolist())
 
+    if use_plotly:
         if compare_mode == "Küçük paneller (Ayrı Grafikler)":
             scenarios_to_show = list(dict.fromkeys(totals["scenario"].tolist()))
             n = len(scenarios_to_show)
             ncols = _ncols_for_selected(n)
             cols = st.columns(ncols)
+
             for idx, scn in enumerate(scenarios_to_show):
-                sub = totals[totals["scenario"] == scn]
+                sub = totals[totals["scenario"] == scn].sort_values(x_field)
                 if sub.empty:
                     continue
+
+                if animate_charts and len(year_vals) >= 2:
+                    init_y = year_vals[0]
+                    sub0 = sub[sub[x_field].astype(int) <= init_y]
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=sub0[x_field], y=sub0["Total"], mode="lines+markers", name="Total"))
+                    frames = []
+                    for y in year_vals:
+                        suby = sub[sub[x_field].astype(int) <= y]
+                        frames.append(go.Frame(data=[go.Scatter(x=suby[x_field], y=suby["Total"], mode="lines+markers", name="Total")], name=str(y)))
+                    fig.frames = frames
+                    fig.update_layout(
+                        xaxis=dict(title="Yıl", tickmode="array", tickvals=year_vals),
+                        yaxis=dict(title=y_title),
+                        margin=dict(l=10, r=10, t=25, b=10),
+                        height=240,
+                        showlegend=False,
+                    )
+                    fig = _plotly_add_play_slider(fig, year_vals, title=None)
+                else:
+                    fig = px.line(sub, x=x_field, y="Total", markers=True, labels={x_field: "Yıl", "Total": y_title})
+                    fig.update_layout(margin=dict(l=10, r=10, t=25, b=10), height=240)
+
                 with cols[idx % ncols]:
                     st.caption(scn)
-                    ch = (
-                        alt.Chart(sub)
-                        .mark_line(point=True)
-                        .encode(
-                            x=alt.X(f"{x_field}:O", title="Yıl"),
-                            y=alt.Y("Total:Q", title=y_title),
-                            tooltip=[
-                                alt.Tooltip("scenario:N", title="Senaryo"),
-                                alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                                alt.Tooltip("Total:Q", title="Total", format=value_format_use),
-                            ],
-                        )
-                        .properties(height=220)
-                    )
-                    st.altair_chart(ch, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+
         else:
-            ch = (
-                alt.Chart(totals)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X(f"{x_field}:O", title="Yıl"),
-                    y=alt.Y("Total:Q", title=y_title),
-                    color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
-                    tooltip=[
-                        alt.Tooltip("scenario:N", title="Senaryo"),
-                        alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                        alt.Tooltip("Total:Q", title="Total", format=value_format_use),
-                    ],
+            if animate_charts and len(year_vals) >= 2:
+                scenarios = list(dict.fromkeys(totals["scenario"].tolist()))
+                init_y = year_vals[0]
+                fig = go.Figure()
+                for scn in scenarios:
+                    sub = totals[totals["scenario"] == scn].sort_values(x_field)
+                    sub0 = sub[sub[x_field].astype(int) <= init_y]
+                    fig.add_trace(go.Scatter(x=sub0[x_field], y=sub0["Total"], mode="lines+markers", name=str(scn)))
+
+                frames = []
+                for y in year_vals:
+                    frame_traces = []
+                    for scn in scenarios:
+                        sub = totals[totals["scenario"] == scn].sort_values(x_field)
+                        suby = sub[sub[x_field].astype(int) <= y]
+                        frame_traces.append(go.Scatter(x=suby[x_field], y=suby["Total"], mode="lines+markers", name=str(scn)))
+                    frames.append(go.Frame(data=frame_traces, name=str(y)))
+                fig.frames = frames
+                fig.update_layout(
+                    xaxis=dict(title="Yıl", tickmode="array", tickvals=year_vals),
+                    yaxis=dict(title=y_title),
+                    margin=dict(l=10, r=10, t=25, b=10),
+                    height=320,
+                    legend_title_text="Senaryo",
                 )
-                .properties(height=320)
+                fig = _plotly_add_play_slider(fig, year_vals, title=None)
+            else:
+                fig = px.line(totals.sort_values(x_field), x=x_field, y="Total", color="scenario", markers=True, labels={x_field: "Yıl", "Total": y_title, "scenario": "Senaryo"})
+                fig.update_layout(margin=dict(l=10, r=10, t=25, b=10), height=320)
+
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+
+        return
+
+    # Altair fallback (eski)
+    if compare_mode == "Küçük paneller (Ayrı Grafikler)":
+        scenarios_to_show = list(dict.fromkeys(totals["scenario"].tolist()))
+        n = len(scenarios_to_show)
+        ncols = _ncols_for_selected(n)
+        cols = st.columns(ncols)
+        for idx, scn in enumerate(scenarios_to_show):
+            sub = totals[totals["scenario"] == scn]
+            if sub.empty:
+                continue
+            with cols[idx % ncols]:
+                st.caption(scn)
+                ch = (
+                    alt.Chart(sub)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X(f"{x_field}:O", title="Yıl"),
+                        y=alt.Y("Total:Q", title=y_title),
+                        tooltip=[
+                            alt.Tooltip("scenario:N", title="Senaryo"),
+                            alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                            alt.Tooltip("Total:Q", title="Total", format=value_format_use),
+                        ],
+                    )
+                    .properties(height=220)
+                )
+                st.altair_chart(ch, use_container_width=True)
+    else:
+        ch = (
+            alt.Chart(totals)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X(f"{x_field}:O", title="Yıl"),
+                y=alt.Y("Total:Q", title=y_title),
+                color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(labelLimit=0, titleLimit=0)),
+                tooltip=[
+                    alt.Tooltip("scenario:N", title="Senaryo"),
+                    alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                    alt.Tooltip("Total:Q", title="Total", format=value_format_use),
+                ],
             )
-            st.altair_chart(ch, use_container_width=True)
+            .properties(height=320)
+        )
+        st.altair_chart(ch, use_container_width=True)
 
     _render_main()
+    
     if show_total_panel and (not is_percent):
         _render_total()
 
