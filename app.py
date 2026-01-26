@@ -1980,7 +1980,29 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
 
         with cols[idx % ncols]:
             st.markdown(f"**{scn}**")
-            st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
+            # --- Toplam (Total) göstergesi: stacked bar üzerinde toplam çizgisi + etiket ---
+        chart = bars
+        if not is_percent:
+            total_src = bars_src.transform_aggregate(total="max(total)", groupby=["scenario", x_field])
+            total_line = (
+                total_src.mark_line(opacity=0.85, strokeWidth=2, strokeDash=[5, 3])
+                .encode(
+                    x=alt.X(f"{x_field}:O", title="Yıl"),
+                    y=alt.Y("total:Q", title=y_title, scale=yscale),
+                    detail="scenario:N",
+                )
+            )
+            total_text = (
+                total_src.mark_text(dy=-8, fontSize=11, opacity=0.9)
+                .encode(
+                    x=alt.X(f"{x_field}:O", title="Yıl"),
+                    y=alt.Y("total:Q", title=y_title, scale=yscale),
+                    text=alt.Text("total:Q", format=value_format),
+                )
+            )
+            chart = bars + total_line + total_text
+
+        st.altair_chart(chart.properties(height=380, padding={"bottom": 28}), use_container_width=True)
 
 
 def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
@@ -2049,7 +2071,31 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         )
         .add_params(sel)
     )
-    st.altair_chart(bars.properties(height=420, padding={"bottom": 28}), use_container_width=True)
+    # --- Toplam (Total) göstergesi: stacked bar üzerinde toplam çizgisi + etiket ---
+    chart = bars
+    if not is_percent:
+        total_src = bars_src.transform_aggregate(total="max(total)", groupby=["scenario", x_field])
+        total_line = (
+            total_src.mark_line(opacity=0.85, strokeWidth=2, strokeDash=[5, 3])
+            .encode(
+                x=alt.X(f"{x_field}:O", title="Yıl"),
+                xOffset=alt.XOffset("scenario:N"),
+                y=alt.Y("total:Q", title=y_title, scale=yscale),
+                detail="scenario:N",
+            )
+        )
+        total_text = (
+            total_src.mark_text(dy=-8, fontSize=11, opacity=0.9)
+            .encode(
+                x=alt.X(f"{x_field}:O", title="Yıl"),
+                xOffset=alt.XOffset("scenario:N"),
+                y=alt.Y("total:Q", title=y_title, scale=yscale),
+                text=alt.Text("total:Q", format=value_format),
+            )
+        )
+        chart = bars + total_line + total_text
+
+    st.altair_chart(chart.properties(height=420, padding={"bottom": 28}), use_container_width=True)
 
 
 def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False):
@@ -2096,7 +2142,22 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         )
         .add_params(sel)
     )
-    st.altair_chart(bars.properties(height=420), use_container_width=True)
+    # --- Toplam (Total) göstergesi: stacked bar üstünde total etiketi (ve opsiyonel çizgi) ---
+    chart = bars
+    if not is_percent:
+        total_src = bars_src.transform_aggregate(total="max(total)", groupby=["scenario", x_field])
+        total_text = (
+            total_src.mark_text(dy=-8, fontSize=11)
+            .encode(
+                x=alt.X(f"{x_field}:O", title="Yıl"),
+                xOffset=alt.XOffset("scenario:N"),
+                y=alt.Y("total:Q", title=y_title, scale=yscale),
+                text=alt.Text("total:Q", format=value_format),
+            )
+        )
+        chart = bars + total_text
+
+    st.altair_chart(chart.properties(height=420), use_container_width=True)
 
 
 def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None):
