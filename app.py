@@ -1100,24 +1100,19 @@ st.caption("Excel (.xlsx) • Çoklu senaryo • Maks. 12 dosya")
 st.markdown(
     """
     <style>
-    /* Make the uploader look like a big dropzone */
+    /* Minimal dropzone look — no layout/height changes */
     div[data-testid="stFileUploader"] {
-        border: 2px dashed rgba(49, 51, 63, 0.35);
-        border-radius: 16px;
-        padding: 18px;
-        margin-top: 8px;
-        margin-bottom: 8px;
-        background: rgba(240, 242, 246, 0.35);
+        border: 1.5px dashed rgba(49, 51, 63, 0.28);
+        border-radius: 12px;
+        padding: 10px 12px;
+        margin-top: 6px;
+        margin-bottom: 10px;
+        background: rgba(240, 242, 246, 0.25);
     }
-    /* Increase internal height so the drop target becomes "page-like" */
+    /* IMPORTANT: don't touch section height */
     div[data-testid="stFileUploader"] section {
-        min-height: 55vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-    div[data-testid="stFileUploader"] small {
-        font-size: 0.95rem;
+        min-height: unset !important;
+        display: block !important;
     }
     </style>
     """,
