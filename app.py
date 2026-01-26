@@ -1520,27 +1520,70 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     ]
     _use_nonzero_axis = any(k in str(title) for k in _NONZERO_AXIS_KEYS)
 
+    # --- Y ekseni: bazı tek-seri metriklerde 0'dan başlamak okunabilirliği düşürüyor.
+    # Bu metriklerde ekseni serinin minimumuna yakın bir yerden başlatıyoruz ve
+    # ayrıca ilk (minimum) değeri eksen üzerinde bir tick olarak özellikle gösteriyoruz.
+    _use_nonzero_axis = any(
+        k in str(title).lower()
+        for k in [
+            "türkiye nüfus gelişimi",
+            "nüfus",
+            "gsyh",
+            "kişi başına elektrik tüketimi",
+            "kişi basina elektrik tüketimi",
+            "nihai enerjide elektrifikasyon oranı",
+            "nihai enerjide elektrifikasyon orani",
+            "co2 emisyonları",
+            "co2 emisyonlari",
+        ]
+    )
+
     y_scale = None
+    y_axis = None
     if _use_nonzero_axis:
         y_min = float(dfp["value"].min())
         y_max = float(dfp["value"].max())
         span = y_max - y_min
+
         if np.isfinite(span) and span > 0:
             pad = span * 0.03
         else:
             pad = max(abs(y_min) * 0.05, 1.0)
+
         lo = y_min - pad
         hi = y_max + pad
 
-        # For percentage-like series, keep within a reasonable [0, 100] range.
+        # Yüzde serilerinde (özellikle elektrifikasyon) 0–100 bandı mantıklı
         if "%" in str(y_title):
             lo = max(0.0, lo)
             hi = min(100.0, hi)
 
         y_scale = alt.Scale(domain=[lo, hi], zero=False)
 
+        # Tick değerleri: min değeri mutlaka göster + birkaç "nice" ara tick
+        tick_count = 6
+        ticks = []
+        if np.isfinite(y_min):
+            ticks.append(float(y_min))
+
+        if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+            lin = np.linspace(lo, hi, tick_count)
+            ticks.extend([float(v) for v in lin])
+
+        # unique + sorted (float hassasiyeti için yuvarla)
+        ticks = sorted({round(t, 6) for t in ticks})
+
+        # Çok fazla tick olursa sadeleştir
+        if len(ticks) > 10 and np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+            ticks = [round(float(v), 6) for v in np.linspace(lo, hi, 7)]
+            ticks = sorted({round(t, 6) for t in ticks})
+
+        y_axis = alt.Axis(values=ticks, format=value_format)
+
     def _y_enc():
-        return alt.Y("value:Q", title=y_title, scale=y_scale) if y_scale is not None else alt.Y("value:Q", title=y_title)
+        if y_scale is not None:
+            return alt.Y("value:Q", title=y_title, scale=y_scale, axis=y_axis)
+        return alt.Y("value:Q", title=y_title)
     style = chart_style or globals().get("ts_chart_style", "Bar (Gruplu)")
 
     base = alt.Chart(dfp).encode(
