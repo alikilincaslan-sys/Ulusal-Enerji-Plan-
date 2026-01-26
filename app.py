@@ -1922,29 +1922,32 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["scenario", "year", stack_field])
 
-    # --- FIX: Negatif (örn. LULUCF) varsa y-domain'i aşağı doğru aç ---
+    # --- FIX: Stacked bar y-domain'i (toplamın altında kalmasın) ---
     if is_percent:
         yscale = alt.Scale(domain=[0, 100])
     else:
-        # Pozitif üst sınır: yıl bazında toplam pozitif katkı (yaklaşık)
-        pos_sum = (
-            dfp[dfp["value"] > 0]
-            .groupby(["scenario", x_field], as_index=False)["value"]
-            .sum()["value"]
-        )
-        ymax = float(pos_sum.max()) if len(pos_sum) else None
+        dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
 
-        # Negatif alt sınır: yıl bazında negatif katkıların toplamı (LULUCF gibi)
-        neg_sum = (
-            dfp[dfp["value"] < 0]
-            .groupby(["scenario", x_field], as_index=False)["value"]
-            .sum()["value"]
+        # Pozitif üst sınır: yıl bazında toplam pozitif katkı (stack toplamı)
+        pos_tot = (
+            dfp.assign(_v=np.where(dfp["value"] > 0, dfp["value"], 0.0))
+            .groupby(["scenario", x_field], as_index=False)["_v"]
+            .sum()["_v"]
         )
-        ymin = float(neg_sum.min()) if len(neg_sum) else 0.0
+        ymax = float(pos_tot.max()) if len(pos_tot) else None
+
+        # Negatif alt sınır: yıl bazında toplam negatif katkı (LULUCF gibi)
+        neg_tot = (
+            dfp.assign(_v=np.where(dfp["value"] < 0, dfp["value"], 0.0))
+            .groupby(["scenario", x_field], as_index=False)["_v"]
+            .sum()["_v"]
+        )
+        ymin = float(neg_tot.min()) if len(neg_tot) else 0.0
 
         if ymax is not None and np.isfinite(ymax) and np.isfinite(ymin):
-            # Biraz nefes payı (etiket/axis clipping azaltır)
-            pad = 0.05 * (ymax - ymin) if (ymax - ymin) > 0 else 0.0
+            # Daha fazla headroom: toplamın üstünde kesilmesin
+            span = (ymax - ymin) if (ymax - ymin) > 0 else max(abs(ymax), 1.0)
+            pad = 0.10 * span
             yscale = alt.Scale(domain=[ymin - pad, ymax + pad])
         else:
             yscale = alt.Undefined
@@ -2004,10 +2007,26 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
     if is_percent:
         yscale = alt.Scale(domain=[0, 100])
     else:
-        ymin = float(pd.to_numeric(dfp["value"], errors="coerce").min())
-        ymax = float(pd.to_numeric(dfp["value"], errors="coerce").max())
-        if np.isfinite(ymin) and np.isfinite(ymax):
-            pad = 0.05 * (ymax - ymin) if (ymax - ymin) > 0 else 0.0
+        # Stacked bar'larda y ekseni, tekil parçaların max'ına değil yıl bazında TOPLAM'a göre ayarlanmalı.
+        dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
+        # Pozitif ve negatif yığınları ayrı topla (negatifler aşağı doğru)
+        pos_tot = (
+            dfp.assign(_v=np.where(dfp["value"] > 0, dfp["value"], 0.0))
+            .groupby(["scenario", x_field], as_index=False)["_v"]
+            .sum()["_v"]
+        )
+        neg_tot = (
+            dfp.assign(_v=np.where(dfp["value"] < 0, dfp["value"], 0.0))
+            .groupby(["scenario", x_field], as_index=False)["_v"]
+            .sum()["_v"]
+        )
+        ymax = float(pos_tot.max()) if len(pos_tot) else None
+        ymin = float(neg_tot.min()) if len(neg_tot) else 0.0
+
+        if ymax is not None and np.isfinite(ymax) and np.isfinite(ymin):
+            # Daha fazla headroom: toplamın üstünde kesilmesin (özellikle 110-120 gibi sınırda)
+            span = (ymax - ymin) if (ymax - ymin) > 0 else max(abs(ymax), 1.0)
+            pad = 0.10 * span
             yscale = alt.Scale(domain=[ymin - pad, ymax + pad])
         else:
             yscale = alt.Undefined
