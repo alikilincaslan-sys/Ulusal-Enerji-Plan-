@@ -2454,7 +2454,7 @@ def _plot_generation_bar_race(df, unit_label):
 # Plotly panel (render)
 # -----------------------------
 st.divider()
-st.subheader("🎞️ Elektrik Üretimi – Kaynaklara Göre Zaman İçinde Değişim (Canva tarzı)")
+st.subheader(" Elektrik Üretimi – Kaynaklara Göre Zaman İçinde Değişim ")
 
 for scn in selected_scenarios:
     st.markdown(f"**Senaryo: {scn}**")
