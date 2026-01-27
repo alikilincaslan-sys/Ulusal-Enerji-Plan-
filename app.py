@@ -2437,11 +2437,15 @@ def _plot_generation_bar_race(df, unit_label):
         transition={"duration": 600, "easing": "cubic-in-out"},
     )
 
-    fig.update_traces(
-        texttemplate="%{x:,.0f}",
-        textposition="outside",
-        cliponaxis=False,
+  fig.update_traces(
+    texttemplate="%{x:,.0f}",
+    textposition="inside",
+    insidetextanchor="start",
+    textfont=dict(color="black", size=13),
+    cliponaxis=False,
+      
     )
+
 
     return fig
 
