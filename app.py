@@ -1667,8 +1667,8 @@ def _build_donut_chart_layers(
     if "pct" not in d.columns:
         d["pct"] = (pd.to_numeric(d[value_col], errors="coerce") / total) * 100.0
 
-    DONUT_DOMAIN = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
-    DONUT_RANGE = ["#F39C12", "#2ECC71", "#9B59B6", "#95A5A6"]
+    DONUT_DOMAIN = ["Fossil fuels", "Renewables", "Nuclear", "Other", "Remaining"]
+    DONUT_RANGE = ["#F39C12", "#2ECC71", "#9B59B6", "#95A5A6", "#2C3E50"]
 
     sel = alt.selection_point(fields=[category_col], on="click", empty="none")
 
@@ -1704,12 +1704,12 @@ def _build_donut_chart_layers(
     # Compact pay caption (avoid mark_text overlays which can blank charts on some envs)
     pay_caption = None
     try:
-        order = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
+        order = ["Fossil fuels", "Renewables", "Nuclear", "Other", "Remaining"]
         dd = d.copy()
         dd[category_col] = dd[category_col].astype(str)
         dd["_cat"] = pd.Categorical(dd[category_col], categories=order, ordered=True)
         dd = dd.sort_values("_cat")
-        parts = [f"{row[category_col]}: {row['pct']:.0f}%" for _, row in dd.iterrows()]
+        parts = [f"{row[category_col]}: {row['pct']:.0f}%" for _, row in dd.iterrows() if str(row.get(category_col)) != "Remaining"]
         if parts:
             pay_caption = "Pay (%) — " + " • ".join(parts)
     except Exception:
@@ -1785,7 +1785,12 @@ def _animated_donut_chart(
         frame = base_df.copy()
         frame[value_col] = pd.to_numeric(frame[value_col], errors="coerce") * t
 
-        chart, pay_caption = _build_donut_chart_layers(frame, category_col, value_col, title, value_format=value_format)
+        # Add a "Remaining" slice so the ring visibly fills up.
+        remaining_val = max(0.0, tot * (1.0 - t))
+        rem = pd.DataFrame({category_col: ["Remaining"], value_col: [remaining_val]})
+        frame2 = pd.concat([frame[[category_col, value_col]], rem], ignore_index=True)
+
+        chart, pay_caption = _build_donut_chart_layers(frame2, category_col, value_col, title, value_format=value_format)
         if chart is not None:
             ph.altair_chart(chart, use_container_width=True)
         if pay_caption:
@@ -1947,7 +1952,7 @@ for i, kpi in enumerate(kpis[:ncols]):
             value_col="value",
             title=f"Elektrik üretimi dağılımı ({kpi.get('donut_year')}) — {_energy_unit_label()}",
             value_format=_energy_value_format(),
-            anim_key=f"{kpi.get('scenario')}::{kpi.get('donut_year')}::{_energy_unit_label()}",
+            anim_key=f"{kpi.get('scenario')}::{kpi.get('donut_year')}::{_energy_unit_label()}::v2",
         )
 
 if len(kpis) > ncols:
