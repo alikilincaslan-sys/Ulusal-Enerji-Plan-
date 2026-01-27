@@ -1,7 +1,6 @@
 # app.py
 import re
 from pathlib import Path
-import time
 
 import numpy as np
 import pandas as pd
@@ -1638,37 +1637,35 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 # Donut charts (KPI mini-pies)
 # -----------------------------
 
-def _build_donut_chart_layers(
-    df: pd.DataFrame,
-    category_col: str,
-    value_col: str,
-    title: str,
-    value_format: str = ",.0f",
-):
-    """Return (chart, pay_caption_text) for the KPI donut.
+def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str, value_format: str = ",.0f"):
+    """KPI donut (uyumlu/sabit).
 
-    Kept intentionally conservative for Altair/Streamlit compatibility.
+    Not: Bazı Streamlit/Altair sürümlerinde padAngle/cornerRadius/radius gibi
+    gelişmiş özellikler chart'ı boş gösterebiliyor. Bu sürüm en uyumlu şekilde:
+    - 4 kategori (Fossil fuels / Renewables / Nuclear / Other)
+    - Sabit renkler + sabit legend sırası
+    - Dilime tıklayınca büyür
     """
     if df is None or df.empty:
-        return None, None
+        st.caption(f"{title}: veri yok")
+        return
 
     d = df.copy()
     d[category_col] = d[category_col].astype(str)
     d[value_col] = pd.to_numeric(d[value_col], errors="coerce")
     d = d.dropna(subset=[category_col, value_col])
+    d = d[d[value_col] != 0]
     if d.empty:
-        return None, None
+        st.caption(f"{title}: veri yok")
+        return
 
     total = float(d[value_col].sum())
     if not np.isfinite(total) or total == 0:
-        return None, None
+        st.caption(f"{title}: veri yok")
+        return
 
-    # Ensure pct is available for tooltip/caption (stable, not used for drawing)
-    if "pct" not in d.columns:
-        d["pct"] = (pd.to_numeric(d[value_col], errors="coerce") / total) * 100.0
-
-    DONUT_DOMAIN = ["Fossil fuels", "Renewables", "Nuclear", "Other", "Remaining"]
-    DONUT_RANGE = ["#F39C12", "#2ECC71", "#9B59B6", "#95A5A6", "#2C3E50"]
+    DONUT_DOMAIN = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
+    DONUT_RANGE = ["#F39C12", "#2ECC71", "#9B59B6", "#95A5A6"]
 
     sel = alt.selection_point(fields=[category_col], on="click", empty="none")
 
@@ -1701,109 +1698,23 @@ def _build_donut_chart_layers(
     arcs = base.mark_arc(innerRadius=62, outerRadius=98)
     arcs_hi = base.transform_filter(sel).mark_arc(innerRadius=60, outerRadius=112)
 
-    # Compact pay caption (avoid mark_text overlays which can blank charts on some envs)
-    pay_caption = None
-    try:
-        order = ["Fossil fuels", "Renewables", "Nuclear", "Other", "Remaining"]
+    st.caption(title)
+    st.altair_chart((arcs + arcs_hi).properties(height=260), use_container_width=True)
+
+    # NOTE: Bazı Streamlit/Altair sürümlerinde donut'un üzerine yazı (mark_text + radius)
+    # chart'ı tamamen boş gösterebiliyor. Bu yüzden yüzdeleri "donut üstüne" değil,
+    # grafiğin hemen altında kompakt şekilde veriyoruz (bozulma riski yok).
+    if "pct" in d.columns:
+        order = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
         dd = d.copy()
         dd[category_col] = dd[category_col].astype(str)
         dd["_cat"] = pd.Categorical(dd[category_col], categories=order, ordered=True)
         dd = dd.sort_values("_cat")
-        parts = [f"{row[category_col]}: {row['pct']:.0f}%" for _, row in dd.iterrows() if str(row.get(category_col)) != "Remaining"]
+        parts = [f"{row[category_col]}: {row['pct']:.0f}%" for _, row in dd.iterrows()]
         if parts:
-            pay_caption = "Pay (%) — " + " • ".join(parts)
-    except Exception:
-        pay_caption = None
-
-    return (arcs + arcs_hi).properties(height=260), pay_caption
+            st.caption("Pay (%) — " + " • ".join(parts))
 
 
-def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str, value_format: str = ",.0f"):
-    """KPI donut (uyumlu/sabit)."""
-    chart, pay_caption = _build_donut_chart_layers(df, category_col, value_col, title, value_format=value_format)
-    if chart is None:
-        st.caption(f"{title}: veri yok")
-        return
-
-    st.caption(title)
-    st.altair_chart(chart, use_container_width=True)
-    if pay_caption:
-        st.caption(pay_caption)
-
-
-def _animated_donut_chart(
-    df: pd.DataFrame,
-    category_col: str,
-    value_col: str,
-    title: str,
-    value_format: str = ",.0f",
-    *,
-    anim_key: str,
-    steps: int = 12,
-    total_ms: int = 520,
-):
-    """Animate KPI donut by 'growing' values from 0 to actual.
-
-    Runs once per anim_key (stored in session_state) to avoid re-playing on every rerun.
-    """
-    done_key = f"_donut_anim_done::{anim_key}"
-    if st.session_state.get(done_key, False):
-        _donut_chart(df, category_col, value_col, title, value_format=value_format)
-        return
-
-    if df is None or df.empty:
-        _donut_chart(df, category_col, value_col, title, value_format=value_format)
-        st.session_state[done_key] = True
-        return
-
-    base_df = df.copy()
-    base_df[category_col] = base_df[category_col].astype(str)
-    base_df[value_col] = pd.to_numeric(base_df[value_col], errors="coerce")
-    base_df = base_df.dropna(subset=[category_col, value_col])
-    if base_df.empty:
-        _donut_chart(df, category_col, value_col, title, value_format=value_format)
-        st.session_state[done_key] = True
-        return
-
-    tot = float(base_df[value_col].sum())
-    if (not np.isfinite(tot)) or tot == 0:
-        _donut_chart(df, category_col, value_col, title, value_format=value_format)
-        st.session_state[done_key] = True
-        return
-
-    base_df["pct"] = (pd.to_numeric(base_df[value_col], errors="coerce") / tot) * 100.0
-
-    st.caption(title)
-    ph = st.empty()
-    pay_ph = st.empty()
-
-    steps = int(max(4, min(30, steps)))
-    per_sleep = max(0.0, (float(total_ms) / 1000.0) / float(steps))
-
-    for i in range(1, steps + 1):
-        t = float(i) / float(steps)
-        frame = base_df.copy()
-        frame[value_col] = pd.to_numeric(frame[value_col], errors="coerce") * t
-
-        # Add a "Remaining" slice so the ring visibly fills up.
-        remaining_val = max(0.0, tot * (1.0 - t))
-        rem = pd.DataFrame({category_col: ["Remaining"], value_col: [remaining_val]})
-        frame2 = pd.concat([frame[[category_col, value_col]], rem], ignore_index=True)
-
-        chart, pay_caption = _build_donut_chart_layers(frame2, category_col, value_col, title, value_format=value_format)
-        if chart is not None:
-            ph.altair_chart(chart, use_container_width=True)
-        if pay_caption:
-            pay_ph.caption(pay_caption)
-
-        time.sleep(per_sleep)
-
-    st.session_state[done_key] = True
-
-
-# -----------------------------
-# KPI row (per scenario)
-# -----------------------------
 # -----------------------------
 # KPI row (per scenario)
 # -----------------------------
@@ -1946,13 +1857,12 @@ for i, kpi in enumerate(kpis[:ncols]):
         st.metric("Elektrik Kurulu Gücü (GW)", f"{kpi['cap_total']:,.3f}" if np.isfinite(kpi["cap_total"]) else "—")
 
         # Mini dağılım grafiği (donut) — dilime tıklayınca büyür
-        _animated_donut_chart(
+        _donut_chart(
             kpi.get("pie_gen"),
             category_col="category",
             value_col="value",
             title=f"Elektrik üretimi dağılımı ({kpi.get('donut_year')}) — {_energy_unit_label()}",
             value_format=_energy_value_format(),
-            anim_key=f"{kpi.get('scenario')}::{kpi.get('donut_year')}::{_energy_unit_label()}::v2",
         )
 
 if len(kpis) > ncols:
@@ -2482,3 +2392,71 @@ if "Sera Gazı Emisyonları" in selected_panels:
 
 with st.expander("Çalıştırma"):
     st.code("pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py", language="bash")
+
+
+
+# ============================================================
+# Plotly Bar Chart Race – Elektrik Üretimi (Kaynaklara Göre)
+# Canva-benzeri zamanla akan grafik
+# ============================================================
+
+import plotly.express as px
+
+def _prepare_genmix_for_plotly(df, scenario):
+    d = df.copy()
+    d = d[d["scenario"] == scenario]
+    d = d.rename(columns={"group": "source"})
+    d["year"] = pd.to_numeric(d["year"], errors="coerce").astype(int)
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d = d.dropna(subset=["year", "source", "value"])
+    return d
+
+def _plot_generation_bar_race(df, unit_label):
+    max_val = df["value"].max()
+
+    fig = px.bar(
+        df,
+        x="value",
+        y="source",
+        orientation="h",
+        animation_frame="year",
+        animation_group="source",
+        range_x=[0, max_val * 1.1],
+        color="source",
+        labels={
+            "value": unit_label,
+            "source": "Kaynak",
+            "year": "Yıl",
+        },
+    )
+
+    fig.update_layout(
+        height=520,
+        showlegend=False,
+        title="Elektrik Üretimi – Kaynaklara Göre Dağılım (Zamana Göre)",
+        transition={"duration": 600, "easing": "cubic-in-out"},
+    )
+
+    fig.update_traces(
+        texttemplate="%{x:,.0f}",
+        textposition="outside",
+        cliponaxis=False,
+    )
+
+    return fig
+
+# -----------------------------
+# Plotly panel (render)
+# -----------------------------
+st.divider()
+st.subheader("🎞️ Elektrik Üretimi – Kaynaklara Göre Zaman İçinde Değişim (Canva tarzı)")
+
+for scn in selected_scenarios:
+    st.markdown(f"**Senaryo: {scn}**")
+    d_plotly = _prepare_genmix_for_plotly(df_genmix, scn)
+
+    if d_plotly.empty:
+        st.warning("Bu senaryo için veri bulunamadı.")
+    else:
+        fig = _plot_generation_bar_race(d_plotly, _energy_unit_label())
+        st.plotly_chart(fig, use_container_width=True)
