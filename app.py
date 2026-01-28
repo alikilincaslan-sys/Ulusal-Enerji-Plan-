@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import altair as alt
+from io import BytesIO
 
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 
@@ -1461,6 +1462,115 @@ df_final = _concat("final_energy_source")
 df_electrification = _concat("electrification_ratio")
 df_storage_ptx = _concat("storage_ptx")
 
+
+
+# -----------------------------
+# Export: chart data to Excel
+# -----------------------------
+def _normalize_for_export(df: pd.DataFrame) -> pd.DataFrame:
+    """Standardize column order/types for export."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    # common cleanups
+    if "year" in out.columns:
+        out["year"] = pd.to_numeric(out["year"], errors="coerce")
+        out = out.dropna(subset=["year"])
+        out["year"] = out["year"].astype(int)
+    for c in ["value"]:
+        if c in out.columns:
+            out[c] = pd.to_numeric(out[c], errors="coerce")
+    return out
+
+def _export_excel_bytes(frames: dict[str, pd.DataFrame]) -> bytes:
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        for sheet, df in frames.items():
+            if df is None or df.empty:
+                continue
+            safe = re.sub(r"[^A-Za-z0-9_\- ]+", "", str(sheet))[:31] or "Sheet"
+            df.to_excel(writer, sheet_name=safe, index=False)
+    bio.seek(0)
+    return bio.read()
+
+def _build_export_workbook() -> bytes:
+    """Create a single Excel containing the *displayed* chart datasets."""
+    frames: dict[str, pd.DataFrame] = {}
+
+    # Parameters / metadata
+    frames["params"] = pd.DataFrame(
+        {
+            "key": [
+                "start_year",
+                "end_year",
+                "energy_unit",
+                "fill_years_enabled",
+                "stacked_value_mode",
+                "scenarios",
+            ],
+            "value": [
+                int(start_year),
+                int(MAX_YEAR),
+                str(energy_unit),
+                bool(fill_years_enabled),
+                str(stacked_value_mode),
+                ", ".join(list(selected_scenarios)),
+            ],
+        }
+    )
+
+    # Helpers for unit conversion (export what user is seeing on screen)
+    def _maybe_energy(df: pd.DataFrame) -> pd.DataFrame:
+        return _convert_energy_df(df, value_col="value")
+
+    # Time series
+    frames["population"] = _normalize_for_export(df_pop)
+    frames["gdp"] = _normalize_for_export(df_gdp)
+    frames["carbon_price"] = _normalize_for_export(df_cp)
+    frames["co2"] = _normalize_for_export(df_co2)
+
+    # Electricity
+    frames["total_supply"] = _normalize_for_export(_maybe_energy(df_supply))
+    frames["gen_mix"] = _normalize_for_export(_maybe_energy(df_genmix))
+    frames["electricity_by_sector"] = _normalize_for_export(_maybe_energy(df_sector_el))
+
+    # Capacity & storage / ptx (GW; no energy conversion)
+    frames["capacity_mix"] = _normalize_for_export(df_capmix)
+    frames["storage_ptx"] = _normalize_for_export(df_storage_ptx)
+
+    # Energy
+    frames["primary_energy_by_source"] = _normalize_for_export(_maybe_energy(df_primary))
+    frames["final_energy_by_source"] = _normalize_for_export(_maybe_energy(df_final))
+    frames["electrification_ratio"] = _normalize_for_export(df_electrification)
+
+    # Emissions (some are stacked)
+    frames["co2_nz_stack"] = _normalize_for_export(df_co2_nz_stack)
+
+    # Optional bundles (if present later in the script)
+    try:
+        frames["ye_shares"] = _normalize_for_export(_concat("ye_both"))
+    except Exception:
+        pass
+    try:
+        frames["per_capita_electricity"] = _normalize_for_export(_concat("per_capita_el"))
+    except Exception:
+        pass
+
+    # Drop empties
+    frames = {k: v for k, v in frames.items() if v is not None and not v.empty}
+    return _export_excel_bytes(frames)
+
+# Download UI
+with st.expander("📥 Grafik verilerini indir", expanded=False):
+    st.caption("Seçili senaryolar ve yıl aralığına göre ekranda gördüğünüz veriler tek bir Excel dosyası olarak indirilir.")
+    xlsx_bytes = _build_export_workbook()
+    st.download_button(
+        label="Excel indir (.xlsx)",
+        data=xlsx_bytes,
+        file_name=f"dashboard_chart_data_{int(start_year)}-{int(MAX_YEAR)}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
 
 # -----------------------------
 # Line charts (single axis, scenario colors)
