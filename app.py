@@ -10,15 +10,10 @@ import altair as alt
 import io
 from typing import Optional, Dict, List
 
-# Optional deps for PPTX export (Streamlit Cloud'da requirements ile kurulmalı)
-PPTX_AVAILABLE = True
-try:
-    import matplotlib.pyplot as plt
-    from pptx import Presentation
-    from pptx.util import Inches, Pt
-except Exception:
-    PPTX_AVAILABLE = False
+import matplotlib.pyplot as plt
 
+from pptx import Presentation
+from pptx.util import Inches, Pt
 
 
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
@@ -1449,41 +1444,6 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     return bundle
 
 
-
-# -----------------------------
-# Derived series
-# -----------------------------
-def _compute_co2_share(df_co2: pd.DataFrame, bundles: list) -> pd.DataFrame:
-    # df_co2: "CO2 Emisyonları (ktn CO2)"  (electricity&heat proxy)
-    # energy total emissions already computed inside compute_scenario_bundle as energy_em_total_co2e; stored in bundle["energy_em_total_co2e"]? not in bundle currently.
-    # However we do have co2_nz_stack which includes total excl lulucf etc. We'll best-effort use bundle["energy_em_total_co2e"] if exists; else return empty.
-    recs = []
-    for b in bundles:
-        scn = b.get("scenario", None) or (b.get("pop")["scenario"].iloc[0] if b.get("pop") is not None and not b.get("pop").empty else None)
-        energy_total = b.get("energy_em_total_co2e", None)
-        if energy_total is None or energy_total.empty:
-            continue
-        et = energy_total.copy()
-        et["year"] = pd.to_numeric(et["year"], errors="coerce")
-        et["value"] = pd.to_numeric(et["value"], errors="coerce")
-        et = et.dropna(subset=["year","value"])
-        et["year"]=et["year"].astype(int)
-
-        c = df_co2[df_co2["scenario"]==scn].copy()
-        c["year"]=pd.to_numeric(c["year"], errors="coerce")
-        c["value"]=pd.to_numeric(c["value"], errors="coerce")
-        c=c.dropna(subset=["year","value"])
-        c["year"]=c["year"].astype(int)
-
-        merged = pd.merge(c[["year","value"]].rename(columns={"value":"co2_elec"}),
-                          et[["year","value"]].rename(columns={"value":"co2_energy"}),
-                          on="year", how="inner")
-        merged["share"] = np.where(merged["co2_energy"]!=0, (merged["co2_elec"]/merged["co2_energy"])*100.0, np.nan)
-        for _, r in merged.iterrows():
-            recs.append({"year": int(r["year"]), "value": float(r["share"]), "scenario": scn, "series": "CO2 Pay (%)"})
-    return pd.DataFrame(recs)
-
-
 bundles = []
 for scn in selected_scenarios:
     f = scenario_to_file[scn]
@@ -1691,7 +1651,22 @@ def _build_ppt_bytes(
     else:
         prs = Presentation()
 
-    # Title slide
+    
+    # --- Ensure a standard 'category' column for stacked charts (dashboard uses 'group') ---
+    def _ensure_category(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame(columns=["year", "category", "value", "scenario"])
+        out = df.copy()
+        if "category" not in out.columns:
+            for cand in ["group", "sector", "item", "fuel", "tech", "technology", "source"]:
+                if cand in out.columns:
+                    out = out.rename(columns={cand: "category"})
+                    break
+        # as a last resort, create a dummy category to avoid KeyError
+        if "category" not in out.columns:
+            out["category"] = "Toplam"
+        return out
+# Title slide
     try:
         layout0 = prs.slide_layouts[0]
     except Exception:
@@ -1736,19 +1711,19 @@ def _build_ppt_bytes(
         pass
 
     # Slide 4: Primary energy
-    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(df_primary, "Birincil Enerji Tüketimi – Kaynaklara Göre", "GWh", category_col="category", percent=False)))
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(_ensure_category(df_primary), "Birincil Enerji Tüketimi – Kaynaklara Göre", "GWh", category_col="category", percent=False)))
 
     # Slide 5: Final energy
-    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(df_final, "Nihai Enerji Tüketimi – Kaynaklara Göre", "GWh", category_col="category", percent=False)))
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(_ensure_category(df_final), "Nihai Enerji Tüketimi – Kaynaklara Göre", "GWh", category_col="category", percent=False)))
 
     # Slide 6: Electricity balance (use df_supply if available as df_genmix? here we use genmix absolute as proxy)
-    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(df_genmix, "Elektrik Üretimi – Kaynaklara Göre (Mutlak)", "GWh", category_col="category", percent=False)))
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(_ensure_category(df_genmix), "Elektrik Üretimi – Kaynaklara Göre (Mutlak)", "GWh", category_col="category", percent=False)))
 
     # Slide 7: Installed capacity
-    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(df_capmix, "Elektrik Kurulu Gücü – Kaynaklara Göre (Mutlak)", "GW", category_col="category", percent=False)))
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(_ensure_category(df_capmix), "Elektrik Kurulu Gücü – Kaynaklara Göre (Mutlak)", "GW", category_col="category", percent=False)))
 
     # Slide 8: Electricity generation % share
-    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(df_genmix, "Elektrik Üretimi – Kaynaklara Göre (Pay)", "Pay (%)", category_col="category", percent=True)))
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(_ensure_category(df_genmix), "Elektrik Üretimi – Kaynaklara Göre (Pay)", "Pay (%)", category_col="category", percent=True)))
 
     # Slide 9: CO2 emissions from electricity & heat (we only have CO2 total series here)
     add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_lines(df_co2, "Elektrik ve Isı Üretiminden Kaynaklanan CO2 Emisyonları", "ktn CO2")))
@@ -1767,7 +1742,35 @@ def _build_ppt_bytes(
     out.seek(0)
     return out.read()
 
+def _compute_co2_share(df_co2: pd.DataFrame, bundles: list) -> pd.DataFrame:
+    # df_co2: "CO2 Emisyonları (ktn CO2)"  (electricity&heat proxy)
+    # energy total emissions already computed inside compute_scenario_bundle as energy_em_total_co2e; stored in bundle["energy_em_total_co2e"]? not in bundle currently.
+    # However we do have co2_nz_stack which includes total excl lulucf etc. We'll best-effort use bundle["energy_em_total_co2e"] if exists; else return empty.
+    recs = []
+    for b in bundles:
+        scn = b.get("scenario", None) or (b.get("pop")["scenario"].iloc[0] if b.get("pop") is not None and not b.get("pop").empty else None)
+        energy_total = b.get("energy_em_total_co2e", None)
+        if energy_total is None or energy_total.empty:
+            continue
+        et = energy_total.copy()
+        et["year"] = pd.to_numeric(et["year"], errors="coerce")
+        et["value"] = pd.to_numeric(et["value"], errors="coerce")
+        et = et.dropna(subset=["year","value"])
+        et["year"]=et["year"].astype(int)
 
+        c = df_co2[df_co2["scenario"]==scn].copy()
+        c["year"]=pd.to_numeric(c["year"], errors="coerce")
+        c["value"]=pd.to_numeric(c["value"], errors="coerce")
+        c=c.dropna(subset=["year","value"])
+        c["year"]=c["year"].astype(int)
+
+        merged = pd.merge(c[["year","value"]].rename(columns={"value":"co2_elec"}),
+                          et[["year","value"]].rename(columns={"value":"co2_energy"}),
+                          on="year", how="inner")
+        merged["share"] = np.where(merged["co2_energy"]!=0, (merged["co2_elec"]/merged["co2_energy"])*100.0, np.nan)
+        for _, r in merged.iterrows():
+            recs.append({"year": int(r["year"]), "value": float(r["share"]), "scenario": scn, "series": "CO2 Pay (%)"})
+    return pd.DataFrame(recs)
 
 
 
@@ -1778,26 +1781,13 @@ def _build_ppt_bytes(
 with st.sidebar:
     st.divider()
     st.markdown("### 📑 Sunum (PPTX)")
-    if not PPTX_AVAILABLE:
-        st.warning("PPTX dışa aktarımı için **python-pptx** ve **matplotlib** gereklidir. requirements.txt içine ekleyin.")
-        st.stop()
-
-    template_up = st.file_uploader(
-        "Kurumsal şablon (opsiyonel)",
-        type=["pptx", "PPTX"],
-        help="Yüklemezseniz, uygulama klasöründeki 'Kurumsal_Sunum (3).PPTX' varsa onu kullanır.",
-    )
+        # Kurumsal şablon entegrasyonu şimdilik kapalı (düz sunum)
+    template_up = None
     if "ppt_bytes" not in st.session_state:
         st.session_state["ppt_bytes"] = None
 
     if st.button("Sunumu oluştur", use_container_width=True):
-        tpl_bytes = None
-        if template_up is not None:
-            try:
-                tpl_bytes = template_up.getvalue()
-            except Exception:
                 tpl_bytes = None
-        if tpl_bytes is None:
             tpl_bytes = _default_template_bytes()
 
         try:
@@ -1820,6 +1810,7 @@ with st.sidebar:
         except Exception as e:
             st.session_state["ppt_bytes"] = None
             st.error(f"Sunum oluşturulamadı: {e}")
+            st.caption("İpucu: PPT üretiminde bazı tabloların beklenen sütunları (örn. category/group) eksikse bu hata görülebilir.")
 
     if st.session_state.get("ppt_bytes"):
         st.download_button(
@@ -2730,7 +2721,6 @@ if "Sera Gazı Emisyonları" in selected_panels:
     st.markdown("## Sera Gazı Emisyonları")
 
     _line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
-    _line_chart(df_co2_share, "Elektrik ve Isı Üretimi CO2 payı (Enerji Emisyonları içinde)", "Pay (%)", value_format=",.1f")
     _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
 
     st.divider()
