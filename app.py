@@ -1224,7 +1224,7 @@ import datetime as _dt
 
 from typing import Optional
 
-    def _default_template_bytes() -> Optional[bytes]:
+def _default_template_bytes() -> Optional[bytes]:
     """Repo içinde şablon varsa otomatik kullan."""
     for p in ["Kurumsal_Sunum (3).PPTX", "Kurumsal_Sunum.pptx", "template.pptx"]:
         try:
