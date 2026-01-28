@@ -7,6 +7,9 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
+import io
+from pptx import Presentation
+
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 
 # -----------------------------
@@ -354,6 +357,48 @@ def _convert_energy_df(df: pd.DataFrame, value_col: str = "value") -> pd.DataFra
     return out
 
 
+
+# -----------------------------
+# PPTX export (Kurumsal şablon ile)
+# -----------------------------
+def _replace_text_in_ppt(prs: Presentation, replacements: dict[str, str]) -> None:
+    """Sunum içindeki tüm text-frame'lerde geçen anahtarları değiştirir."""
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            tf = shape.text_frame
+            for p in tf.paragraphs:
+                for run in p.runs:
+                    if not run.text:
+                        continue
+                    t = run.text
+                    for k, v in replacements.items():
+                        if k in t:
+                            t = t.replace(k, v)
+                    run.text = t
+
+
+def build_pptx_bytes_from_template(template_bytes: bytes, title: str, subtitle: str, konu: str = "", alt_konu: str = "") -> bytes:
+    """Kurumsal template PPTX'i baz alarak hızlı bir sunum üretir.
+    Not: Şimdilik sadece metin alanlarını güncelliyoruz (grafikler sonraki adımda).
+    """
+    prs = Presentation(io.BytesIO(template_bytes))
+
+    # Template üzerindeki yer tutucuları yakala-değiştir.
+    # (Template farklı ise anahtarlar yine de geçmiyorsa dokunmaz.)
+    repl = {
+        "SUNUMUN ADI": title,
+        "SUNUM ADI": title,
+        "KONU BAŞLIĞI": konu or title,
+        "ALT  KONU BAŞLIĞI": alt_konu or subtitle,
+    }
+    _replace_text_in_ppt(prs, repl)
+
+    out = io.BytesIO()
+    prs.save(out)
+    out.seek(0)
+    return out.read()
 # -----------------------------
 # Reading: Power_Generation
 # -----------------------------
@@ -1285,6 +1330,66 @@ else:
     diff_scn_a = None
     diff_scn_b = None
 
+
+
+# -----------------------------
+# Sunum (PPTX) üret & indir
+# -----------------------------
+with st.sidebar:
+    st.divider()
+    with st.expander("📥 Sunum (PPTX) - Oluştur/İndir", expanded=False):
+        st.caption("Kurumsal şablonla sunum dosyası üretip indirebilirsiniz.")
+        ppt_template_file = st.file_uploader(
+            "Kurumsal PPTX template (opsiyonel)",
+            type=["pptx"],
+            help="Yüklemezseniz, repodaki 'Kurumsal_Sunum (3).PPTX' dosyası aranır.",
+        )
+
+        # Sunum metinleri (şimdilik sabit; sonraki adımda slayt bazlı detayları da buraya bağlarız)
+        ppt_title = st.text_input("Başlık", value="Türkiye Ulusal Enerji Planının Güncellenmesi 2025-2050")
+        ppt_subtitle = st.text_input("Alt başlık", value="Enerji İşleri Genel Müdürlüğü")
+
+        create_ppt = st.button("Sunumu Oluştur", use_container_width=True)
+
+        if create_ppt:
+            try:
+                if ppt_template_file is not None:
+                    tpl_bytes = ppt_template_file.read()
+                else:
+                    # Repo içinden template dene
+                    cand = [
+                        Path("Kurumsal_Sunum (3).PPTX"),
+                        Path("Kurumsal_Sunum.pptx"),
+                        Path("Kurumsal_Sunum (3).pptx"),
+                    ]
+                    tpl_path = next((c for c in cand if c.exists()), None)
+                    if tpl_path is None:
+                        st.error("Template bulunamadı. Lütfen kurumsal PPTX şablonunu yükleyin.")
+                        tpl_bytes = None
+                    else:
+                        tpl_bytes = tpl_path.read_bytes()
+
+                if tpl_bytes:
+                    st.session_state["pptx_bytes"] = build_pptx_bytes_from_template(
+                        tpl_bytes,
+                        title=ppt_title,
+                        subtitle=ppt_subtitle,
+                        konu=ppt_title,
+                        alt_konu=ppt_subtitle,
+                    )
+                    st.success("Sunum hazır. Aşağıdan indirebilirsiniz.")
+            except Exception as e:
+                st.error(f"Sunum üretim hatası: {e}")
+
+        ppt_bytes = st.session_state.get("pptx_bytes", None)
+        if ppt_bytes:
+            st.download_button(
+                "⬇️ PPTX'i indir",
+                data=ppt_bytes,
+                file_name="Turkiye_Ulusal_Enerji_Plani_Guncelleme_2025_2050.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                use_container_width=True,
+            )
 
 def _ncols_for_selected(n: int) -> int:
     if n <= 1:
