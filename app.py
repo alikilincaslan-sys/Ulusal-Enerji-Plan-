@@ -10,8 +10,6 @@ import altair as alt
 import io
 from typing import Optional, Dict, List
 
-import matplotlib.pyplot as plt
-
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
