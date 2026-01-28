@@ -7,15 +7,6 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
-import io
-from typing import Optional, Dict, List
-
-import matplotlib.pyplot as plt
-
-from pptx import Presentation
-from pptx.util import Inches, Pt
-
-
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 
 # -----------------------------
@@ -1439,7 +1430,6 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "ye_both": _add_scn_filled(ye_both),
         "per_capita_el": _add_scn_filled(per_capita),
         "storage_ptx": _add_scn_filled(storage_ptx),
-        "energy_em_total_co2e": _add_scn_filled(energy_em_total_co2e),
     }
     return bundle
 
@@ -1470,54 +1460,6 @@ df_sector_el = _concat("electricity_by_sector")
 df_final = _concat("final_energy_source")
 df_electrification = _concat("electrification_ratio")
 df_storage_ptx = _concat("storage_ptx")
-df_percap = _concat("per_capita_el")
-
-
-
-# -----------------------------
-# PPTX build + download UI
-# -----------------------------
-with st.sidebar:
-    st.divider()
-    st.markdown("### 📑 Sunum (PPTX)")
-
-    if "ppt_bytes" not in st.session_state:
-        st.session_state["ppt_bytes"] = None
-
-    if st.button("Sunumu oluştur", use_container_width=True):
-        try:
-            # Şimdilik kurumsal template kapalı
-            tpl_bytes = None
-
-            st.session_state["ppt_bytes"] = _build_ppt_bytes(
-                template_bytes=tpl_bytes,
-                title_text="Türkiye Ulusal Enerji Planının Güncellenmesi 2025-2050",
-                subtitle_text="Enerji İşleri Genel Müdürlüğü",
-                df_pop=df_pop,
-                df_gdp=df_gdp,
-                df_primary=df_primary,
-                df_final=df_final,
-                df_capmix=df_capmix,
-                df_genmix=df_genmix,
-                df_co2=df_co2,
-                df_percap=df_percap,
-                df_electrification=df_electrification,
-                df_co2_share=df_co2_share,
-            )
-            st.success("Sunum oluşturuldu.")
-        except Exception as e:
-            st.session_state["ppt_bytes"] = None
-            st.error(f"Sunum oluşturulamadı: {e}")
-
-    ppt_bytes = st.session_state.get("ppt_bytes")
-    if ppt_bytes:
-        st.download_button(
-            "📥 Sunumu indir",
-            data=ppt_bytes,
-            file_name="Turkiye_Ulusal_Enerji_Plani_Guncelleme_2025_2050.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            use_container_width=True,
-        )
 
 
 # -----------------------------
