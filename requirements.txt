@@ -5,4 +5,5 @@ altair
 numpy
 reportlab
 plotly
-
+python-pptx
+Pillow
