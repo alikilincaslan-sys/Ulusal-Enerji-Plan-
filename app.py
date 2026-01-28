@@ -7,6 +7,15 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
+import io
+from typing import Optional, Dict, List
+
+import matplotlib.pyplot as plt
+
+from pptx import Presentation
+from pptx.util import Inches, Pt
+
+
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 
 # -----------------------------
@@ -1214,71 +1223,6 @@ with st.sidebar:
 
 
 
-
-# -----------------------------
-# PPTX Sunum oluşturma + indirme (Kurumsal şablon ile)
-# -----------------------------
-import io
-import shutil
-import datetime as _dt
-
-from typing import Optional
-
-def _default_template_bytes() -> Optional[bytes]:
-    """Repo içinde şablon varsa otomatik kullan."""
-    for p in ["Kurumsal_Sunum (3).PPTX", "Kurumsal_Sunum.pptx", "template.pptx"]:
-        try:
-            if Path(p).exists():
-                return Path(p).read_bytes()
-        except Exception:
-            pass
-    return None
-
-def _build_pptx_from_template(template_bytes: bytes, out_path: str) -> str:
-    """Şimdilik şablonu kopyalayıp indirilebilir dosya üretir.
-    (Grafikleri otomatik gömme adımını daha sonra aynı fonksiyon içinde genişleteceğiz.)
-    """
-    tmp = io.BytesIO(template_bytes)
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(out_path).write_bytes(tmp.getvalue())
-    return out_path
-
-with st.sidebar:
-    st.divider()
-    st.header("Sunum (PPTX)")
-
-    # 1) Şablon: önce repo içinden otomatik bul, yoksa yüklet
-    _tpl_bytes = _default_template_bytes()
-    if _tpl_bytes is None:
-        tpl_upload = st.file_uploader("Kurumsal şablon (PPTX)", type=["pptx"], key="ppt_tpl_upload")
-        if tpl_upload is not None:
-            _tpl_bytes = tpl_upload.read()
-
-    # 2) Üretim butonu
-    can_build = (_tpl_bytes is not None) and bool(uploaded_files)
-    if st.button("Sunumu oluştur", key="ppt_build_btn", disabled=not can_build):
-        out_name = f"Turkiye_Ulusal_Enerji_Plani_Guncelleme_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.pptx"
-        out_path = str(Path("outputs") / out_name)
-        try:
-            _build_pptx_from_template(_tpl_bytes, out_path)
-            st.session_state["pptx_out_path"] = out_path
-            st.success("Sunum oluşturuldu. Aşağıdan indirebilirsiniz.")
-        except Exception as e:
-            st.error(f"Sunum üretilemedi: {e}")
-
-    # 3) İndirme butonu (her zaman görünür; varsa aktif)
-    out_path = st.session_state.get("pptx_out_path")
-    if out_path and Path(out_path).exists():
-        data = Path(out_path).read_bytes()
-        st.download_button(
-            "Sunumu indir",
-            data=data,
-            file_name=Path(out_path).name,
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            key="ppt_download_btn",
-        )
-    else:
-        st.caption("Sunumu oluşturduktan sonra burada indirme butonu çıkacak.")
 if not uploaded_files:
     st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
     st.stop()
@@ -1495,6 +1439,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "ye_both": _add_scn_filled(ye_both),
         "per_capita_el": _add_scn_filled(per_capita),
         "storage_ptx": _add_scn_filled(storage_ptx),
+        "energy_em_total_co2e": _add_scn_filled(energy_em_total_co2e),
     }
     return bundle
 
@@ -1525,6 +1470,351 @@ df_sector_el = _concat("electricity_by_sector")
 df_final = _concat("final_energy_source")
 df_electrification = _concat("electrification_ratio")
 df_storage_ptx = _concat("storage_ptx")
+df_percap = _concat("per_capita_el")
+df_co2_share = _compute_co2_share(df_co2, bundles)
+
+# -----------------------------
+# PPTX Export (Kurumsal Template)
+# -----------------------------
+LEGEND_TR_MAP: Dict[str, str] = {
+    # Fuels / tech (common)
+    "Lignite": "Yerli Kömür",
+    "Coal": "Kömür",
+    "Natural gas": "Doğal Gaz",
+    "Oil": "Petrol",
+    "Hydro": "Hidro",
+    "Wind (RES)": "Rüzgar",
+    "Solar (GES)": "Güneş",
+    "Nuclear": "Nükleer",
+    "Other Renewables": "Diğer YEK",
+    "Biomass": "Biyokütle",
+    "Geothermal": "Jeotermal",
+    "Other": "Diğer",
+    # Buckets (KPI donut)
+    "Fossil fuels": "Fosil Yakıtlar",
+    "Renewables": "Yenilenebilir",
+}
+
+def _tr_legend(x: str) -> str:
+    if x is None:
+        return ""
+    s = str(x).strip()
+    return LEGEND_TR_MAP.get(s, s)
+
+def _fig_to_png_bytes(fig) -> bytes:
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+def _add_title(slide, title: str, subtitle: Optional[str] = None):
+    # Best-effort: write into placeholders if they exist, else add textbox
+    try:
+        if slide.shapes.title:
+            slide.shapes.title.text = title
+            if subtitle is not None:
+                # try subtitle placeholder
+                for shp in slide.placeholders:
+                    if shp.placeholder_format.type in (2, 3):  # SUBTITLE / BODY
+                        shp.text = subtitle
+                        break
+        else:
+            raise Exception("no title placeholder")
+    except Exception:
+        left, top, width, height = Inches(0.7), Inches(0.3), Inches(12.0), Inches(0.8)
+        tx = slide.shapes.add_textbox(left, top, width, height).text_frame
+        tx.text = title
+        tx.paragraphs[0].font.size = Pt(28)
+        if subtitle:
+            p = tx.add_paragraph()
+            p.text = subtitle
+            p.font.size = Pt(16)
+
+def _plot_lines(df: pd.DataFrame, title: str, ylab: str):
+    fig, ax = plt.subplots(figsize=(12.5, 5.6))
+    if df is None or df.empty:
+        ax.text(0.5, 0.5, "Veri bulunamadı.", ha="center", va="center")
+        ax.axis("off")
+        ax.set_title(title)
+        return fig
+
+    d = df.copy()
+    d["year"] = pd.to_numeric(d["year"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d = d.dropna(subset=["year", "value", "scenario"])
+    for scn, g in d.groupby("scenario"):
+        g = g.sort_values("year")
+        ax.plot(g["year"], g["value"], marker="o", linewidth=2, label=str(scn))
+    ax.set_title(title)
+    ax.set_xlabel("Yıl")
+    ax.set_ylabel(ylab)
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="best", fontsize=9)
+    return fig
+
+def _plot_stacked(df: pd.DataFrame, title: str, ylab: str, category_col: str = "category", percent: bool = False):
+    fig, ax = plt.subplots(figsize=(12.5, 5.6))
+    if df is None or df.empty:
+        ax.text(0.5, 0.5, "Veri bulunamadı.", ha="center", va="center")
+        ax.axis("off")
+        ax.set_title(title)
+        return fig
+
+    d = df.copy()
+    d["year"] = pd.to_numeric(d["year"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d = d.dropna(subset=["year", "value", "scenario", category_col])
+    d[category_col] = d[category_col].apply(_tr_legend)
+
+    # For PPT: show up to 3 scenarios as separate subplots stacked vertically if needed
+    scns = list(d["scenario"].unique())[:3]
+    if len(scns) == 1:
+        scn = scns[0]
+        dd = d[d["scenario"] == scn]
+        piv = dd.pivot_table(index="year", columns=category_col, values="value", aggfunc="sum").fillna(0.0).sort_index()
+        if percent:
+            tot = piv.sum(axis=1).replace({0: np.nan})
+            piv = piv.div(tot, axis=0) * 100.0
+        bottoms = np.zeros(len(piv))
+        for col in piv.columns:
+            ax.bar(piv.index.astype(int), piv[col].values, bottom=bottoms, label=str(col))
+            bottoms += piv[col].values
+        ax.set_title(f"{title} — {scn}")
+        ax.set_xlabel("Yıl")
+        ax.set_ylabel(ylab if not percent else "Pay (%)")
+        ax.legend(ncol=3, fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.18))
+        ax.grid(True, axis="y", alpha=0.25)
+        return fig
+
+    # multiple scenarios: small multiples (rows)
+    plt.close(fig)
+    rows = len(scns)
+    fig, axes = plt.subplots(rows, 1, figsize=(12.5, 5.6 * rows), sharex=True)
+    if rows == 1:
+        axes = [axes]
+    for ax_i, scn in zip(axes, scns):
+        dd = d[d["scenario"] == scn]
+        piv = dd.pivot_table(index="year", columns=category_col, values="value", aggfunc="sum").fillna(0.0).sort_index()
+        if percent:
+            tot = piv.sum(axis=1).replace({0: np.nan})
+            piv = piv.div(tot, axis=0) * 100.0
+        bottoms = np.zeros(len(piv))
+        for col in piv.columns:
+            ax_i.bar(piv.index.astype(int), piv[col].values, bottom=bottoms, label=str(col))
+            bottoms += piv[col].values
+        ax_i.set_title(str(scn))
+        ax_i.set_ylabel(ylab if not percent else "Pay (%)")
+        ax_i.grid(True, axis="y", alpha=0.25)
+    axes[-1].set_xlabel("Yıl")
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, ncol=4, fontsize=9, loc="lower center", bbox_to_anchor=(0.5, 0.02))
+    fig.suptitle(title, y=0.995, fontsize=16)
+    fig.tight_layout(rect=[0.0, 0.07, 1.0, 0.96])
+    return fig
+
+def _default_template_bytes() -> Optional[bytes]:
+    # Try common filenames in repo / working dir
+    candidates = [
+        "Kurumsal_Sunum (3).PPTX",
+        "Kurumsal_Sunum (3).pptx",
+        "Kurumsal_Sunum.PPTX",
+        "Kurumsal_Sunum.pptx",
+    ]
+    for c in candidates:
+        p = Path(c)
+        if p.exists():
+            try:
+                return p.read_bytes()
+            except Exception:
+                pass
+    return None
+
+def _build_ppt_bytes(
+    template_bytes: Optional[bytes],
+    title_text: str,
+    subtitle_text: str,
+    df_pop: pd.DataFrame,
+    df_gdp: pd.DataFrame,
+    df_primary: pd.DataFrame,
+    df_final: pd.DataFrame,
+    df_capmix: pd.DataFrame,
+    df_genmix: pd.DataFrame,
+    df_co2: pd.DataFrame,
+    df_percap: pd.DataFrame,
+    df_electrification: pd.DataFrame,
+    df_co2_share: pd.DataFrame,
+) -> bytes:
+    # Load template if provided, else blank
+    if template_bytes:
+        prs = Presentation(io.BytesIO(template_bytes))
+    else:
+        prs = Presentation()
+
+    # Title slide
+    try:
+        layout0 = prs.slide_layouts[0]
+    except Exception:
+        layout0 = prs.slide_layouts[0]
+    s0 = prs.slides.add_slide(layout0)
+    _add_title(s0, title_text, subtitle_text)
+
+    # Helper to add image slide
+    def add_img_slide(slide_title: str, img_bytes: bytes):
+        # Prefer blank layout (often last); fallback to 5 (Title Only) or 6 (Blank)
+        layout = None
+        for idx in [6, 5, len(prs.slide_layouts) - 1, 1, 0]:
+            try:
+                layout = prs.slide_layouts[idx]
+                break
+            except Exception:
+                continue
+        slide = prs.slides.add_slide(layout)
+        _add_title(slide, slide_title, None)
+
+        # place image
+        left, top = Inches(0.6), Inches(1.4)
+        width = Inches(12.1)
+        slide.shapes.add_picture(io.BytesIO(img_bytes), left, top, width=width)
+        return slide
+
+    # Slide 2: Nüfus
+    add_img_slide("Göstergeler", _fig_to_png_bytes(_plot_lines(df_pop, "Türkiye Nüfus Gelişimi", "Nüfus")))
+
+    # Slide 3: GDP + note (text box on slide)
+    slide = add_img_slide("Göstergeler", _fig_to_png_bytes(_plot_lines(df_gdp, "GSYH (Milyar ABD Doları, 2015 fiyatlarıyla)", "Milyar ABD Doları")))
+    # Add note box at bottom
+    try:
+        box = slide.shapes.add_textbox(Inches(0.7), Inches(6.9), Inches(12.0), Inches(0.6)).text_frame
+        box.text = "• Bu modelde GSYH için yıllık ortalama büyüme oranı %… olarak gerçekleşmiştir."
+        p = box.add_paragraph()
+        p.text = "• Tüm senaryolarda, SBB tarafından tarafımıza tebliğ edilen GSYH varsayımları esas alınmıştır."
+        for par in box.paragraphs:
+            for run in par.runs:
+                run.font.size = Pt(14)
+    except Exception:
+        pass
+
+    # Slide 4: Primary energy
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(df_primary, "Birincil Enerji Tüketimi – Kaynaklara Göre", "GWh", category_col="category", percent=False)))
+
+    # Slide 5: Final energy
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(df_final, "Nihai Enerji Tüketimi – Kaynaklara Göre", "GWh", category_col="category", percent=False)))
+
+    # Slide 6: Electricity balance (use df_supply if available as df_genmix? here we use genmix absolute as proxy)
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(df_genmix, "Elektrik Üretimi – Kaynaklara Göre (Mutlak)", "GWh", category_col="category", percent=False)))
+
+    # Slide 7: Installed capacity
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(df_capmix, "Elektrik Kurulu Gücü – Kaynaklara Göre (Mutlak)", "GW", category_col="category", percent=False)))
+
+    # Slide 8: Electricity generation % share
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_stacked(df_genmix, "Elektrik Üretimi – Kaynaklara Göre (Pay)", "Pay (%)", category_col="category", percent=True)))
+
+    # Slide 9: CO2 emissions from electricity & heat (we only have CO2 total series here)
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_lines(df_co2, "Elektrik ve Isı Üretiminden Kaynaklanan CO2 Emisyonları", "ktn CO2")))
+
+    # Slide 10: CO2 share within energy emissions
+    add_img_slide("Sonuçlar", _fig_to_png_bytes(_plot_lines(df_co2_share, "Elektrik ve Isı Üretimi CO2 payı (Enerji Emisyonları içinde)", "Pay (%)")))
+
+    # Slide 11: Per-capita electricity consumption
+    add_img_slide("Göstergeler", _fig_to_png_bytes(_plot_lines(df_percap, "Kişi Başına Elektrik Tüketimi (kWh/kişi)", "kWh/kişi")))
+
+    # Slide 12: Electrification ratio
+    add_img_slide("Göstergeler", _fig_to_png_bytes(_plot_lines(df_electrification, "Nihai Enerjide Elektrifikasyon Oranı (%)", "%")))
+
+    out = io.BytesIO()
+    prs.save(out)
+    out.seek(0)
+    return out.read()
+
+def _compute_co2_share(df_co2: pd.DataFrame, bundles: list) -> pd.DataFrame:
+    # df_co2: "CO2 Emisyonları (ktn CO2)"  (electricity&heat proxy)
+    # energy total emissions already computed inside compute_scenario_bundle as energy_em_total_co2e; stored in bundle["energy_em_total_co2e"]? not in bundle currently.
+    # However we do have co2_nz_stack which includes total excl lulucf etc. We'll best-effort use bundle["energy_em_total_co2e"] if exists; else return empty.
+    recs = []
+    for b in bundles:
+        scn = b.get("scenario", None) or (b.get("pop")["scenario"].iloc[0] if b.get("pop") is not None and not b.get("pop").empty else None)
+        energy_total = b.get("energy_em_total_co2e", None)
+        if energy_total is None or energy_total.empty:
+            continue
+        et = energy_total.copy()
+        et["year"] = pd.to_numeric(et["year"], errors="coerce")
+        et["value"] = pd.to_numeric(et["value"], errors="coerce")
+        et = et.dropna(subset=["year","value"])
+        et["year"]=et["year"].astype(int)
+
+        c = df_co2[df_co2["scenario"]==scn].copy()
+        c["year"]=pd.to_numeric(c["year"], errors="coerce")
+        c["value"]=pd.to_numeric(c["value"], errors="coerce")
+        c=c.dropna(subset=["year","value"])
+        c["year"]=c["year"].astype(int)
+
+        merged = pd.merge(c[["year","value"]].rename(columns={"value":"co2_elec"}),
+                          et[["year","value"]].rename(columns={"value":"co2_energy"}),
+                          on="year", how="inner")
+        merged["share"] = np.where(merged["co2_energy"]!=0, (merged["co2_elec"]/merged["co2_energy"])*100.0, np.nan)
+        for _, r in merged.iterrows():
+            recs.append({"year": int(r["year"]), "value": float(r["share"]), "scenario": scn, "series": "CO2 Pay (%)"})
+    return pd.DataFrame(recs)
+
+
+
+
+# -----------------------------
+# PPTX build + download UI
+# -----------------------------
+with st.sidebar:
+    st.divider()
+    st.markdown("### 📑 Sunum (PPTX)")
+    template_up = st.file_uploader(
+        "Kurumsal şablon (opsiyonel)",
+        type=["pptx", "PPTX"],
+        help="Yüklemezseniz, uygulama klasöründeki 'Kurumsal_Sunum (3).PPTX' varsa onu kullanır.",
+    )
+    if "ppt_bytes" not in st.session_state:
+        st.session_state["ppt_bytes"] = None
+
+    if st.button("Sunumu oluştur", use_container_width=True):
+        tpl_bytes = None
+        if template_up is not None:
+            try:
+                tpl_bytes = template_up.getvalue()
+            except Exception:
+                tpl_bytes = None
+        if tpl_bytes is None:
+            tpl_bytes = _default_template_bytes()
+
+        try:
+            st.session_state["ppt_bytes"] = _build_ppt_bytes(
+                template_bytes=tpl_bytes,
+                title_text="Türkiye Ulusal Enerji Planının Güncellenmesi 2025-2050",
+                subtitle_text="Enerji İşleri Genel Müdürlüğü",
+                df_pop=df_pop,
+                df_gdp=df_gdp,
+                df_primary=df_primary,
+                df_final=df_final,
+                df_capmix=df_capmix,
+                df_genmix=df_genmix,
+                df_co2=df_co2,
+                df_percap=df_percap,
+                df_electrification=df_electrification,
+                df_co2_share=df_co2_share,
+            )
+            st.success("Sunum hazırlandı. Aşağıdan indirebilirsiniz.")
+        except Exception as e:
+            st.session_state["ppt_bytes"] = None
+            st.error(f"Sunum oluşturulamadı: {e}")
+
+    if st.session_state.get("ppt_bytes"):
+        st.download_button(
+            "⬇️ Sunumu indir (PPTX)",
+            data=st.session_state["ppt_bytes"],
+            file_name="Turkiye_Ulusal_Enerji_Plani_Guncelleme_2025_2050.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            use_container_width=True,
+        )
+    else:
+        st.caption("Sunumu indirmek için önce **Sunumu oluştur** butonuna basın.")
 
 
 # -----------------------------
