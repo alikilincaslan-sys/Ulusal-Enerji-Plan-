@@ -7,3 +7,4 @@ reportlab
 plotly
 python-pptx
 Pillow
+matplotlib
