@@ -10,10 +10,21 @@ import altair as alt
 import io
 from typing import Optional, Dict, List
 
-import matplotlib.pyplot as plt
+import importlib.util
 
-from pptx import Presentation
-from pptx.util import Inches, Pt
+def _has_pkg(mod_name: str) -> bool:
+    """Return True if a module can be imported (without importing it)."""
+    try:
+        return importlib.util.find_spec(mod_name) is not None
+    except Exception:
+        return False
+
+def _ppt_requirements_ok() -> bool:
+    # pip: python-pptx -> import name: pptx
+    return _has_pkg('pptx') and _has_pkg('matplotlib')
+
+
+
 
 
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
@@ -1502,6 +1513,7 @@ def _tr_legend(x: str) -> str:
     return LEGEND_TR_MAP.get(s, s)
 
 def _fig_to_png_bytes(fig) -> bytes:
+    import matplotlib.pyplot as plt
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=220, bbox_inches="tight")
     plt.close(fig)
@@ -1532,6 +1544,7 @@ def _add_title(slide, title: str, subtitle: Optional[str] = None):
             p.font.size = Pt(16)
 
 def _plot_lines(df: pd.DataFrame, title: str, ylab: str):
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(12.5, 5.6))
     if df is None or df.empty:
         ax.text(0.5, 0.5, "Veri bulunamadı.", ha="center", va="center")
@@ -1554,6 +1567,7 @@ def _plot_lines(df: pd.DataFrame, title: str, ylab: str):
     return fig
 
 def _plot_stacked(df: pd.DataFrame, title: str, ylab: str, category_col: str = "category", percent: bool = False):
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(12.5, 5.6))
     if df is None or df.empty:
         ax.text(0.5, 0.5, "Veri bulunamadı.", ha="center", va="center")
@@ -1647,8 +1661,12 @@ def _build_ppt_bytes(
 ) -> bytes:
     # Load template if provided, else blank
     if template_bytes:
+        from pptx import Presentation
+        from pptx.util import Inches, Pt
         prs = Presentation(io.BytesIO(template_bytes))
     else:
+        from pptx import Presentation
+        from pptx.util import Inches, Pt
         prs = Presentation()
 
     # Title slide
@@ -1766,6 +1784,16 @@ def _compute_co2_share(df_co2: pd.DataFrame, bundles: list) -> pd.DataFrame:
 with st.sidebar:
     st.divider()
     st.markdown("### 📑 Sunum (PPTX)")
+    if not _ppt_requirements_ok():
+        st.warning(
+            "PPTX dışa aktarma için iki paket gerekli: **python-pptx** ve **matplotlib**.\n\n"
+            "Streamlit Cloud'da `requirements.txt` dosyanıza şunları ekleyin:\n"
+            "- python-pptx\n"
+            "- matplotlib\n\n"
+            "Paketler kurulana kadar sunum oluşturma/indirme butonları gizlenir."
+        )
+        st.stop()
+
     template_up = st.file_uploader(
         "Kurumsal şablon (opsiyonel)",
         type=["pptx", "PPTX"],
