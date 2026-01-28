@@ -1781,7 +1781,7 @@ with st.sidebar:
     if not PPTX_AVAILABLE:
         st.warning("PPTX dışa aktarımı için **python-pptx** ve **matplotlib** gereklidir. requirements.txt içine ekleyin.")
         st.stop()
-)
+
     template_up = st.file_uploader(
         "Kurumsal şablon (opsiyonel)",
         type=["pptx", "PPTX"],
