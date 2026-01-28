@@ -10,21 +10,10 @@ import altair as alt
 import io
 from typing import Optional, Dict, List
 
-import importlib.util
+import matplotlib.pyplot as plt
 
-def _has_pkg(mod_name: str) -> bool:
-    """Return True if a module can be imported (without importing it)."""
-    try:
-        return importlib.util.find_spec(mod_name) is not None
-    except Exception:
-        return False
-
-def _ppt_requirements_ok() -> bool:
-    # pip: python-pptx -> import name: pptx
-    return _has_pkg('pptx') and _has_pkg('matplotlib')
-
-
-
+from pptx import Presentation
+from pptx.util import Inches, Pt
 
 
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
@@ -1482,6 +1471,41 @@ df_final = _concat("final_energy_source")
 df_electrification = _concat("electrification_ratio")
 df_storage_ptx = _concat("storage_ptx")
 df_percap = _concat("per_capita_el")
+
+def _compute_co2_share(df_co2: pd.DataFrame, bundles: list) -> pd.DataFrame:
+    # df_co2: "CO2 Emisyonları (ktn CO2)"  (electricity&heat proxy)
+    # energy total emissions already computed inside compute_scenario_bundle as energy_em_total_co2e; stored in bundle["energy_em_total_co2e"]? not in bundle currently.
+    # However we do have co2_nz_stack which includes total excl lulucf etc. We'll best-effort use bundle["energy_em_total_co2e"] if exists; else return empty.
+    recs = []
+    for b in bundles:
+        scn = b.get("scenario", None) or (b.get("pop")["scenario"].iloc[0] if b.get("pop") is not None and not b.get("pop").empty else None)
+        energy_total = b.get("energy_em_total_co2e", None)
+        if energy_total is None or energy_total.empty:
+            continue
+        et = energy_total.copy()
+        et["year"] = pd.to_numeric(et["year"], errors="coerce")
+        et["value"] = pd.to_numeric(et["value"], errors="coerce")
+        et = et.dropna(subset=["year","value"])
+        et["year"]=et["year"].astype(int)
+
+        c = df_co2[df_co2["scenario"]==scn].copy()
+        c["year"]=pd.to_numeric(c["year"], errors="coerce")
+        c["value"]=pd.to_numeric(c["value"], errors="coerce")
+        c=c.dropna(subset=["year","value"])
+        c["year"]=c["year"].astype(int)
+
+        merged = pd.merge(c[["year","value"]].rename(columns={"value":"co2_elec"}),
+                          et[["year","value"]].rename(columns={"value":"co2_energy"}),
+                          on="year", how="inner")
+        merged["share"] = np.where(merged["co2_energy"]!=0, (merged["co2_elec"]/merged["co2_energy"])*100.0, np.nan)
+        for _, r in merged.iterrows():
+            recs.append({"year": int(r["year"]), "value": float(r["share"]), "scenario": scn, "series": "CO2 Pay (%)"})
+    return pd.DataFrame(recs)
+
+
+
+
+
 df_co2_share = _compute_co2_share(df_co2, bundles)
 
 # -----------------------------
@@ -1513,7 +1537,6 @@ def _tr_legend(x: str) -> str:
     return LEGEND_TR_MAP.get(s, s)
 
 def _fig_to_png_bytes(fig) -> bytes:
-    import matplotlib.pyplot as plt
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=220, bbox_inches="tight")
     plt.close(fig)
@@ -1544,7 +1567,6 @@ def _add_title(slide, title: str, subtitle: Optional[str] = None):
             p.font.size = Pt(16)
 
 def _plot_lines(df: pd.DataFrame, title: str, ylab: str):
-    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(12.5, 5.6))
     if df is None or df.empty:
         ax.text(0.5, 0.5, "Veri bulunamadı.", ha="center", va="center")
@@ -1567,7 +1589,6 @@ def _plot_lines(df: pd.DataFrame, title: str, ylab: str):
     return fig
 
 def _plot_stacked(df: pd.DataFrame, title: str, ylab: str, category_col: str = "category", percent: bool = False):
-    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(12.5, 5.6))
     if df is None or df.empty:
         ax.text(0.5, 0.5, "Veri bulunamadı.", ha="center", va="center")
@@ -1661,12 +1682,8 @@ def _build_ppt_bytes(
 ) -> bytes:
     # Load template if provided, else blank
     if template_bytes:
-        from pptx import Presentation
-        from pptx.util import Inches, Pt
         prs = Presentation(io.BytesIO(template_bytes))
     else:
-        from pptx import Presentation
-        from pptx.util import Inches, Pt
         prs = Presentation()
 
     # Title slide
@@ -1745,55 +1762,12 @@ def _build_ppt_bytes(
     out.seek(0)
     return out.read()
 
-def _compute_co2_share(df_co2: pd.DataFrame, bundles: list) -> pd.DataFrame:
-    # df_co2: "CO2 Emisyonları (ktn CO2)"  (electricity&heat proxy)
-    # energy total emissions already computed inside compute_scenario_bundle as energy_em_total_co2e; stored in bundle["energy_em_total_co2e"]? not in bundle currently.
-    # However we do have co2_nz_stack which includes total excl lulucf etc. We'll best-effort use bundle["energy_em_total_co2e"] if exists; else return empty.
-    recs = []
-    for b in bundles:
-        scn = b.get("scenario", None) or (b.get("pop")["scenario"].iloc[0] if b.get("pop") is not None and not b.get("pop").empty else None)
-        energy_total = b.get("energy_em_total_co2e", None)
-        if energy_total is None or energy_total.empty:
-            continue
-        et = energy_total.copy()
-        et["year"] = pd.to_numeric(et["year"], errors="coerce")
-        et["value"] = pd.to_numeric(et["value"], errors="coerce")
-        et = et.dropna(subset=["year","value"])
-        et["year"]=et["year"].astype(int)
-
-        c = df_co2[df_co2["scenario"]==scn].copy()
-        c["year"]=pd.to_numeric(c["year"], errors="coerce")
-        c["value"]=pd.to_numeric(c["value"], errors="coerce")
-        c=c.dropna(subset=["year","value"])
-        c["year"]=c["year"].astype(int)
-
-        merged = pd.merge(c[["year","value"]].rename(columns={"value":"co2_elec"}),
-                          et[["year","value"]].rename(columns={"value":"co2_energy"}),
-                          on="year", how="inner")
-        merged["share"] = np.where(merged["co2_energy"]!=0, (merged["co2_elec"]/merged["co2_energy"])*100.0, np.nan)
-        for _, r in merged.iterrows():
-            recs.append({"year": int(r["year"]), "value": float(r["share"]), "scenario": scn, "series": "CO2 Pay (%)"})
-    return pd.DataFrame(recs)
-
-
-
-
 # -----------------------------
 # PPTX build + download UI
 # -----------------------------
 with st.sidebar:
     st.divider()
     st.markdown("### 📑 Sunum (PPTX)")
-    if not _ppt_requirements_ok():
-        st.warning(
-            "PPTX dışa aktarma için iki paket gerekli: **python-pptx** ve **matplotlib**.\n\n"
-            "Streamlit Cloud'da `requirements.txt` dosyanıza şunları ekleyin:\n"
-            "- python-pptx\n"
-            "- matplotlib\n\n"
-            "Paketler kurulana kadar sunum oluşturma/indirme butonları gizlenir."
-        )
-        st.stop()
-
     template_up = st.file_uploader(
         "Kurumsal şablon (opsiyonel)",
         type=["pptx", "PPTX"],
