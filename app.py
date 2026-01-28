@@ -10,21 +10,15 @@ import altair as alt
 import io
 from typing import Optional, Dict, List
 
-# (PPT export) Matplotlib is not required; we export Altair charts to PNG via vl-convert.
+# Optional deps for PPTX export (Streamlit Cloud'da requirements ile kurulmalı)
+PPTX_AVAILABLE = True
 try:
-    import vl_convert as vlc  # pip: vl-convert-python
-except Exception:
-    vlc = None
-
-
-# PPT export (requires python-pptx)
-try:
+    import matplotlib.pyplot as plt
     from pptx import Presentation
     from pptx.util import Inches, Pt
 except Exception:
-    Presentation = None
-    Inches = None
-    Pt = None
+    PPTX_AVAILABLE = False
+
 
 
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
@@ -1455,6 +1449,41 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     return bundle
 
 
+
+# -----------------------------
+# Derived series
+# -----------------------------
+def _compute_co2_share(df_co2: pd.DataFrame, bundles: list) -> pd.DataFrame:
+    # df_co2: "CO2 Emisyonları (ktn CO2)"  (electricity&heat proxy)
+    # energy total emissions already computed inside compute_scenario_bundle as energy_em_total_co2e; stored in bundle["energy_em_total_co2e"]? not in bundle currently.
+    # However we do have co2_nz_stack which includes total excl lulucf etc. We'll best-effort use bundle["energy_em_total_co2e"] if exists; else return empty.
+    recs = []
+    for b in bundles:
+        scn = b.get("scenario", None) or (b.get("pop")["scenario"].iloc[0] if b.get("pop") is not None and not b.get("pop").empty else None)
+        energy_total = b.get("energy_em_total_co2e", None)
+        if energy_total is None or energy_total.empty:
+            continue
+        et = energy_total.copy()
+        et["year"] = pd.to_numeric(et["year"], errors="coerce")
+        et["value"] = pd.to_numeric(et["value"], errors="coerce")
+        et = et.dropna(subset=["year","value"])
+        et["year"]=et["year"].astype(int)
+
+        c = df_co2[df_co2["scenario"]==scn].copy()
+        c["year"]=pd.to_numeric(c["year"], errors="coerce")
+        c["value"]=pd.to_numeric(c["value"], errors="coerce")
+        c=c.dropna(subset=["year","value"])
+        c["year"]=c["year"].astype(int)
+
+        merged = pd.merge(c[["year","value"]].rename(columns={"value":"co2_elec"}),
+                          et[["year","value"]].rename(columns={"value":"co2_energy"}),
+                          on="year", how="inner")
+        merged["share"] = np.where(merged["co2_energy"]!=0, (merged["co2_elec"]/merged["co2_energy"])*100.0, np.nan)
+        for _, r in merged.iterrows():
+            recs.append({"year": int(r["year"]), "value": float(r["share"]), "scenario": scn, "series": "CO2 Pay (%)"})
+    return pd.DataFrame(recs)
+
+
 bundles = []
 for scn in selected_scenarios:
     f = scenario_to_file[scn]
@@ -1513,21 +1542,11 @@ def _tr_legend(x: str) -> str:
     return LEGEND_TR_MAP.get(s, s)
 
 def _fig_to_png_bytes(fig) -> bytes:
-    """Convert an Altair chart to PNG bytes (for PPT export).
-
-    Requires `vl-convert-python` (imported as `vl_convert`).
-    """
-    if vlc is None:
-        raise ModuleNotFoundError(
-            "vl_convert not found. Add 'vl-convert-python' to requirements.txt to enable PPT chart export."
-        )
-    # Altair chart spec -> PNG
-    try:
-        spec = fig.to_dict() if hasattr(fig, "to_dict") else fig
-    except Exception:
-        spec = fig
-    return vlc.vegalite_to_png(spec)
-
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
 
 def _add_title(slide, title: str, subtitle: Optional[str] = None):
     # Best-effort: write into placeholders if they exist, else add textbox
@@ -1553,81 +1572,86 @@ def _add_title(slide, title: str, subtitle: Optional[str] = None):
             p.font.size = Pt(16)
 
 def _plot_lines(df: pd.DataFrame, title: str, ylab: str):
-    """Altair multi-scenario line chart (PPT export)."""
+    fig, ax = plt.subplots(figsize=(12.5, 5.6))
     if df is None or df.empty:
-        return alt.Chart(pd.DataFrame({"msg": ["Veri bulunamadı."]})).mark_text().encode(text="msg:N").properties(
-            title=title, width=900, height=320
-        )
+        ax.text(0.5, 0.5, "Veri bulunamadı.", ha="center", va="center")
+        ax.axis("off")
+        ax.set_title(title)
+        return fig
 
     d = df.copy()
     d["year"] = pd.to_numeric(d["year"], errors="coerce")
     d["value"] = pd.to_numeric(d["value"], errors="coerce")
     d = d.dropna(subset=["year", "value", "scenario"])
-    d["year"] = d["year"].astype(int)
-
-    ch = (
-        alt.Chart(d)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title=ylab),
-            color=alt.Color("scenario:N", title="Senaryo"),
-        )
-        .properties(title=title, width=900, height=320)
-    )
-    return ch
-
-
+    for scn, g in d.groupby("scenario"):
+        g = g.sort_values("year")
+        ax.plot(g["year"], g["value"], marker="o", linewidth=2, label=str(scn))
+    ax.set_title(title)
+    ax.set_xlabel("Yıl")
+    ax.set_ylabel(ylab)
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="best", fontsize=9)
+    return fig
 
 def _plot_stacked(df: pd.DataFrame, title: str, ylab: str, category_col: str = "category", percent: bool = False):
-    """Altair stacked bars. If multiple scenarios, facet by scenario (up to 3)."""
+    fig, ax = plt.subplots(figsize=(12.5, 5.6))
     if df is None or df.empty:
-        return alt.Chart(pd.DataFrame({"msg": ["Veri bulunamadı."]})).mark_text().encode(text="msg:N").properties(
-            title=title, width=900, height=320
-        )
+        ax.text(0.5, 0.5, "Veri bulunamadı.", ha="center", va="center")
+        ax.axis("off")
+        ax.set_title(title)
+        return fig
 
     d = df.copy()
     d["year"] = pd.to_numeric(d["year"], errors="coerce")
     d["value"] = pd.to_numeric(d["value"], errors="coerce")
     d = d.dropna(subset=["year", "value", "scenario", category_col])
-    d[category_col] = d[category_col].astype(str).apply(_tr_legend)
-    d["year"] = d["year"].astype(int)
+    d[category_col] = d[category_col].apply(_tr_legend)
 
-    if percent:
-        totals = d.groupby(["scenario", "year"], as_index=False)["value"].sum().rename(columns={"value": "total"})
-        d = d.merge(totals, on=["scenario", "year"], how="left")
-        d["value"] = np.where(d["total"] > 0, d["value"] / d["total"] * 100.0, np.nan)
-        d = d.dropna(subset=["value"])
-        y_title = "Pay (%)"
-    else:
-        y_title = ylab
+    # For PPT: show up to 3 scenarios as separate subplots stacked vertically if needed
+    scns = list(d["scenario"].unique())[:3]
+    if len(scns) == 1:
+        scn = scns[0]
+        dd = d[d["scenario"] == scn]
+        piv = dd.pivot_table(index="year", columns=category_col, values="value", aggfunc="sum").fillna(0.0).sort_index()
+        if percent:
+            tot = piv.sum(axis=1).replace({0: np.nan})
+            piv = piv.div(tot, axis=0) * 100.0
+        bottoms = np.zeros(len(piv))
+        for col in piv.columns:
+            ax.bar(piv.index.astype(int), piv[col].values, bottom=bottoms, label=str(col))
+            bottoms += piv[col].values
+        ax.set_title(f"{title} — {scn}")
+        ax.set_xlabel("Yıl")
+        ax.set_ylabel(ylab if not percent else "Pay (%)")
+        ax.legend(ncol=3, fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.18))
+        ax.grid(True, axis="y", alpha=0.25)
+        return fig
 
-    scns = list(pd.unique(d["scenario"]))[:3]
-
-    base = (
-        alt.Chart(d)
-        .mark_bar()
-        .encode(
-            x=alt.X("year:O", title="Yıl"),
-            y=alt.Y("value:Q", title=y_title, stack="zero"),
-            color=alt.Color(f"{category_col}:N", title=""),
-            order=alt.Order(f"{category_col}:N"),
-        )
-        .properties(width=280, height=260)
-    )
-
-    if len(scns) > 1:
-        return (
-            base.transform_filter(alt.FieldOneOfPredicate(field="scenario", oneOf=scns))
-            .facet(column=alt.Column("scenario:N", title=""))
-            .resolve_scale(y="independent")
-            .properties(title=title)
-        )
-
-    scn = scns[0] if scns else ""
-    return base.transform_filter(alt.datum.scenario == scn).properties(title=f"{title} — {scn}")
-
-
+    # multiple scenarios: small multiples (rows)
+    plt.close(fig)
+    rows = len(scns)
+    fig, axes = plt.subplots(rows, 1, figsize=(12.5, 5.6 * rows), sharex=True)
+    if rows == 1:
+        axes = [axes]
+    for ax_i, scn in zip(axes, scns):
+        dd = d[d["scenario"] == scn]
+        piv = dd.pivot_table(index="year", columns=category_col, values="value", aggfunc="sum").fillna(0.0).sort_index()
+        if percent:
+            tot = piv.sum(axis=1).replace({0: np.nan})
+            piv = piv.div(tot, axis=0) * 100.0
+        bottoms = np.zeros(len(piv))
+        for col in piv.columns:
+            ax_i.bar(piv.index.astype(int), piv[col].values, bottom=bottoms, label=str(col))
+            bottoms += piv[col].values
+        ax_i.set_title(str(scn))
+        ax_i.set_ylabel(ylab if not percent else "Pay (%)")
+        ax_i.grid(True, axis="y", alpha=0.25)
+    axes[-1].set_xlabel("Yıl")
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, ncol=4, fontsize=9, loc="lower center", bbox_to_anchor=(0.5, 0.02))
+    fig.suptitle(title, y=0.995, fontsize=16)
+    fig.tight_layout(rect=[0.0, 0.07, 1.0, 0.96])
+    return fig
 
 def _default_template_bytes() -> Optional[bytes]:
     # Try common filenames in repo / working dir
@@ -1661,9 +1685,6 @@ def _build_ppt_bytes(
     df_electrification: pd.DataFrame,
     df_co2_share: pd.DataFrame,
 ) -> bytes:
-    if Presentation is None:
-        raise ModuleNotFoundError("python-pptx not found. Add 'python-pptx' to requirements.txt to enable PPT export.")
-
     # Load template if provided, else blank
     if template_bytes:
         prs = Presentation(io.BytesIO(template_bytes))
@@ -1746,35 +1767,7 @@ def _build_ppt_bytes(
     out.seek(0)
     return out.read()
 
-def _compute_co2_share(df_co2: pd.DataFrame, bundles: list) -> pd.DataFrame:
-    # df_co2: "CO2 Emisyonları (ktn CO2)"  (electricity&heat proxy)
-    # energy total emissions already computed inside compute_scenario_bundle as energy_em_total_co2e; stored in bundle["energy_em_total_co2e"]? not in bundle currently.
-    # However we do have co2_nz_stack which includes total excl lulucf etc. We'll best-effort use bundle["energy_em_total_co2e"] if exists; else return empty.
-    recs = []
-    for b in bundles:
-        scn = b.get("scenario", None) or (b.get("pop")["scenario"].iloc[0] if b.get("pop") is not None and not b.get("pop").empty else None)
-        energy_total = b.get("energy_em_total_co2e", None)
-        if energy_total is None or energy_total.empty:
-            continue
-        et = energy_total.copy()
-        et["year"] = pd.to_numeric(et["year"], errors="coerce")
-        et["value"] = pd.to_numeric(et["value"], errors="coerce")
-        et = et.dropna(subset=["year","value"])
-        et["year"]=et["year"].astype(int)
 
-        c = df_co2[df_co2["scenario"]==scn].copy()
-        c["year"]=pd.to_numeric(c["year"], errors="coerce")
-        c["value"]=pd.to_numeric(c["value"], errors="coerce")
-        c=c.dropna(subset=["year","value"])
-        c["year"]=c["year"].astype(int)
-
-        merged = pd.merge(c[["year","value"]].rename(columns={"value":"co2_elec"}),
-                          et[["year","value"]].rename(columns={"value":"co2_energy"}),
-                          on="year", how="inner")
-        merged["share"] = np.where(merged["co2_energy"]!=0, (merged["co2_elec"]/merged["co2_energy"])*100.0, np.nan)
-        for _, r in merged.iterrows():
-            recs.append({"year": int(r["year"]), "value": float(r["share"]), "scenario": scn, "series": "CO2 Pay (%)"})
-    return pd.DataFrame(recs)
 
 
 
@@ -1785,6 +1778,10 @@ def _compute_co2_share(df_co2: pd.DataFrame, bundles: list) -> pd.DataFrame:
 with st.sidebar:
     st.divider()
     st.markdown("### 📑 Sunum (PPTX)")
+    if not PPTX_AVAILABLE:
+        st.warning("PPTX dışa aktarımı için **python-pptx** ve **matplotlib** gereklidir. requirements.txt içine ekleyin.")
+        st.stop()
+)
     template_up = st.file_uploader(
         "Kurumsal şablon (opsiyonel)",
         type=["pptx", "PPTX"],
@@ -2733,6 +2730,7 @@ if "Sera Gazı Emisyonları" in selected_panels:
     st.markdown("## Sera Gazı Emisyonları")
 
     _line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
+    _line_chart(df_co2_share, "Elektrik ve Isı Üretimi CO2 payı (Enerji Emisyonları içinde)", "Pay (%)", value_format=",.1f")
     _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
 
     st.divider()
