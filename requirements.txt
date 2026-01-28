@@ -8,3 +8,4 @@ plotly
 python-pptx
 Pillow
 matplotlib
+vl-convert-python
