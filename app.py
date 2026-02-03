@@ -624,123 +624,146 @@ def _pick_year_col(df_wide: pd.DataFrame, year: int) -> str:
     return None
 
 
-def build_sankey_edges_from_summary(blocks: dict, year: int) -> pd.DataFrame:
+def build_sankey_edges_from_summary(blocks: dict, year: int, xlsx_file=None) -> pd.DataFrame:
     """Build Sankey edge list (source, target, value) for a given year.
 
-    Notes:
-    - Uses available balance aggregates from Summary&Indicators.
-    - Fuel→Sector split is not available in the workbook; therefore the diagram uses a
-      'Final Energy' hub node (Fuel → Final Energy → Sector) for mass-consistent totals.
+    Güncelleme:
+    - Summary&Indicators blokları geniş (wide) formatta gelir: ilk sütun 'item'.
+      Önceki sürüm iterrows() index'ini (0,1,2...) etiket sandığı için node'larda 46/47 gibi
+      sayılar görünüyordu. Bu sürüm her blokta item sütununu kullanır.
+    - Electricity → Sector dağılımı Power_Generation sekmesindeki Electricity Balance satırlarından
+      okunur (read_electricity_consumption_by_sector).
+    - RAS/varsayım yok: Excel'de varsa gerçek dağılım kullanılır.
     """
-    edges = []
+    edges: list[tuple[str, str, float]] = []
 
-    # --- Final energy by fuel → Final Energy hub
+    # --- helper: get item label
+    def _iter_items(df_wide: pd.DataFrame):
+        if df_wide is None or df_wide.empty:
+            return []
+        if "item" in df_wide.columns:
+            return df_wide.itertuples(index=False)
+        # fallback (should not happen)
+        return df_wide.reset_index().rename(columns={"index": "item"}).itertuples(index=False)
+
+    # -----------------------------
+    # Final Energy by Fuel  (Fuel -> Final Energy hub)
+    # -----------------------------
     df_fuel = blocks.get("final_energy_by_fuel")
+    electricity_fuel_val = None
+    final_total_excl_elec = 0.0
+
     if df_fuel is not None and not df_fuel.empty:
         yc = _pick_year_col(df_fuel, year)
         if yc is not None:
-            for lbl, row in df_fuel.iterrows():
-                fuel = _norm_label(lbl)
+            for row in _iter_items(df_fuel):
+                fuel = _norm_label(getattr(row, "item"))
                 if not fuel or re.search(r"^total\b", fuel, flags=re.I):
                     continue
-                val = _to_float(row.get(yc))
-                if np.isfinite(val) and val > 0:
-                    edges.append((fuel, "Final Energy", val))
+                val = _to_float(getattr(row, str(yc)) if isinstance(yc, str) else getattr(row, str(yc), None))
+                # itertuples names years as _{year} sometimes; safer use df_fuel.loc
+            # safer loop using dataframe rows
+            for _, r in df_fuel.iterrows():
+                fuel = _norm_label(r.get("item"))
+                if not fuel or re.search(r"^total\b", fuel, flags=re.I):
+                    continue
+                val = _to_float(r.get(yc))
+                if not (np.isfinite(val) and val > 0):
+                    continue
+                if fuel.strip().lower() == "electricity":
+                    electricity_fuel_val = float(val)
+                    continue  # electricity will be routed via Electricity node
+                final_total_excl_elec += float(val)
+                edges.append((fuel, "Final Energy", float(val)))
 
-    # --- Final energy hub → sectors
+    # -----------------------------
+    # Final Energy hub -> Sectors  (excluding electricity-specific split)
+    # -----------------------------
     df_sec = blocks.get("final_energy_by_sector")
     if df_sec is not None and not df_sec.empty:
         yc = _pick_year_col(df_sec, year)
         if yc is not None:
-            for lbl, row in df_sec.iterrows():
-                sector = _norm_label(lbl)
+            for _, r in df_sec.iterrows():
+                sector = _norm_label(r.get("item"))
                 if not sector or re.search(r"^total\b", sector, flags=re.I):
                     continue
-                val = _to_float(row.get(yc))
+                val = _to_float(r.get(yc))
                 if np.isfinite(val) and val > 0:
-                    edges.append(("Final Energy", sector, val))
+                    edges.append(("Final Energy", sector, float(val)))
 
-    # --- Electricity generation branch (Power Generation (1) → Electricity)
-    # We connect source fuels to Power Generation using the 'From X' rows (if present),
-    # and then Power Generation → Electricity using final electricity as a conservative choice.
+    # -----------------------------
+    # Electricity generation branch (From X -> Power Generation)
+    # -----------------------------
     df_pg = blocks.get("power_generation_1")
     if df_pg is not None and not df_pg.empty:
         yc = _pick_year_col(df_pg, year)
         if yc is not None:
-            for lbl, row in df_pg.iterrows():
-                lab = _norm_label(lbl)
+            for _, r in df_pg.iterrows():
+                lab = _norm_label(r.get("item"))
                 m = re.match(r"^From\s+(.*)$", lab, flags=re.I)
                 if not m:
                     continue
                 src_fuel = _norm_label(m.group(1))
-                val = _to_float(row.get(yc))
+                val = _to_float(r.get(yc))
                 if np.isfinite(val) and val > 0:
-                    edges.append((src_fuel, "Power Generation", val))
+                    edges.append((src_fuel, "Power Generation", float(val)))
 
-    # Power Generation → Electricity (use Final Energy by Fuel / Electricity if available)
+    # -----------------------------
+    # Electricity -> sectors (Power_Generation sheet, real split)
+    # -----------------------------
+    elec_by_sector_sum = None
+    if xlsx_file is not None:
+        df_elec = read_electricity_consumption_by_sector(xlsx_file)
+        if df_elec is not None and not df_elec.empty:
+            df_y = df_elec[df_elec["year"] == int(year)].copy()
+            if not df_y.empty:
+                elec_by_sector_sum = float(df_y["value"].sum())
+                for _, rr in df_y.iterrows():
+                    sector = _norm_label(rr.get("sector"))
+                    val = _to_float(rr.get("value"))
+                    if np.isfinite(val) and val > 0:
+                        edges.append(("Electricity", sector, float(val)))
+
+    # Power Generation -> Electricity value
+    # Prefer the electricity balance (sum of sector consumption) to match outflows.
     electricity_val = None
-    if df_fuel is not None and not df_fuel.empty:
-        yc = _pick_year_col(df_fuel, year)
-        if yc is not None:
-            # Try common labels
-            for key in ["Electricity", "Electric power", "Elektrik", "Electricity "]:
-                if key in df_fuel.index:
-                    electricity_val = _to_float(df_fuel.loc[key, yc])
-                    break
-            if electricity_val is None:
-                # Fuzzy
-                for idx in df_fuel.index:
-                    if str(idx).strip().lower() == "electricity":
-                        electricity_val = _to_float(df_fuel.loc[idx, yc])
-                        break
+    if elec_by_sector_sum is not None and np.isfinite(elec_by_sector_sum) and elec_by_sector_sum > 0:
+        electricity_val = elec_by_sector_sum
+    elif electricity_fuel_val is not None and np.isfinite(electricity_fuel_val) and electricity_fuel_val > 0:
+        electricity_val = float(electricity_fuel_val)
 
     if electricity_val is not None and np.isfinite(electricity_val) and electricity_val > 0:
         edges.append(("Power Generation", "Electricity", float(electricity_val)))
-        # Electricity is a fuel in final energy table; ensure it contributes to Final Energy hub
-        edges.append(("Electricity", "Final Energy", float(electricity_val)))
 
-    # --- Optional: Gross Inland Consumption and Non-energy uses (context branch)
+    # -----------------------------
+    # Gross Inland Consumption aggregate spine (optional, for completeness)
+    # -----------------------------
     df_gic = blocks.get("gross_inland_consumption")
-    df_neu = blocks.get("non_energy_uses")
     gic_total = None
-    neu_total = None
     if df_gic is not None and not df_gic.empty:
         yc = _pick_year_col(df_gic, year)
         if yc is not None:
-            # If there is a Total row, use it; otherwise sum all numeric rows.
-            if any(str(i).strip().lower().startswith("total") for i in df_gic.index):
-                for i in df_gic.index:
-                    if str(i).strip().lower().startswith("total"):
-                        gic_total = _to_float(df_gic.loc[i, yc])
-                        break
-            if gic_total is None:
-                gic_total = pd.to_numeric(df_gic[yc], errors="coerce").sum()
+            gic_total = pd.to_numeric(df_gic[yc], errors="coerce").sum()
 
+    df_neu = blocks.get("non_energy_uses")
+    neu_total = None
     if df_neu is not None and not df_neu.empty:
         yc = _pick_year_col(df_neu, year)
         if yc is not None:
-            # Usually single row; sum is safe
             neu_total = pd.to_numeric(df_neu[yc], errors="coerce").sum()
 
-    # Total final energy can be inferred from sectors (preferred) or fuels.
-    final_total = None
-    if df_sec is not None and not df_sec.empty:
-        yc = _pick_year_col(df_sec, year)
-        if yc is not None:
-            final_total = pd.to_numeric(df_sec[yc], errors="coerce").sum()
-    if final_total is None and df_fuel is not None and not df_fuel.empty:
-        yc = _pick_year_col(df_fuel, year)
-        if yc is not None:
-            final_total = pd.to_numeric(df_fuel[yc], errors="coerce").sum()
-
+    # Final total for the "spine" should exclude electricity if it's routed separately
+    final_total_spine = final_total_excl_elec
     if gic_total is not None and np.isfinite(gic_total) and gic_total > 0:
-        edges.append(("Gross Inland Consumption", "Non-Energy Uses", float(neu_total) if neu_total is not None and np.isfinite(neu_total) and neu_total > 0 else 0.0))
-        if final_total is not None and np.isfinite(final_total) and final_total > 0:
-            edges.append(("Gross Inland Consumption", "Final Energy", float(final_total)))
+        if neu_total is not None and np.isfinite(neu_total) and neu_total > 0:
+            edges.append(("Gross Inland Consumption", "Non-Energy Uses", float(neu_total)))
+        if final_total_spine is not None and np.isfinite(final_total_spine) and final_total_spine > 0:
+            edges.append(("Gross Inland Consumption", "Final Energy", float(final_total_spine)))
         # Residual: transformation losses, own-use, exports, etc.
         residual = None
-        if neu_total is not None and final_total is not None and np.isfinite(neu_total) and np.isfinite(final_total):
-            residual = float(gic_total) - float(neu_total) - float(final_total)
+        if neu_total is not None and np.isfinite(neu_total) and final_total_spine is not None and np.isfinite(final_total_spine):
+            residual = float(gic_total) - float(neu_total) - float(final_total_spine)
+            # Electricity production/exports/losses may sit here; keep if positive.
         if residual is not None and np.isfinite(residual) and residual > 0:
             edges.append(("Gross Inland Consumption", "Dönüşüm/Kayıp/Diğer", float(residual)))
 
@@ -751,39 +774,88 @@ def build_sankey_edges_from_summary(blocks: dict, year: int) -> pd.DataFrame:
     out = out.groupby(["source", "target"], as_index=False)["value"].sum()
     return out
 
-
 def render_sankey(edges: pd.DataFrame, title: str = "Enerji Akış Sankey Diyagramı"):
     if edges is None or edges.empty:
         st.info("Sankey için yeterli veri bulunamadı.")
         return
 
     # Build node list
-    nodes = pd.Index(pd.unique(pd.concat([edges["source"], edges["target"]], ignore_index=True))).tolist()
-    node_to_idx = {n: i for i, n in enumerate(nodes)}
+    nodes = pd.Index(pd.concat([edges["source"], edges["target"]]).astype(str).unique())
+    node_index = {n: i for i, n in enumerate(nodes)}
 
-    link_source = edges["source"].map(node_to_idx).astype(int).tolist()
-    link_target = edges["target"].map(node_to_idx).astype(int).tolist()
-    link_value = edges["value"].astype(float).tolist()
+    # --- Color system (category-based)
+    primary_like = {
+        "Solids","Coal","Lignite","Oil","Liquids","Gas","Natural Gas","Derived Gasses","Nuclear",
+        "Hydro","Wind","Solar","Solar and others","Geothermal","Biomass & Waste","Renewables","RES","Other",
+        "LPG","Hydrogen","Steam","Heat","Biofuels","Biogas","Waste"
+    }
+    process_like = {
+        "Gross Inland Consumption","Power Generation","Final Energy","Electricity",
+        "Non-Energy Uses","Dönüşüm/Kayıp/Diğer"
+    }
+    # simple sector detection
+    def _is_sector(n: str) -> bool:
+        s=n.lower()
+        return any(k in s for k in ["industry","residential","households","tertiary","transport","energy branch","other uses","services","agriculture"])
+
+    palette_primary = ["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#17becf","#bcbd22"]
+    palette_process = ["#7f7f7f","#c7c7c7","#b5bd00","#e377c2","#aec7e8","#c49c94"]
+    palette_sector  = ["#4c78a8","#f58518","#54a24b","#e45756","#72b7b2","#b279a2","#ff9da6"]
+
+    node_colors=[]
+    pi=pp=ps=0
+    color_map={}
+    for n in nodes:
+        if n in process_like:
+            col=palette_process[pp%len(palette_process)]; pp+=1
+        elif _is_sector(n):
+            col=palette_sector[ps%len(palette_sector)]; ps+=1
+        elif n in primary_like or any(n.lower()==x.lower() for x in primary_like):
+            col=palette_primary[pi%len(palette_primary)]; pi+=1
+        else:
+            # fallback
+            col="#9e9e9e"
+        color_map[n]=col
+        node_colors.append(col)
+
+    def _rgba(hexcol: str, a: float) -> str:
+        h=hexcol.lstrip("#")
+        if len(h)==3:
+            h="".join([c+c for c in h])
+        r=int(h[0:2],16); g=int(h[2:4],16); b=int(h[4:6],16)
+        return f"rgba({r},{g},{b},{a})"
+
+    sources = edges["source"].map(node_index).tolist()
+    targets = edges["target"].map(node_index).tolist()
+    values  = edges["value"].tolist()
+    link_colors = [_rgba(color_map[s], 0.35) for s in edges["source"].tolist()]
 
     fig = go.Figure(
         data=[
             go.Sankey(
                 arrangement="snap",
                 node=dict(
-                    pad=14,
+                    pad=18,
                     thickness=16,
-                    line=dict(width=0.5),
-                    label=nodes,
+                    line=dict(color="rgba(255,255,255,0.25)", width=0.5),
+                    label=nodes.tolist(),
+                    color=node_colors,
                 ),
                 link=dict(
-                    source=link_source,
-                    target=link_target,
-                    value=link_value,
+                    source=sources,
+                    target=targets,
+                    value=values,
+                    color=link_colors,
                 ),
             )
         ]
     )
-    fig.update_layout(title_text=title, height=560, margin=dict(l=10, r=10, t=40, b=10))
+    fig.update_layout(
+        title=dict(text=title, x=0.01, xanchor="left"),
+        font=dict(size=12),
+        height=520,
+        margin=dict(l=10, r=10, t=40, b=10),
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 def _sector_ratio_from_label(label: str) -> float:
@@ -2708,7 +2780,7 @@ try:
         years_si = YEAR_OPTIONS
     default_year = years_si[-1]
     sankey_year = st.selectbox("Sankey yılı", options=years_si, index=years_si.index(default_year), key="sankey_year_select")
-    edges = build_sankey_edges_from_summary(si_blocks, int(sankey_year))
+    edges = build_sankey_edges_from_summary(si_blocks, int(sankey_year), xlsx_file=sankey_file)
 
     # Display-unit conversion (GWh → bin TEP) if enabled in UI
     edges = _convert_energy_df(edges, value_col="value")
