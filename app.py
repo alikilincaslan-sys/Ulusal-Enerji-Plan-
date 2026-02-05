@@ -74,7 +74,7 @@ def _ordered_domain(values: list[str]) -> list[str]:
 
     return sorted(uniq, key=prio_key)
 
-def _source_color_encoding(df: pd.DataFrame, field: str, title: str, order=None):
+def _source_color_encoding(df, field: str, title: str, order=None):
     """Stacked/bar grafiklerde kaynakların rengini sabitle."""
     try:
         if order is not None and len(order):
