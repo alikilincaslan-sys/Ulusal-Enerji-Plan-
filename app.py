@@ -11,7 +11,18 @@ SOURCE_COLOR_MAP = {
     "Hydropower": "#0b3d91",
     "Wind": "#2ca02c",        # yeşil
     "Solar": "#ffd60a",       # sarı
-    "Nuclear": "#ff7f0e"      # turuncu
+    "Nuclear": "#ff7f0e",     # turuncu
+    # Alternatif/Türkçe etiketler (Excel / arayüz uyumu)
+    "Kömür": "#3a3a3a",
+    "Linyit": "#9e9e9e",
+    "Doğal Gaz": "#1f77b4",
+    "Hidro": "#0b3d91",
+    "Rüzgar": "#2ca02c",
+    "Güneş": "#ffd60a",
+    "Nükleer": "#ff7f0e",
+    # Modeldeki grup adları
+    "Wind (RES)": "#2ca02c",
+    "Solar (GES)": "#ffd60a",
 }
 
 def get_source_color(name):
@@ -20,6 +31,66 @@ def get_source_color(name):
             if key.lower() in name.lower():
                 return val
     return None
+
+# Kaynak/teknoloji renk ölçeği (Altair) – önemli yakıtlar sabit, diğerleri deterministik
+SOURCE_PRIORITY = [
+    "Coal", "Kömür",
+    "Lignite", "Linyit",
+    "Natural Gas", "Doğal Gaz", "Gas",
+    "Hydro", "Hidro", "Hydropower",
+    "Wind", "Rüzgar", "Wind (RES)",
+    "Solar", "Güneş", "Solar (GES)",
+    "Nuclear", "Nükleer",
+]
+
+def _hash_color(name: str) -> str:
+    """Bilinmeyen kategoriler için deterministik HEX renk."""
+    if not isinstance(name, str):
+        name = str(name)
+    h = abs(hash(name)) % 360  # hue
+    s = 60
+    l = 50
+    # HSL -> RGB
+    import colorsys
+    r, g, b = colorsys.hls_to_rgb(h / 360.0, l / 100.0, s / 100.0)
+    return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+
+def _ordered_domain(values: list[str]) -> list[str]:
+    """Önce öncelikli yakıtlar, sonra kalanları alfabetik."""
+    vals = [v for v in values if isinstance(v, str)]
+    # benzersiz koru
+    seen = set()
+    uniq = []
+    for v in vals:
+        if v not in seen:
+            seen.add(v); uniq.append(v)
+
+    def prio_key(v):
+        vv = v.lower()
+        for i, p in enumerate(SOURCE_PRIORITY):
+            if p.lower() in vv:
+                return (0, i)
+        return (1, v.lower())
+
+    return sorted(uniq, key=prio_key)
+
+def _source_color_encoding(df: pd.DataFrame, field: str, title: str, order=None):
+    """Stacked/bar grafiklerde kaynakların rengini sabitle."""
+    try:
+        if order is not None and len(order):
+            domain = _ordered_domain([str(x) for x in order])
+        else:
+            domain = _ordered_domain([str(x) for x in df[field].dropna().unique().tolist()])
+
+        rng = []
+        for d in domain:
+            c = get_source_color(d)
+            rng.append(c if c else _hash_color(d))
+
+        return alt.Color(f"{field}:N", title=title, sort=domain, scale=alt.Scale(domain=domain, range=rng))
+    except Exception:
+        # fallback: Altair default
+        return alt.Color(f"{field}:N", title=title)
 
 
 # app.py
@@ -2100,7 +2171,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             .encode(
                 x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
                 y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-                color=alt.Color(f"{stack_field}:N", title=category_title),
+                color=_source_color_encoding(sub, stack_field, category_title),
                 opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
                 tooltip=[
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
@@ -2171,7 +2242,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
             x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-            color=alt.Color(f"{stack_field}:N", title=category_title),
+            color=_source_color_encoding(dfp, stack_field, category_title, order=order),
             opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
@@ -2218,7 +2289,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
             x=alt.X(f"{x_field}:O", title="Yıl"),
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-            color=alt.Color(f"{stack_field}:N", title=category_title),
+            color=_source_color_encoding(dfp, stack_field, category_title, order=order),
             opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
