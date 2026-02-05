@@ -547,7 +547,7 @@ def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
         sheet_name="PowerGeneration-Indicators",
         years_row_1idx=3,
         value_row_1idx=30,
-        series_name="Elektrik ve Isı Üretimi CO2 emisyonları (ktn CO2)",
+        series_name="CO2 Emisyonları (ktn CO2)",
     )
 
 
@@ -1612,7 +1612,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
         "GSYH (Milyar ABD Doları",
         "Kişi Başına Elektrik Tüketimi",
         "Nihai Enerjide Elektrifikasyon Oranı",
-        "Elektrik ve Isı Üretimi CO2 emisyonları",
+        "CO2 Emisyonları (ktn CO2)",
     ]
     _use_nonzero_axis = any(k in str(title) for k in _NONZERO_AXIS_KEYS)
 
@@ -2468,7 +2468,7 @@ if "Enerji" in selected_panels:
 if "Sera Gazı Emisyonları" in selected_panels:
     st.markdown("## Sera Gazı Emisyonları")
 
-    _line_chart(df_co2, "Elektrik ve Isı Üretimi CO2 emisyonları", "ktn CO2", value_format=",.0f")
+    _line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
     _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
 
     st.divider()
@@ -2575,3 +2575,39 @@ for scn in selected_scenarios:
     else:
         fig = _plot_generation_bar_race(d_plotly, _energy_unit_label())
         st.plotly_chart(fig, use_container_width=True)
+
+
+
+# =======================
+# Carbon Intensity Line Chart (PowerGeneration-Indicators)
+# =======================
+try:
+    st.subheader("Carbon Intensity (ktn CO2/GWh)")
+
+    df_pg_ind = pd.read_excel(uploaded_file, sheet_name="PowerGeneration-Indicators", header=None)
+
+    years = df_pg_ind.iloc[2, 1:].dropna()
+    carbon_intensity = df_pg_ind.iloc[40, 1:len(years)+1]
+
+    fig_ci = go.Figure()
+
+    fig_ci.add_trace(go.Scatter(
+        x=years,
+        y=carbon_intensity,
+        mode="lines+markers",
+        name="Carbon Intensity",
+        line=dict(width=3)
+    ))
+
+    fig_ci.update_layout(
+        title="Carbon Intensity (ktn CO2/GWh)",
+        xaxis_title="Yıl",
+        yaxis_title="ktn CO2/GWh",
+        template="plotly_white",
+        hovermode="x unified"
+    )
+
+    st.plotly_chart(fig_ci, use_container_width=True)
+
+except Exception as e:
+    st.warning(f"Carbon Intensity grafiği eklenemedi: {e}")
