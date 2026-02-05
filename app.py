@@ -551,6 +551,17 @@ def read_co2_emissions_series(xlsx_file) -> pd.DataFrame:
     )
 
 
+
+def read_carbon_intensity_series(xlsx_file) -> pd.DataFrame:
+    return _read_fixed_row_sheet(
+        xlsx_file,
+        sheet_name="PowerGeneration-Indicators",
+        years_row_1idx=3,
+        value_row_1idx=41,
+        series_name="Carbon Intensity (in ktn CO2/GWh)",
+    )
+
+
 # -----------------------------
 # CO2 -> CO2e (CRF 2023 tabanli varsayim)
 # -----------------------------
@@ -1309,6 +1320,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     gdp = _filter_years(read_gdp_series(xlsx_file), start_year, max_year)
     carbon_price = _filter_years(read_carbon_price_series(xlsx_file), start_year, max_year)
     co2 = _filter_years(read_co2_emissions_series(xlsx_file), start_year, max_year)
+    carbon_intensity = _filter_years(read_carbon_intensity_series(xlsx_file), start_year, max_year)
 
     energy_em_sector_co2e = _filter_years(read_energy_emissions_sectoral_co2e(xlsx_file), start_year, max_year)
     energy_em_total_co2e = pd.DataFrame(columns=["year", "value", "series"])
@@ -1416,6 +1428,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "gdp": _add_scn_filled(gdp),
         "carbon_price": _add_scn_filled(carbon_price),
         "co2": _add_scn_filled(co2),
+        "carbon_intensity": _add_scn_filled(carbon_intensity),
         "energy_em_sector_co2e": _add_scn_filled(energy_em_sector_co2e),
         "energy_em_total_co2e": _add_scn_filled(energy_em_total_co2e),
         "co2_nz_stack": co2_nz_stack,
@@ -1451,6 +1464,7 @@ def _concat(key: str):
 df_pop = _concat("pop")
 df_gdp = _concat("gdp")
 df_co2 = _concat("co2")
+df_ci = _concat("carbon_intensity")
 df_co2_nz_stack = _concat("co2_nz_stack")
 df_cp = _concat("carbon_price")
 df_supply = _concat("total_supply")
@@ -1528,6 +1542,7 @@ def _build_export_workbook() -> bytes:
     frames["gdp"] = _normalize_for_export(df_gdp)
     frames["carbon_price"] = _normalize_for_export(df_cp)
     frames["co2"] = _normalize_for_export(df_co2)
+    frames["carbon_intensity"] = _normalize_for_export(df_ci)
 
     # Electricity
     frames["total_supply"] = _normalize_for_export(_maybe_energy(df_supply))
@@ -2469,6 +2484,7 @@ if "Sera Gazı Emisyonları" in selected_panels:
     st.markdown("## Sera Gazı Emisyonları")
 
     _line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
+    _line_chart(df_ci, "Carbon Intensity (in ktn CO2/GWh)", "ktn CO2 / GWh", value_format=",.3f")
     _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
 
     st.divider()
@@ -2575,39 +2591,3 @@ for scn in selected_scenarios:
     else:
         fig = _plot_generation_bar_race(d_plotly, _energy_unit_label())
         st.plotly_chart(fig, use_container_width=True)
-
-
-
-# =======================
-# Carbon Intensity Line Chart (PowerGeneration-Indicators)
-# =======================
-try:
-    st.subheader("Carbon Intensity (ktn CO2/GWh)")
-
-    df_pg_ind = pd.read_excel(uploaded_file, sheet_name="PowerGeneration-Indicators", header=None)
-
-    years = df_pg_ind.iloc[2, 1:].dropna()
-    carbon_intensity = df_pg_ind.iloc[40, 1:len(years)+1]
-
-    fig_ci = go.Figure()
-
-    fig_ci.add_trace(go.Scatter(
-        x=years,
-        y=carbon_intensity,
-        mode="lines+markers",
-        name="Carbon Intensity",
-        line=dict(width=3)
-    ))
-
-    fig_ci.update_layout(
-        title="Carbon Intensity (ktn CO2/GWh)",
-        xaxis_title="Yıl",
-        yaxis_title="ktn CO2/GWh",
-        template="plotly_white",
-        hovermode="x unified"
-    )
-
-    st.plotly_chart(fig_ci, use_container_width=True)
-
-except Exception as e:
-    st.warning(f"Carbon Intensity grafiği eklenemedi: {e}")
