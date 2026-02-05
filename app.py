@@ -558,7 +558,7 @@ def read_carbon_intensity_series(xlsx_file) -> pd.DataFrame:
         sheet_name="PowerGeneration-Indicators",
         years_row_1idx=3,
         value_row_1idx=41,
-        series_name="Carbon Intensity (in ktn CO2/GWh)",
+        series_name="Elektrik Üretimi Karbon Yoğunluğu (ktn CO2/GWh)",
     )
 
 
