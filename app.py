@@ -1820,7 +1820,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
             on="mouseover",
             nearest=True,
             clear="mouseout",
-            empty="all",
+            empty="none",
         )
 
         base_h = base.add_params(hover)
@@ -2142,7 +2142,7 @@ def _legend_filter_params(stack_field: str, sel_name: str | None = None):
         bind="legend",
         name=sel_name,
         clear="dblclick",
-        empty="all",
+        empty="none",
     )
     return sel, sel_name
 
@@ -2283,8 +2283,29 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
     if not is_percent:
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
 
-    bars = (
-        bars_src.transform_filter(sel).mark_bar()
+    # 1) Base layer: normal stacked bars, but non-selected categories fade when a selection exists.
+    base = (
+        bars_src.mark_bar()
+        .encode(
+            x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
+            xOffset=alt.XOffset("scenario:N"),
+            y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
+            color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
+            opacity=alt.condition(sel, alt.value(0.18), alt.value(1.0)),
+            tooltip=[
+                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip(f"{x_field}:O", title="Yıl"),
+                alt.Tooltip(f"{stack_field}:N", title=category_title),
+                alt.Tooltip("value:Q", title=y_title, format=value_format),
+                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
+            ],
+        )
+    )
+
+    # 2) Overlay layer: re-stacked selected category only => starts from zero (no 'floating' segment).
+    focus = (
+        bars_src.transform_filter(sel)
+        .mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
             xOffset=alt.XOffset("scenario:N"),
@@ -2298,9 +2319,10 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
                 *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
             ],
         )
-        .add_params(sel)
     )
-    st.altair_chart(bars.properties(height=420, padding={"bottom": 28}), use_container_width=True)
+
+    chart = (base + focus).add_params(sel)
+    st.altair_chart(chart.properties(height=420, padding={"bottom": 28}), use_container_width=True)
 
 
 def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False, color_map=None):
