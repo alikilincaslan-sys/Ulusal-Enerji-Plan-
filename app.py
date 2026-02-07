@@ -2204,7 +2204,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         sub = dfp[dfp["scenario"] == scn]
         if sub.empty:
             continue
-        sel = _legend_filter_params(stack_field, sel_name=f"legend_{re.sub(r'[^0-9a-zA-Z_]+','_',str(stack_field))}_{idx}")
+    sel = _legend_filter_params(stack_field, sel_name=f"legend_{re.sub(r'[^0-9a-zA-Z_]+','_',str(stack_field))}_{idx}")
 
         bars_src = alt.Chart(sub)
         if not is_percent:
