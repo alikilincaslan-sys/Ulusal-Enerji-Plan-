@@ -2131,24 +2131,8 @@ def _normalize_stacked_to_percent(df: pd.DataFrame, stack_field: str) -> pd.Data
     return dfp
 
 
-def _legend_filter_params(stack_field: str, sel_name: str | None = None):
-    """Legend tıklamasıyla seçim (stabil sürüm).
-
-    Notlar:
-    - Yalnızca *highlight* (opacity) için kullanılır; chart'ı filtrelemez.
-    - Her grafik için benzersiz bir name veriyoruz (Altair/Streamlit'te çakışma olmasın).
-    - Seçim yokken tüm seriler görünür (empty='all').
-    - Legend üzerinde çift tıkla seçim temizlenir (clear='dblclick').
-    """
-    if sel_name is None:
-        sel_name = f"legend_sel_{abs(hash(stack_field))}"
-    sel = alt.selection_point(
-        fields=[stack_field],
-        bind="legend",
-        name=sel_name,
-        clear="dblclick",
-        empty="all",
-    )
+def _legend_filter_params(stack_field: str):
+    sel = alt.selection_point(fields=[stack_field], bind="legend", name="legend_filter")
     return sel
 
 
@@ -2204,8 +2188,8 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         sub = dfp[dfp["scenario"] == scn]
         if sub.empty:
             continue
-        safe_sf = re.sub(r"[^0-9a-zA-Z_]+", "_", str(stack_field))
-        sel, _ = _legend_filter_params(stack_field, sel_name=f"legend_{safe_sf}_{idx}")
+
+        sel = _legend_filter_params(stack_field)
 
         bars_src = alt.Chart(sub)
         if not is_percent:
@@ -2275,8 +2259,8 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         else:
             yscale = alt.Undefined
 
-    safe_sf = re.sub(r"[^0-9a-zA-Z_]+", "_", str(stack_field))
-    sel, _ = _legend_filter_params(stack_field, sel_name=f"legend_{safe_sf}")
+    sel = _legend_filter_params(stack_field)
+
     bars_src = alt.Chart(dfp)
     if not is_percent:
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
@@ -2322,8 +2306,8 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
-    safe_sf = re.sub(r"[^0-9a-zA-Z_]+", "_", str(stack_field))
-    sel, _ = _legend_filter_params(stack_field, sel_name=f"legend_{safe_sf}_snap")
+    sel = _legend_filter_params(stack_field)
+
     bars_src = alt.Chart(dfp)
     if not is_percent:
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
