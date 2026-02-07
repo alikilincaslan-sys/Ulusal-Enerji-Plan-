@@ -2339,7 +2339,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
     sel, _ = _legend_filter_params(stack_field)
-bars_src = alt.Chart(dfp)
+    bars_src = alt.Chart(dfp)
     if not is_percent:
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
 
