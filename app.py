@@ -1820,7 +1820,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
             on="mouseover",
             nearest=True,
             clear="mouseout",
-            empty="none",
+            empty="all",
         )
 
         base_h = base.add_params(hover)
@@ -1901,7 +1901,7 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
     DONUT_DOMAIN = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
     DONUT_RANGE = ["#F39C12", "#2ECC71", "#9B59B6", "#95A5A6"]
 
-    sel = alt.selection_point(fields=[category_col], on="click", empty="none")
+    sel = alt.selection_point(fields=[category_col], on="click", empty="all")
 
     base = (
         alt.Chart(d)
@@ -2142,7 +2142,7 @@ def _legend_filter_params(stack_field: str, sel_name: str | None = None):
         bind="legend",
         name=sel_name,
         clear="dblclick",
-        empty="none",
+        empty="all",
     )
     return sel, sel_name
 
@@ -2205,11 +2205,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
 
         # Legend seçimi: filtrelemek yerine seçili olmayan segmentlerin değerini 0'a çekiyoruz.
         # Böylece seçili seri "tabandan" başlar (havada kalmaz).
-        expr = (
-            f"if(isValid({sel_name}['{stack_field}']), "
-            f"(datum['{stack_field}']=={sel_name}['{stack_field}'] ? datum.value : 0), "
-            f"datum.value)"
-        )
+        expr = f"if(isValid({sel_name}['{stack_field}']), (datum['{stack_field}']=={sel_name}['{stack_field}'] ? datum.value : 0), datum.value)"
 
         bars_src = alt.Chart(sub).add_params(sel).transform_calculate(value_f=expr)
         if not is_percent:
