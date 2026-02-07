@@ -2133,7 +2133,7 @@ def _normalize_stacked_to_percent(df: pd.DataFrame, stack_field: str) -> pd.Data
 
 def _legend_filter_params(stack_field: str, sel_name: str | None = None):
     # Legend tıklamasıyla seçili kategori "tek başına sıfırdan" görünsün diye
-    # selection'ı filtrelemek yerine value'yu 0'a indiriyoruz (stack yeniden tabana oturur).
+    # selection ile filtreliyoruz; empty='all' sayesinde seçim yokken tüm seriler görünür.
     # clear="dblclick": legend üzerinde çift tıkla seçim temizlenir.
     if sel_name is None:
         sel_name = f"legend_sel_{abs(hash(stack_field))}"
@@ -2203,11 +2203,9 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         safe_sf = re.sub(r"[^0-9a-zA-Z_]+", "_", str(stack_field))
         sel, sel_name = _legend_filter_params(stack_field, sel_name=f"legend_{safe_sf}_{idx}")
 
-        # Legend seçimi: filtrelemek yerine seçili olmayan segmentlerin değerini 0'a çekiyoruz.
-        # Böylece seçili seri "tabandan" başlar (havada kalmaz).
-        expr = f"if(isValid({sel_name}['{stack_field}']), (datum['{stack_field}']=={sel_name}['{stack_field}'] ? datum.value : 0), datum.value)"
-
-        bars_src = alt.Chart(sub).add_params(sel).transform_calculate(value_f=expr)
+        # Legend seçimi: Legend’e tıklayınca sadece seçili kategori kalsın (stack tabandan başlasın).
+        # empty='all' sayesinde hiçbir seçim yokken tüm seriler görünür; çift tık (dblclick) ile sıfırlanır.
+        bars_src = alt.Chart(sub).add_params(sel).transform_filter(sel)
         if not is_percent:
             bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=[x_field])
 
@@ -2215,8 +2213,8 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             bars_src.mark_bar()
             .encode(
                 x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
-                y=alt.Y("value_f:Q", title=y_title, stack=True, scale=yscale),
-                color=_source_color_encoding(sub, stack_field, category_title, order=order, color_map=color_map),
+                y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
+color=_source_color_encoding(sub, stack_field, category_title, order=order, color_map=color_map),
                 tooltip=[
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
                     alt.Tooltip(f"{stack_field}:N", title=category_title),
