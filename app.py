@@ -2204,7 +2204,8 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         sub = dfp[dfp["scenario"] == scn]
         if sub.empty:
             continue
-    sel = _legend_filter_params(stack_field, sel_name=f"legend_{re.sub(r'[^0-9a-zA-Z_]+','_',str(stack_field))}_{idx}")
+        safe_sf = re.sub(r"[^0-9a-zA-Z_]+", "_", str(stack_field))
+        sel, _ = _legend_filter_params(stack_field, sel_name=f"legend_{safe_sf}_{idx}")
 
         bars_src = alt.Chart(sub)
         if not is_percent:
@@ -2273,8 +2274,9 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
             yscale = alt.Scale(domain=[ymin - pad, ymax + pad])
         else:
             yscale = alt.Undefined
-        sel = _legend_filter_params(stack_field, sel_name=f"legend_{re.sub(r'[^0-9a-zA-Z_]+','_',str(stack_field))}_{idx}")
 
+    safe_sf = re.sub(r"[^0-9a-zA-Z_]+", "_", str(stack_field))
+    sel, _ = _legend_filter_params(stack_field, sel_name=f"legend_{safe_sf}")
     bars_src = alt.Chart(dfp)
     if not is_percent:
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
@@ -2319,8 +2321,9 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         dfp = dfp.sort_values(["year", "scenario", stack_field])
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
-        sel = _legend_filter_params(stack_field, sel_name=f"legend_{re.sub(r'[^0-9a-zA-Z_]+','_',str(stack_field))}_{idx}")
 
+    safe_sf = re.sub(r"[^0-9a-zA-Z_]+", "_", str(stack_field))
+    sel, _ = _legend_filter_params(stack_field, sel_name=f"legend_{safe_sf}_snap")
     bars_src = alt.Chart(dfp)
     if not is_percent:
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
