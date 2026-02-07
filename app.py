@@ -25,6 +25,24 @@ SOURCE_COLOR_MAP = {
     "Solar (GES)": "#ffd60a",
 }
 
+# =======================
+# Grafik-Türüne Özel Renk Haritaları (IEA/Bloomberg benzeri, yüksek kontrast)
+# =======================
+SECTOR_COLOR_MAP = {
+    "Energy Branch & Other Uses": "#4e79a7",  # mavi
+    "Industry": "#f28e2b",                   # turuncu
+    "Residential": "#59a14f",                # yeşil
+    "Tertiary": "#af7aa1",                   # mor
+    "Transport": "#e15759",                  # kırmızı
+}
+
+EMISSION_COMPONENT_COLOR_MAP = {
+    "Enerji Kaynakli (Model, CO2e)": "#4e79a7",                # mavi
+    "Enerji Disi Emisyonlar ve Diger SGE (Tahmini)": "#b07aa1", # magenta/mor
+    "LULUCF (Net Yutak, Tahmini)": "#59a14f",                  # yeşil
+}
+
+
 def get_source_color(name):
     if isinstance(name, str):
         for key, val in SOURCE_COLOR_MAP.items():
@@ -74,17 +92,28 @@ def _ordered_domain(values: list[str]) -> list[str]:
 
     return sorted(uniq, key=prio_key)
 
-def _source_color_encoding(df, field: str, title: str, order=None):
-    """Stacked/bar grafiklerde kaynakların rengini sabitle."""
+def _source_color_encoding(df, field: str, title: str, order=None, color_map=None):
+    """Stacked/bar grafiklerde kategorilerin rengini sabitle.
+
+    - color_map verilirse (dict: {kategori: '#RRGGBB'}) önce onu kullanır.
+    - Aksi halde enerji kaynak haritası + deterministik hash renk.
+    """
     try:
+        # normalize optional custom map (case-insensitive exact match)
+        cmap = None
+        if isinstance(color_map, dict) and len(color_map):
+            cmap = {str(k).strip().lower(): str(v).strip() for k, v in color_map.items() if k is not None and v is not None}
         if order is not None and len(order):
             domain = _ordered_domain([str(x) for x in order])
         else:
             domain = _ordered_domain([str(x) for x in df[field].dropna().unique().tolist()])
 
+        cmap = (color_map or SOURCE_COLOR_MAP)
         rng = []
         for d in domain:
-            c = get_source_color(d)
+            c = (cmap.get(str(d).strip().lower()) if cmap else None)
+            if not c:
+                c = get_source_color(d)
             rng.append(c if c else _hash_color(d))
 
         return alt.Color(f"{field}:N", title=title, sort=domain, scale=alt.Scale(domain=domain, range=rng))
@@ -2103,11 +2132,19 @@ def _normalize_stacked_to_percent(df: pd.DataFrame, stack_field: str) -> pd.Data
 
 
 def _legend_filter_params(stack_field: str):
-    sel = alt.selection_point(fields=[stack_field], bind="legend", name="legend_filter")
+    # empty="all": seçim yokken tüm seriler görünür
+    # clear="dblclick": legend üzerinde çift tıkla seçim temizlenir
+    sel = alt.selection_point(
+        fields=[stack_field],
+        bind="legend",
+        name="legend_filter",
+        empty="all",
+        clear="dblclick",
+    )
     return sel
 
 
-def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
+def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -2167,12 +2204,11 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=[x_field])
 
         bars = (
-            bars_src.mark_bar()
+            bars_src.transform_filter(sel).mark_bar()
             .encode(
                 x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
                 y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-                color=_source_color_encoding(sub, stack_field, category_title),
-                opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
+                color=_source_color_encoding(sub, stack_field, category_title, order=order, color_map=color_map),
                 tooltip=[
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
                     alt.Tooltip(f"{stack_field}:N", title=category_title),
@@ -2188,7 +2224,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
 
 
-def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False):
+def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -2237,13 +2273,12 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
 
     bars = (
-        bars_src.mark_bar()
+        bars_src.transform_filter(sel).mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-            color=_source_color_encoding(dfp, stack_field, category_title, order=order),
-            opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
+            color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
@@ -2257,7 +2292,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
     st.altair_chart(bars.properties(height=420, padding={"bottom": 28}), use_container_width=True)
 
 
-def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False):
+def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False, color_map=None):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -2284,13 +2319,12 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
 
     bars = (
-        bars_src.mark_bar()
+        bars_src.transform_filter(sel).mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-            color=_source_color_encoding(dfp, stack_field, category_title, order=order),
-            opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
+            color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
@@ -2304,7 +2338,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
     st.altair_chart(bars.properties(height=420), use_container_width=True)
 
 
-def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None):
+def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None, color_map=None):
     df_use = df
     y_title_use = y_title
     value_format_use = value_format
@@ -2340,7 +2374,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     title_use = title + (" (Pay %)" if is_percent else "")
     def _render_main():
         if compare_mode == "Küçük paneller (Ayrı Grafikler)":
-            _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
+            _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map)
         else:
             _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
     _render_main()
@@ -2484,6 +2518,8 @@ if "Elektrik" in selected_panels:
         y_title=_energy_unit_label(),
         category_title="Sektör",
         value_format=_energy_value_format(),
+        order=["Energy Branch & Other Uses", "Industry", "Residential", "Tertiary", "Transport"],
+        color_map=SECTOR_COLOR_MAP,
     )
 
     st.divider()
@@ -2591,6 +2627,7 @@ if "Sera Gazı Emisyonları" in selected_panels:
             "Enerji Disi Emisyonlar ve Diger SGE (Tahmini)",
             "LULUCF (Net Yutak, Tahmini)",
         ],
+        color_map=EMISSION_COMPONENT_COLOR_MAP,
     )
 
     st.divider()
