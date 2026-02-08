@@ -2568,14 +2568,14 @@ except Exception:
     _show_compact_top = True
 
 if _show_compact_top:
-    st.markdown("## Özet Göstergeler")
-    st.caption("Nüfus • GSYH • Kişi başına elektrik • Karbon fiyatı (kompakt görünüm)")
+    st.markdown("## Özet Varsayımlar")
+    st.caption("Senaryo varsayımları: Nüfus • GSYH • Kişi başına elektrik • Karbon fiyatı")
     c1, c2, c3, c4 = st.columns(4, gap="small")
 
     with c1:
-        _sparkline_chart(df_pop, "Nüfus", "Nüfus", value_format=",.0f", metric_unit="")
+        _sparkline_chart(df_pop, "Nüfus", "milyon kişi", value_format=",.0f", metric_unit="milyon kişi")
     with c2:
-        _sparkline_chart(df_gdp, "GSYH", "GSYH", value_format=",.1f", metric_unit="")
+        _sparkline_chart(df_gdp, "GSYH", "milyar $ (2015)", value_format=",.1f", metric_unit="milyar $")
     with c3:
         try:
             df_pc_top = _concat("per_capita_el")
