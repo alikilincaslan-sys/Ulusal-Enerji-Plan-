@@ -1339,6 +1339,13 @@ with st.sidebar:
 
 
 
+compact_top_kpis = st.checkbox(
+    "Üst göstergeleri kompakt göster",
+    value=True,
+    help="Nüfus/GSYH/Kişi başına elektrik/Karbon fiyatı gibi temel göstergeleri sayfanın üstünde küçük grafik kartları olarak gösterir.",
+)
+
+
 if not uploaded_files:
     st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
     st.stop()
@@ -1870,6 +1877,88 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 # -----------------------------
 # Donut charts (KPI mini-pies)
 # -----------------------------
+
+def _sparkline_chart(
+    df: pd.DataFrame,
+    label: str,
+    y_title: str,
+    value_format: str = ",.2f",
+    metric_unit: str | None = None,
+):
+    """Compact time-series: small chart + latest value metric (first selected scenario or diff series)."""
+    if df is None or df.empty:
+        st.caption(label)
+        st.write("—")
+        return
+
+    dfp = df.copy()
+    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
+    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
+    dfp = dfp.dropna(subset=["year", "value", "scenario"])
+    if dfp.empty:
+        st.caption(label)
+        st.write("—")
+        return
+    dfp["year"] = dfp["year"].astype(int)
+
+    # Apply diff mode (same rules as _line_chart)
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)")
+    a = globals().get("diff_scn_a")
+    b = globals().get("diff_scn_b")
+    if diff_on and a and b:
+        sub = dfp[dfp["scenario"].isin([a, b])]
+        if not sub.empty:
+            wide = sub.pivot_table(index="year", columns="scenario", values="value", aggfunc="mean")
+            if (a in wide.columns) and (b in wide.columns):
+                wide = wide[[a, b]].copy()
+                wide["value"] = wide[a] - wide[b]
+                out = wide.reset_index()[["year", "value"]]
+                out["scenario"] = f"Fark: {a} - {b}"
+                dfp = out
+
+    year_vals = sorted(dfp["year"].unique().tolist())
+
+    # Latest value metric (prefer first selected scenario when not in diff mode)
+    metric_series = None
+    if "Fark:" in str(dfp["scenario"].iloc[0]):
+        metric_series = dfp["scenario"].iloc[0]
+    else:
+        sel = globals().get("selected_scenarios", None)
+        if isinstance(sel, list) and len(sel) > 0:
+            metric_series = sel[0]
+        metric_series = metric_series or dfp["scenario"].iloc[0]
+
+    latest = dfp[dfp["scenario"] == metric_series].sort_values("year")
+    latest_val = latest["value"].iloc[-1] if not latest.empty else dfp.sort_values("year")["value"].iloc[-1]
+    latest_year = int(latest["year"].iloc[-1]) if (not latest.empty) else int(dfp.sort_values("year")["year"].iloc[-1])
+
+    st.caption(label)
+    try:
+        st.metric(
+            label="",
+            value=(f"{latest_val:{value_format}}" if isinstance(value_format, str) and value_format.startswith(',') else f"{latest_val:.2f}") + (f" {metric_unit}" if metric_unit else ""),
+            help=f"Son değer ({latest_year}) • Gösterim: {metric_series}",
+        )
+    except Exception:
+        st.write(f"{latest_val} {metric_unit or ''}")
+
+    base = alt.Chart(dfp).encode(
+        color=alt.Color("scenario:N", legend=None),
+        tooltip=[
+            alt.Tooltip("scenario:N", title="Senaryo"),
+            alt.Tooltip("year:O", title="Yıl"),
+            alt.Tooltip("value:Q", title=y_title or label, format=value_format),
+        ],
+    )
+
+    chart = base.mark_line(interpolate="monotone").encode(
+        x=alt.X("year:Q", title=None, scale=alt.Scale(domain=[min(year_vals), max(year_vals)]), axis=alt.Axis(labels=False, ticks=False, domain=False)),
+        y=alt.Y("value:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False)),
+    ).properties(height=120)
+
+    st.altair_chart(chart, use_container_width=True)
+
+
 
 def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str, value_format: str = ",.0f"):
     """KPI donut (uyumlu/sabit).
@@ -2463,6 +2552,35 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
 # PANELS
 # -----------------------------
 # ELECTRICITY PANEL
+# -----------------------------
+# Compact top KPIs (space-efficient)
+# -----------------------------
+try:
+    _show_compact_top = bool(globals().get("compact_top_kpis", True))
+except Exception:
+    _show_compact_top = True
+
+if _show_compact_top:
+    st.markdown("## Özet Göstergeler")
+    st.caption("Nüfus • GSYH • Kişi başına elektrik • Karbon fiyatı (kompakt görünüm)")
+    c1, c2, c3, c4 = st.columns(4, gap="small")
+
+    with c1:
+        _sparkline_chart(df_pop, "Nüfus", "Nüfus", value_format=",.0f", metric_unit="")
+    with c2:
+        _sparkline_chart(df_gdp, "GSYH", "GSYH", value_format=",.1f", metric_unit="")
+    with c3:
+        try:
+            df_pc_top = _concat("per_capita_el")
+        except Exception:
+            df_pc_top = pd.DataFrame()
+        _sparkline_chart(df_pc_top, "Kişi Başına Elektrik", "kWh/kişi", value_format=",.0f", metric_unit="kWh/kişi")
+    with c4:
+        _sparkline_chart(df_cp, "Karbon Fiyatı", "ABD Doları (2015) / tCO₂", value_format=",.2f", metric_unit="$/tCO₂")
+
+    st.divider()
+
+
 if "Elektrik" in selected_panels:
     st.markdown("## Elektrik")
 
