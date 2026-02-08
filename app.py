@@ -29,11 +29,11 @@ SOURCE_COLOR_MAP = {
 # Grafik-Türüne Özel Renk Haritaları (IEA/Bloomberg benzeri, yüksek kontrast)
 # =======================
 SECTOR_COLOR_MAP = {
-    "Energy Branch & Other Uses": "#6f9fb8",
-    "Industry": "#f0b48f",
-    "Residential": "#9fd3a5",
-    "Tertiary": "#d0b3f0",
-    "Transport": "#f29aa3",
+    "Energy Branch & Other Uses": "#7aa6c2",
+    "Industry": "#f2a97b",
+    "Residential": "#8fc98f",
+    "Tertiary": "#c4a7e7",
+    "Transport": "#e88b9a",
 }
 
 EMISSION_COMPONENT_COLOR_MAP = {
@@ -95,157 +95,43 @@ def _ordered_domain(values: list[str]) -> list[str]:
 def _source_color_encoding(df, field: str, title: str, order=None, color_map=None):
     """Stacked/bar grafiklerde kategorilerin rengini sabitle.
 
-    - color_map verilirse (dict: {kategori: '#RRGGBB'}) önce onu kullanır.
-    - Aksi halde enerji kaynak haritası + deterministik hash renk.
+    - Eğer `color_map` verilirse (dict: {kategori: '#RRGGBB'}) *case-insensitive* EXACT eşleşme ile kullanır.
+    - Aksi halde SOURCE_COLOR_MAP + deterministik hash renk kullanır.
+    - `order` verilirse domain sırası ona göre sabitlenir.
     """
     try:
-        # normalize optional custom map (case-insensitive exact match)
-        cmap = None
-        if isinstance(color_map, dict) and len(color_map):
-            cmap = {str(k).strip().lower(): str(v).strip() for k, v in color_map.items() if k is not None and v is not None}
-        if order is not None and len(order):
-            domain = _ordered_domain([str(x) for x in order])
-        else:
-            domain = _ordered_domain([str(x) for x in df[field].dropna().unique().tolist()])
+        # pick base map
+        base_map = color_map if isinstance(color_map, dict) and len(color_map) else SOURCE_COLOR_MAP
 
-        cmap = (color_map or SOURCE_COLOR_MAP)
+        # normalize keys to lowercase for case-insensitive exact match
+        cmap = {str(k).strip().lower(): str(v) for k, v in base_map.items()}
+
+        # domain (legend order)
+        if order is not None:
+            domain = [str(o) for o in order]
+        else:
+            domain = _ordered_domain(df[field].dropna().astype(str).tolist())
+
+        # build range aligned to domain
         rng = []
         for d in domain:
-            c = (cmap.get(str(d).strip().lower()) if cmap else None)
-            if not c:
-                c = get_source_color(d)
-            rng.append(c if c else _hash_color(d))
+            key = str(d).strip().lower()
+            c = cmap.get(key)
 
-        return alt.Color(f"{field}:N", title=title, sort=domain, scale=alt.Scale(domain=domain, range=rng))
+            # if we're using SOURCE_COLOR_MAP, try substring-based mapping as a fallback
+            if c is None and base_map is SOURCE_COLOR_MAP:
+                c = get_source_color(d)
+
+            if c is None:
+                c = _hash_color(d)
+            rng.append(c)
+
+        return alt.Color(f"{field}:N", title=title, scale=alt.Scale(domain=domain, range=rng))
     except Exception:
         # fallback: Altair default
         return alt.Color(f"{field}:N", title=title)
 
 
-# app.py
-import re
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
-import streamlit as st
-import altair as alt
-from io import BytesIO
-
-st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
-
-# -----------------------------
-# Units
-# -----------------------------
-# Electricity / energy values are read as GWh.
-# Optional display conversion: GWh -> thousand toe (ktoe, "bin TEP").
-# 1 toe = 11.63 MWh  =>  1 GWh = 1000/11.63 = 85.9845 toe = 0.0859845 ktoe
-GWH_TO_KTOE = 0.0859845
-
-# -----------------------------
-# Config
-# -----------------------------
-# DEFAULT max year (will be overwritten by sidebar year range)
-MAX_YEAR = 2050
-
-# Electricity supply (GWh) – reference
-TOTAL_SUPPLY_LABEL = "Total Domestic Power Generation - Gross"
-
-# Installed capacity total row (GW) - label kept for reference, but KG total uses row formula below
-TOTAL_CAPACITY_LABEL = "Gross Installed Capacity (in GWe)"
-
-# Storage & PTX total rows (GW / GWh depending on block)
-TOTAL_STORAGE_LABEL = "Total Storage"
-TOTAL_PTX_LABEL = "Total Power to X"
-
-# --- KG TOTAL RULE (Excel 1-indexed rows in Power_Generation sheet) ---
-KG_BASE_ROW_1IDX = 79
-KG_SUB_ROW_1IDX_1 = 102
-KG_SUB_ROW_1IDX_2 = 106
-
-# --- NEW: Extra rows to add into "Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç" ---
-# Power_Generation sheet (Excel 1-indexed)
-CAPACITY_EXTRA_ROWS_1IDX = [98, 99, 100, 101]
-
-# NEW: bu satırlar boş geliyorsa isimleri buradan ver
-EXTRA_ROW_NAME_MAP = {
-    98: "Biomass",
-    99: "Biomass",
-    100: "Geothermal",
-    101: "Geothermal",
-}
-
-# --- GDP / POP / CARBON PRICE RULES (Scenario_Assumptions sheet) ---
-GDP_ROW_1IDX = 6  # Scenario_Assumptions sekmesinde 6. satır (GSYH)
-POP_ROW_1IDX = 5  # Scenario_Assumptions sekmesinde 5. satır (Nüfus)
-SCENARIO_ASSUMP_YEARS_ROW_1IDX = 3  # Scenario_Assumptions sekmesinde 3. satır (Yıllar)
-CARBON_PRICE_ROW_1IDX = 15  # Scenario_Assumptions sekmesinde 15. satır (Carbon price ETS sectors, US$ '15/tnCO2)
-
-# Exclude headers/subtotals – installed capacity
-# NOTE: we DO NOT exclude Total Storage / Total Power to X, because we use them as totals.
-CAPACITY_EXCLUDE_EXACT = {
-    "Renewables",
-    "Combustion Plants",
-}
-CAPACITY_EXCLUDE_REGEX = re.compile(r"^\s*Total\s+(?!Storage\b)(?!Power to X\b)", flags=re.IGNORECASE)
-
-# Exclude headers/subtotals – gross generation block
-GEN_EXCLUDE_EXACT = {
-    "Renewables",
-    "Combustion Plants",
-}
-GEN_EXCLUDE_REGEX = re.compile(r"^\s*Total\s+(?!Storage\b)(?!Power to X\b)", flags=re.IGNORECASE)
-
-# Components that should NOT be counted if Total Storage exists (avoid double count)
-STORAGE_COMPONENT_REGEX = re.compile(
-    r"(pumped\s+storage|\bbattery\b|demand\s+response)",
-    flags=re.IGNORECASE,
-)
-
-# PTX components (if Total Power to X not present)
-PTX_COMPONENT_REGEX = re.compile(
-    r"^power\s+to\s+(hydrogen|gas|liquids)\b|power\s+to\s+x",
-    flags=re.IGNORECASE,
-)
-
-# Natural gas should be ONLY the sum of these items (avoid over-counting)
-NATURAL_GAS_ITEMS_EXACT = {
-    "Industrial CHP Plant Solid fuels",
-    "CCGT without CCS",
-    "CCGT with CCS",
-    "Open cycle, IC and GT",
-    "Industrial CHP plants Oil/Gas",
-}
-NATURAL_GAS_REGEX = re.compile(
-    r"^(industrial\s+chp\s+plant\s+solid\s+fuels|ccgt\s+without\s+ccs|ccgt\s+with\s+ccs|open\s+cycle,\s*ic\s+and\s+gt|industrial\s+chp\s+plants?\s+oil/gas)$",
-    flags=re.IGNORECASE,
-)
-
-# Technology mapping
-TECH_GROUPS = {
-    "Hydro": [r"\bhydro\b"],
-    "Wind (RES)": [r"\bwind\b", r"\bres\b"],
-    "Solar (GES)": [r"\bsolar\b", r"\bges\b", r"\bpv\b"],
-    "Coal": [r"\bcoal\b(?!.*lignite)"],
-    "Lignite": [r"\blignite\b"],
-    "Nuclear": [r"\bnuclear\b"],
-    "Other Renewables": [
-        r"\bgeothermal\b",
-        r"\bbiomass\b",
-        r"\bbiogas\b",
-        r"\bwaste\b",
-        r"\bwave\b",
-        r"\btidal\b",
-    ],
-}
-
-RENEWABLE_GROUPS = {"Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables"}
-INTERMITTENT_RE_GROUPS = {"Wind (RES)", "Solar (GES)"}
-
-
-# -----------------------------
-# Helpers
-# -----------------------------
 def _as_int_year(x):
     """Yıl hücresini mümkün olduğunca sağlam parse et."""
     try:
