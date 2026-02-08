@@ -1232,11 +1232,24 @@ st.divider()
 with st.sidebar:
     st.header("Paneller")
 
+    # Üst bilgi kartları (her zaman en üstte yer alır; panellerden bağımsız)
+    compact_top_kpis = st.checkbox(
+        "Üst bilgi kartlarını göster",
+        value=True,
+        help="Nüfus/GSYH/Kişi başına elektrik/Karbon fiyatı gibi temel göstergeleri sayfanın en üstünde küçük kartlar olarak gösterir. Panel seçimlerinden bağımsızdır.",
+    )
+
+    show_assumptions = st.checkbox("Senaryo Varsayımları", value=False)
+    show_indicators = st.checkbox("Sistem Göstergeleri", value=False)
     show_electric = st.checkbox("Elektrik", value=True)
     show_energy = st.checkbox("Enerji", value=True)
     show_emissions = st.checkbox("Sera Gazı Emisyonları", value=True)
 
     selected_panels = []
+    if show_assumptions:
+        selected_panels.append("Senaryo Varsayımları")
+    if show_indicators:
+        selected_panels.append("Sistem Göstergeleri")
     if show_electric:
         selected_panels.append("Elektrik")
     if show_energy:
@@ -1338,12 +1351,6 @@ with st.sidebar:
     )
 
 
-
-compact_top_kpis = st.checkbox(
-    "Üst göstergeleri kompakt göster",
-    value=True,
-    help="Nüfus/GSYH/Kişi başına elektrik/Karbon fiyatı gibi temel göstergeleri sayfanın üstünde küçük grafik kartları olarak gösterir.",
-)
 
 
 if not uploaded_files:
@@ -2581,19 +2588,22 @@ if _show_compact_top:
     st.divider()
 
 
-if "Elektrik" in selected_panels:
-    st.markdown("## Elektrik")
-
-    _line_chart(df_pop, "Türkiye Nüfus Gelişimi", "Nüfus (milyon)", value_format=",.3f")
+if "Senaryo Varsayımları" in selected_panels:
+    st.markdown("## Senaryo Varsayımları")
+    _line_chart(df_pop, "Türkiye Nüfus Gelişimi", "Nüfus", value_format=",.3f")
     _line_chart(df_gdp, "GSYH (Milyar ABD Doları, 2015 fiyatlarıyla)", "Milyar ABD Doları (2015)", value_format=",.2f")
-
+    _line_chart(df_cp, "Karbon Fiyatı (Varsayım)", "ABD Doları (2015) / tCO₂", value_format=",.2f")
     st.divider()
 
+if "Sistem Göstergeleri" in selected_panels:
+    st.markdown("## Sistem Göstergeleri")
     df_pc = _concat("per_capita_el")
     _line_chart(df_pc, "Kişi Başına Elektrik Tüketimi (kWh/kişi)", "kWh/kişi", value_format=",.0f")
     _line_chart(df_electrification, "Nihai Enerjide Elektrifikasyon Oranı (%)", "%", value_format=",.1f")
-
     st.divider()
+
+if "Elektrik" in selected_panels:
+    st.markdown("## Elektrik")
 
     order_gen = ["Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
     _render_stacked(
