@@ -18,6 +18,15 @@ SCENARIO_ASSUMP_YEARS_ROW_1IDX = 3  # Scenario_Assumptions sekmesinde 3. satır 
 CARBON_PRICE_ROW_1IDX = 15  # Scenario_Assumptions sekmesinde 15. satır (Carbon price ETS sectors, US$ '15/tnCO2)
 
 # =======================
+# Electricity / capacity label constants (Excel row labels)
+# =======================
+TOTAL_SUPPLY_LABEL = "Total Domestic Power Generation - Gross"
+TOTAL_CAPACITY_LABEL = "Gross Installed Capacity (in GWe)"
+TOTAL_STORAGE_LABEL = "Total Storage"
+TOTAL_PTX_LABEL = "Total Power to X"
+
+
+# =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
 SOURCE_COLOR_MAP = {
