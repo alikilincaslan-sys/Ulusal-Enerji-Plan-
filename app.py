@@ -29,11 +29,11 @@ SOURCE_COLOR_MAP = {
 # Grafik-Türüne Özel Renk Haritaları (IEA/Bloomberg benzeri, yüksek kontrast)
 # =======================
 SECTOR_COLOR_MAP = {
-    "Energy Branch & Other Uses": "#4e79a7",  # mavi
-    "Industry": "#f28e2b",                   # turuncu
-    "Residential": "#59a14f",                # yeşil
-    "Tertiary": "#af7aa1",                   # mor
-    "Transport": "#e15759",                  # kırmızı
+    "Energy Branch & Other Uses": "#7aa6c2",
+    "Industry": "#f2a97b",
+    "Residential": "#8fc98f",
+    "Tertiary": "#c4a7e7",
+    "Transport": "#e88b9a",
 }
 
 EMISSION_COMPONENT_COLOR_MAP = {
