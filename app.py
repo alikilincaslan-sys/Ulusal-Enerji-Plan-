@@ -1,3 +1,12 @@
+# --- Imports (must be before any type hints / Altair usage) ---
+import re
+from pathlib import Path
+from io import BytesIO
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+import altair as alt
 
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
