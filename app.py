@@ -37,6 +37,13 @@ SECTOR_COLOR_MAP = {
     "Transport": "#f29aa3",
 }
 
+
+STORAGE_PTX_COLOR_MAP = {
+    # Anlam odaklı: Depolama=yeşil, PTX=mavi (pastel ama ayrışan)
+    "Total Storage": "#6CCF8A",
+    "Power to X": "#4C8DFF",
+}
+
 EMISSION_COMPONENT_COLOR_MAP = {
     "Enerji Kaynakli (Model, CO2e)": "#4e79a7",                # mavi
     "Enerji Disi Emisyonlar ve Diger SGE (Tahmini)": "#b07aa1", # magenta/mor
@@ -157,6 +164,7 @@ import streamlit as st
 import altair as alt
 from io import BytesIO
 
+import base64
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 
 # -----------------------------
@@ -1236,7 +1244,33 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
 # -----------------------------
 # UI
 # -----------------------------
-st.title("Türkiye Ulusal Enerji Planı Modeli Arayüzü")
+
+# -----------------------------
+# Header helper (title + logo on the same line)
+# -----------------------------
+def render_title_with_logo(title: str, logo_filename: str = "logo.png", logo_height_px: int = 58):
+    """Render a single-line header with an optional logo on the right (offline-safe)."""
+    try:
+        app_dir = Path(__file__).resolve().parent
+        logo_path = app_dir / logo_filename
+        if logo_path.exists():
+            b64 = base64.b64encode(logo_path.read_bytes()).decode("utf-8")
+            # Use flex so logo sits on the same baseline as the title
+            st.markdown(
+                f'''
+                <div style="display:flex; align-items:center; gap:18px; margin-top:-6px; margin-bottom:0px;">
+                  <h1 style="margin:0; padding:0; font-size:2.05rem; line-height:1.15;">{title}</h1>
+                  <img src="data:image/png;base64,{b64}" style="height:{logo_height_px}px; width:auto; opacity:0.95;" />
+                </div>
+                ''',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.title(title)
+    except Exception:
+        st.title(title)
+
+render_title_with_logo("Türkiye Ulusal Enerji Planı Modeli Arayüzü", logo_filename="logo.png", logo_height_px=58)
 
 # -----------------------------
 # Main (top) – File upload (professional, compact)
@@ -2711,6 +2745,7 @@ if "Elektrik" in selected_panels:
         category_title="Kategori",
         value_format=",.3f",
         order=order_storage_ptx,
+        color_map=STORAGE_PTX_COLOR_MAP,
     )
 
     st.divider()
