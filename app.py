@@ -27,6 +27,70 @@ TOTAL_PTX_LABEL = "Total Power to X"
 
 
 # =======================
+# Exclude / teknoloji eşleştirme kuralları
+# =======================
+
+# Exclude headers/subtotals – installed capacity
+# NOTE: Total Storage / Total Power to X satırlarını burada dışlamıyoruz; bunlar ayrı toplam olarak kullanılıyor.
+CAPACITY_EXCLUDE_EXACT = {
+    "Renewables",
+    "Combustion Plants",
+}
+CAPACITY_EXCLUDE_REGEX = re.compile(r"^\s*Total\s+(?!Storage\b)(?!Power to X\b)", flags=re.IGNORECASE)
+
+# Exclude headers/subtotals – gross generation block
+GEN_EXCLUDE_EXACT = {
+    "Renewables",
+    "Combustion Plants",
+}
+GEN_EXCLUDE_REGEX = re.compile(r"^\s*Total\s+(?!Storage\b)(?!Power to X\b)", flags=re.IGNORECASE)
+
+# Components that should NOT be counted if Total Storage exists (avoid double count)
+STORAGE_COMPONENT_REGEX = re.compile(
+    r"(pumped\s+storage|\bbattery\b|demand\s+response)",
+    flags=re.IGNORECASE,
+)
+
+# PTX components (if Total Power to X not present)
+PTX_COMPONENT_REGEX = re.compile(
+    r"^power\s+to\s+(hydrogen|gas|liquids)\b|power\s+to\s+x",
+    flags=re.IGNORECASE,
+)
+
+# Natural gas should be ONLY the sum of these items (avoid over-counting)
+NATURAL_GAS_ITEMS_EXACT = {
+    "Industrial CHP Plant Solid fuels",
+    "CCGT without CCS",
+    "CCGT with CCS",
+    "Open cycle, IC and GT",
+    "Industrial CHP plants Oil/Gas",
+}
+NATURAL_GAS_REGEX = re.compile(
+    r"^(industrial\s+chp\s+plant\s+solid\s+fuels|ccgt\s+without\s+ccs|ccgt\s+with\s+ccs|open\s+cycle,\s*ic\s+and\s+gt|industrial\s+chp\s+plants?\s+oil/gas)$",
+    flags=re.IGNORECASE,
+)
+
+# Technology mapping (gross generation / capacity gruplama)
+TECH_GROUPS = {
+    "Hydro": [r"\bhydro\b"],
+    "Wind (RES)": [r"\bwind\b", r"\bres\b"],
+    "Solar (GES)": [r"\bsolar\b", r"\bges\b", r"\bpv\b"],
+    "Coal": [r"\bcoal\b(?!.*lignite)"],
+    "Lignite": [r"\blignite\b"],
+    "Nuclear": [r"\bnuclear\b"],
+    "Other Renewables": [
+        r"\bgeothermal\b",
+        r"\bbiomass\b",
+        r"\bbiogas\b",
+        r"\bwaste\b",
+        r"\bwave\b",
+        r"\btidal\b",
+    ],
+}
+RENEWABLE_GROUPS = {"Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables"}
+INTERMITTENT_RE_GROUPS = {"Wind (RES)", "Solar (GES)"}
+
+# =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
 SOURCE_COLOR_MAP = {
