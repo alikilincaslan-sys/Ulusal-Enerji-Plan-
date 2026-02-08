@@ -8,6 +8,15 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
+
+# =======================
+# Scenario Assumptions – Sabit Satır Kuralları (Excel 1-indexed)
+# =======================
+GDP_ROW_1IDX = 6  # Scenario_Assumptions sekmesinde 6. satır (GSYH)
+POP_ROW_1IDX = 5  # Scenario_Assumptions sekmesinde 5. satır (Nüfus)
+SCENARIO_ASSUMP_YEARS_ROW_1IDX = 3  # Scenario_Assumptions sekmesinde 3. satır (Yıllar)
+CARBON_PRICE_ROW_1IDX = 15  # Scenario_Assumptions sekmesinde 15. satır (Carbon price ETS sectors, US$ '15/tnCO2)
+
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
@@ -38,11 +47,11 @@ SOURCE_COLOR_MAP = {
 # Grafik-Türüne Özel Renk Haritaları (IEA/Bloomberg benzeri, yüksek kontrast)
 # =======================
 SECTOR_COLOR_MAP = {
-    "Energy Branch & Other Uses": "#7aa6c2",
-    "Industry": "#f2a97b",
-    "Residential": "#8fc98f",
-    "Tertiary": "#c4a7e7",
-    "Transport": "#e88b9a",
+    "Energy Branch & Other Uses": "#6f9fb8",
+    "Industry": "#f0b48f",
+    "Residential": "#9fd3a5",
+    "Tertiary": "#d0b3f0",
+    "Transport": "#f29aa3",
 }
 
 EMISSION_COMPONENT_COLOR_MAP = {
