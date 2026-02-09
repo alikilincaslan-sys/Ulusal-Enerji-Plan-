@@ -1014,6 +1014,97 @@ def read_energy_import_dependency_ratio(xlsx_file) -> pd.DataFrame:
     return df
 
 
+def read_local_content_ratio(xlsx_file) -> pd.DataFrame:
+    """Enerjide dışa bağımlılık yüzdesi zaman serisi.
+
+    Kaynak: Summary&Indicators sekmesi.
+
+    Excel yerleşimi (senin dosyana göre):
+    - Yıllar: C3'ten başlayarak sağa doğru (C3, D3, E3, ...)
+    - Değerler: C11'den başlayarak sağa doğru (C11, D11, E11, ...)
+
+    Not: Yerli DG dahil değildir.
+    """
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    YEARS_ROW_1IDX = 3
+    VALUES_ROW_1IDX = 11
+    START_COL_1IDX = 3  # C
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    val_r0 = VALUES_ROW_1IDX - 1
+    c0 = START_COL_1IDX - 1
+
+    def _finalize(recs):
+        df = pd.DataFrame(recs)
+        if df.empty:
+            return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+        df = df.sort_values("year")
+        df["series"] = "Enerjide Dışa Bağımlılık Yüzdesi (%) — Yerli DG dahil değildir"
+        df["sheet"] = "Summary&Indicators"
+        return df
+
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+    if yr_r0 < 0 or val_r0 < 0 or yr_r0 >= len(raw) or val_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+    if c0 < 0 or c0 >= raw.shape[1]:
+        return pd.DataFrame(columns=["year", "value", "series", "sheet"])
+
+    # Yatay okuma: C sütunundan başlayıp sağa doğru; ardışık 3 boş/uygunsuz yıl görünce dur.
+    recs = []
+    blank_streak = 0
+    for j in range(c0, raw.shape[1]):
+        y = _as_int_year(raw.iloc[yr_r0, j])
+        if y is None or int(y) > MAX_YEAR:
+            blank_streak += 1
+            if blank_streak >= 3:
+                break
+            continue
+
+        blank_streak = 0
+        v = pd.to_numeric(raw.iloc[val_r0, j], errors="coerce")
+        if pd.isna(v):
+            # yıl var ama değer yoksa atla; seri devam edebilir
+            continue
+        recs.append({"year": int(y), "value": float(v)})
+
+    # Eğer yine boşsa (beklenmeyen format), eski K/L okuma fallback'i dene
+    df = _finalize(recs)
+    if not df.empty:
+        return df
+
+    # ---- Fallback: önceki varsayımsal K/L formatı ----
+    YEAR_COL_1IDX = 11  # K
+    VAL_COL_1IDX = 12   # L
+    START_ROW_1IDX = 3
+
+    y_c0 = YEAR_COL_1IDX - 1
+    v_c0 = VAL_COL_1IDX - 1
+    r0 = START_ROW_1IDX - 1
+
+    recs = []
+    blank_streak = 0
+    for i in range(r0, len(raw)):
+        y = _as_int_year(raw.iloc[i, y_c0] if y_c0 < raw.shape[1] else None)
+        if y is None or int(y) > MAX_YEAR:
+            blank_streak += 1
+            if blank_streak >= 2:
+                break
+            continue
+        blank_streak = 0
+        v = pd.to_numeric(raw.iloc[i, v_c0] if v_c0 < raw.shape[1] else None, errors="coerce")
+        if pd.isna(v):
+            continue
+        recs.append({"year": int(y), "value": float(v)})
+
+    return _finalize(recs)
+
+
+
 def read_gdp_series(xlsx_file) -> pd.DataFrame:
     return _read_scenario_assumptions_row(xlsx_file, GDP_ROW_1IDX, "GSYH")
 
@@ -1535,6 +1626,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     final_energy_source = _filter_years(read_final_energy_consumption_by_source(xlsx_file), start_year, max_year)
     dependency_ratio = _filter_years(read_energy_import_dependency_ratio(xlsx_file), start_year, max_year)
     electrification_ratio = _filter_years(read_final_energy_electrification_ratio(xlsx_file), start_year, max_year)
+    local_content_ratio = _filter_years(read_local_content_ratio(xlsx_file), start_year, max_year)
 
     total_supply = _filter_years(get_series_from_block(balance, TOTAL_SUPPLY_LABEL), start_year, max_year)
 
@@ -1625,6 +1717,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "final_energy_source": _add_scn_filled(final_energy_source),
         "dependency_ratio": _add_scn_filled(dependency_ratio),
         "electrification_ratio": _add_scn_filled(electrification_ratio),
+        "local_content_ratio": _add_scn_filled(local_content_ratio),
         "ye_both": _add_scn_filled(ye_both),
         "per_capita_el": _add_scn_filled(per_capita),
         "storage_ptx": _add_scn_filled(storage_ptx),
@@ -1657,6 +1750,8 @@ df_primary = _concat("primary_energy_source")
 df_sector_el = _concat("electricity_by_sector")
 df_final = _concat("final_energy_source")
 df_electrification = _concat("electrification_ratio")
+df_dependency = _concat("dependency_ratio")
+df_local_content = _concat("local_content_ratio")
 df_storage_ptx = _concat("storage_ptx")
 
 
@@ -1739,6 +1834,7 @@ def _build_export_workbook() -> bytes:
     frames["primary_energy_by_source"] = _normalize_for_export(_maybe_energy(df_primary))
     frames["final_energy_by_source"] = _normalize_for_export(_maybe_energy(df_final))
     frames["electrification_ratio"] = _normalize_for_export(df_electrification)
+    frames["local_content_ratio"] = _normalize_for_export(df_local_content)
 
     # Emissions (some are stacked)
     frames["co2_nz_stack"] = _normalize_for_export(df_co2_nz_stack)
@@ -2157,6 +2253,12 @@ def _kpi_for_bundle(b):
     if latest_year and cap_total is not None and not cap_total.empty and (cap_total["year"] == latest_year).any():
         latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
 
+    # Dışa bağımlılık oranı (%) — seçili senaryo, son yıl
+    dep_rate = np.nan
+    dep = b.get("dependency_ratio")
+    if latest_year and dep is not None and (not dep.empty) and (dep["year"] == latest_year).any():
+        dep_rate = float(dep.loc[dep["year"] == latest_year, "value"].iloc[0])
+
     gdp_cagr = np.nan
     if gdp is not None and not gdp.empty:
         g = gdp.sort_values("year")
@@ -2221,6 +2323,7 @@ def _kpi_for_bundle(b):
         "ye_total": latest_ye_total,
         "ye_int": latest_ye_int,
         "cap_total": latest_cap,
+        "dep_rate": dep_rate,
         "gdp_cagr": gdp_cagr,
         "donut_year": donut_y,
         "pie_gen": pie_gen,
@@ -2243,6 +2346,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         )
 
         st.metric("YE Payı (%)", f"{kpi['ye_total']:.1f}% / {kpi['ye_int']:.1f}%" if np.isfinite(kpi["ye_total"]) else "—")
+        st.metric("Dışa Bağımlılık (%)", f"{kpi['dep_rate']:.1f}%" if np.isfinite(kpi.get("dep_rate", np.nan)) else "—")
         st.metric("Elektrik Kurulu Gücü (GW)", f"{kpi['cap_total']:,.3f}" if np.isfinite(kpi["cap_total"]) else "—")
 
         # Mini dağılım grafiği (donut) — dilime tıklayınca büyür
@@ -2629,7 +2733,7 @@ except Exception:
 if _show_compact_top:
     st.markdown("## Özet Varsayımlar")
     st.caption("Senaryo varsayımları: Nüfus • GSYH • Kişi başına elektrik • Karbon fiyatı")
-    c1, c2, c3, c4 = st.columns(4, gap="small")
+    c1, c2, c3, c4, c5 = st.columns(5, gap="small")
 
     with c1:
         _sparkline_chart(df_pop, "Nüfus", "milyon kişi", value_format=",.0f", metric_unit="milyon kişi")
@@ -2643,6 +2747,13 @@ if _show_compact_top:
         _sparkline_chart(df_pc_top, "Kişi Başına Elektrik", "kWh/kişi", value_format=",.0f", metric_unit="kWh/kişi")
     with c4:
         _sparkline_chart(df_cp, "Karbon Fiyatı", "ABD Doları (2015) / tCO₂", value_format=",.2f", metric_unit="$/tCO₂")
+
+    with c5:
+        try:
+            df_lc_top = _concat("local_content_ratio")
+        except Exception:
+            df_lc_top = pd.DataFrame()
+        _sparkline_chart(df_lc_top, "Enerjide Dışa Bağımlılık Yüzdesi", "%", value_format=",.1f", metric_unit="%")
 
     st.divider()
 
@@ -2659,6 +2770,8 @@ if "Sistem Göstergeleri" in selected_panels:
     df_pc = _concat("per_capita_el")
     _line_chart(df_pc, "Kişi Başına Elektrik Tüketimi (kWh/kişi)", "kWh/kişi", value_format=",.0f")
     _line_chart(df_electrification, "Nihai Enerjide Elektrifikasyon Oranı (%)", "%", value_format=",.1f")
+    _line_chart(df_dependency, "Dışa Bağımlılık Oranı (%)", "%", value_format=",.1f")
+    _line_chart(df_local_content, "Enerjide Dışa Bağımlılık Yüzdesi (%) — Yerli DG dahil değildir", "%", value_format=",.1f")
     st.divider()
 
 if "Elektrik" in selected_panels:
