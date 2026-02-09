@@ -1954,6 +1954,21 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
         ticks = []
         if np.isfinite(y_min):
             ticks.append(float(y_min))
+        if np.isfinite(y_max):
+            ticks.append(float(y_max))  # ensure max/last-year aligns with axis tick
+
+        # Also force first/last observed values to be present as ticks (robust for decreasing series)
+        try:
+            _dfp_sorted = dfp.sort_values("year")
+            _first_v = float(_dfp_sorted["value"].iloc[0])
+            _last_v = float(_dfp_sorted["value"].iloc[-1])
+            if np.isfinite(_first_v):
+                ticks.append(_first_v)
+            if np.isfinite(_last_v):
+                ticks.append(_last_v)
+        except Exception:
+            pass
+
 
         if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
             lin = np.linspace(lo, hi, tick_count)
