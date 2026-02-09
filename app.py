@@ -50,6 +50,56 @@ EMISSION_COMPONENT_COLOR_MAP = {
     "LULUCF (Net Yutak, Tahmini)": "#59a14f",                  # yeşil
 }
 
+# =======================
+# Scenario Line Color Palette (avoid "mavi + açık mavi" confusion)
+# =======================
+# Not: Senaryo adları dosya isimlerinden geldiği için önceden sabit bir map her zaman knowing olmayabilir.
+# Bu yüzden:
+# 1) Eğer seçili senaryolar (selected_scenarios) varsa aynı sıraya göre renklendirir.
+# 2) Yoksa df içindeki benzersiz senaryo adlarına göre deterministik şekilde bir paletten atar.
+SCENARIO_PALETTE = [
+    "#ff7f0e",  # turuncu
+    "#9467bd",  # mor
+    "#2ca02c",  # yeşil
+    "#d62728",  # kırmızı
+    "#8c564b",  # kahverengi
+    "#e377c2",  # pembe
+    "#17becf",  # turkuaz
+    "#7f7f7f",  # gri
+    "#bcbd22",  # zeytin
+    "#9edae5",  # açık turkuaz
+]
+
+def _scenario_color_encoding(df, field: str = "scenario", title: str = "Senaryo", legend=None):
+    """Scenario renklerini tüm çizgi grafiklerde sabit ve ayrışır yap."""
+    try:
+        domain = []
+        sel = globals().get("selected_scenarios", None)
+        if isinstance(sel, list) and len(sel) > 0:
+            domain = [str(s) for s in sel if s is not None]
+        if not domain:
+            domain = [str(x) for x in df[field].dropna().unique().tolist()]
+
+        # benzersiz + sırayı koru
+        seen = set()
+        domain_u = []
+        for d in domain:
+            if d not in seen:
+                seen.add(d); domain_u.append(d)
+        domain = domain_u
+
+        # palette assign (cycle)
+        rng = [SCENARIO_PALETTE[i % len(SCENARIO_PALETTE)] for i in range(len(domain))]
+        return alt.Color(
+            f"{field}:N",
+            title=title,
+            sort=domain,
+            scale=alt.Scale(domain=domain, range=rng),
+            legend=legend,
+        )
+    except Exception:
+        return alt.Color(f"{field}:N", title=title, legend=legend)
+
 
 def get_source_color(name):
     if isinstance(name, str):
@@ -1991,7 +2041,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     style = "Çizgi"  # zaman serilerinde bar kapatıldı
 
     base = alt.Chart(dfp).encode(
-        color=alt.Color("scenario:N", title="Senaryo", legend=alt.Legend(orient='right', direction='vertical', labelLimit=180, titleLimit=0)),
+        color=_scenario_color_encoding(dfp, "scenario", title="Senaryo", legend=alt.Legend(orient='right', direction='vertical', labelLimit=180, titleLimit=0)),
         tooltip=[
             alt.Tooltip("scenario:N", title="Senaryo"),
             alt.Tooltip("year:O", title="Yıl"),
@@ -2120,7 +2170,7 @@ def _sparkline_chart(
         st.write(f"{latest_val} {metric_unit or ''}")
 
     base = alt.Chart(dfp).encode(
-        color=alt.Color("scenario:N", legend=None),
+        color=_scenario_color_encoding(dfp, "scenario", title="Senaryo", legend=None),
         tooltip=[
             alt.Tooltip("scenario:N", title="Senaryo"),
             alt.Tooltip("year:O", title="Yıl"),
