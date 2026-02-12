@@ -515,9 +515,182 @@ def _interpolate_years_long(df: pd.DataFrame, start_year: int, end_year: int, va
     return filled
 
 
-def _maybe_fill_years(df: pd.DataFrame, start_year: int, end_year: int, enabled: bool) -> pd.DataFrame:
+def _interpolate_years_long_cagr(df: pd.DataFrame, start_year: int, end_year: int, value_col: str = "value") -> pd.DataFrame:
+    """Fill intermediate *annual* years by CAGR (exponential) within each series/group.
+
+    Rules:
+    - Works segment-by-segment between *known* points.
+    - If a segment endpoint is non-positive (<=0) or non-finite, falls back to linear for that segment.
+    - Edges are forward/backward filled to avoid gaps.
+    """
+    if df is None or df.empty:
+        return df
+    if "year" not in df.columns or value_col not in df.columns:
+        return df
+
+    out = df.copy()
+    out["year"] = pd.to_numeric(out["year"], errors="coerce").astype("Int64")
+    out[value_col] = pd.to_numeric(out[value_col], errors="coerce")
+    out = out.dropna(subset=["year"])
+    if out.empty:
+        return out
+    out["year"] = out["year"].astype(int)
+
+    group_cols = [c for c in out.columns if c not in {"year", value_col}]
+    year_full = pd.Index(range(int(start_year), int(end_year) + 1), name="year")
+
+    def _fill_one(g: pd.DataFrame) -> pd.DataFrame:
+        g = g.sort_values("year")
+        s_known = g.dropna(subset=[value_col]).set_index("year")[value_col]
+        s = s_known.reindex(year_full)
+
+        known_years = s_known.index.to_list()
+
+        # If <2 points, just carry nearest values across the range
+        if len(known_years) < 2:
+            s = s.ffill().bfill()
+        else:
+            # Fill edges first so we don't leave NaNs
+            s = s.ffill().bfill()
+
+            # Overwrite interior years segment-by-segment
+            for y0, y1 in zip(known_years[:-1], known_years[1:]):
+                if y1 <= y0 + 1:
+                    continue
+                v0 = float(s_known.loc[y0])
+                v1 = float(s_known.loc[y1])
+                n = int(y1 - y0)
+
+                for yy in range(int(y0) + 1, int(y1)):
+                    t = (yy - y0) / n
+                    if np.isfinite(v0) and np.isfinite(v1) and v0 > 0 and v1 > 0:
+                        s.loc[yy] = float(v0 * ((v1 / v0) ** t))
+                    else:
+                        # safe fallback: linear
+                        s.loc[yy] = float(v0 + (v1 - v0) * t)
+
+        gg = s.reset_index().rename(columns={0: value_col})
+        for c in group_cols:
+            gg[c] = g.iloc[0][c]
+        return gg
+
+    if group_cols:
+        filled = (
+            out.groupby(group_cols, dropna=False, sort=False)
+            .apply(_fill_one, include_groups=True)
+            .reset_index(drop=True)
+        )
+    else:
+        filled = _fill_one(out)
+
+    cols = ["year"] + [c for c in out.columns if c != "year"]
+    return filled[cols]
+
+
+def _interpolate_years_long_logistic(
+    df: pd.DataFrame,
+    start_year: int,
+    end_year: int,
+    value_col: str = "value",
+    k: float = 8.0,
+    m: float = 0.5,
+) -> pd.DataFrame:
+    """Fill intermediate *annual* years by a normalized logistic (S-curve) within each segment.
+
+    - Segment-based: each pair of consecutive known points defines its own S-curve.
+    - Endpoints are preserved exactly.
+    - Works for increasing/decreasing and even negative values (it's a weighted blend).
+    """
+    if df is None or df.empty:
+        return df
+    if "year" not in df.columns or value_col not in df.columns:
+        return df
+
+    out = df.copy()
+    out["year"] = pd.to_numeric(out["year"], errors="coerce").astype("Int64")
+    out[value_col] = pd.to_numeric(out[value_col], errors="coerce")
+    out = out.dropna(subset=["year"])
+    if out.empty:
+        return out
+    out["year"] = out["year"].astype(int)
+
+    group_cols = [c for c in out.columns if c not in {"year", value_col}]
+    year_full = pd.Index(range(int(start_year), int(end_year) + 1), name="year")
+
+    def _g(tt: float) -> float:
+        # logistic core
+        return 1.0 / (1.0 + np.exp(-float(k) * (float(tt) - float(m))))
+
+    g0 = _g(0.0)
+    g1 = _g(1.0)
+    denom = (g1 - g0) if np.isfinite(g1 - g0) and (g1 - g0) != 0 else 1.0
+
+    def _w(tt: float) -> float:
+        # normalized to [0,1]
+        return float((_g(tt) - g0) / denom)
+
+    def _fill_one(g: pd.DataFrame) -> pd.DataFrame:
+        g = g.sort_values("year")
+        s_known = g.dropna(subset=[value_col]).set_index("year")[value_col]
+        s = s_known.reindex(year_full)
+
+        known_years = s_known.index.to_list()
+
+        # If <2 known points: just extend
+        if len(known_years) < 2:
+            s = s.ffill().bfill()
+        else:
+            # fill edges for continuity
+            s = s.ffill().bfill()
+
+            for y0, y1 in zip(known_years[:-1], known_years[1:]):
+                if y1 <= y0 + 1:
+                    continue
+                v0 = s_known.loc[y0]
+                v1 = s_known.loc[y1]
+                n = int(y1 - y0)
+
+                for yy in range(int(y0) + 1, int(y1)):
+                    t = (yy - y0) / n
+                    wt = _w(t)
+                    s.loc[yy] = float(v0 + (v1 - v0) * wt)
+
+        gg = s.reset_index().rename(columns={0: value_col})
+        for c in group_cols:
+            gg[c] = g.iloc[0][c]
+        return gg
+
+    if group_cols:
+        filled = (
+            out.groupby(group_cols, dropna=False, sort=False)
+            .apply(_fill_one, include_groups=True)
+            .reset_index(drop=True)
+        )
+    else:
+        filled = _fill_one(out)
+
+    cols = ["year"] + [c for c in out.columns if c != "year"]
+    return filled[cols]
+
+def _maybe_fill_years(
+    df: pd.DataFrame,
+    start_year: int,
+    end_year: int,
+    enabled: bool,
+    method: str = "Lineer interpolasyon",
+    logistic_k: float = 8.0,
+) -> pd.DataFrame:
     if not enabled:
         return df
+
+    mth = (method or "").strip().lower()
+
+    if mth.startswith("cagr"):
+        return _interpolate_years_long_cagr(df, start_year, end_year, value_col="value")
+
+    if mth.startswith("logistic"):
+        return _interpolate_years_long_logistic(df, start_year, end_year, value_col="value", k=float(logistic_k))
+
     return _interpolate_years_long(df, start_year, end_year, value_col="value")
 
 def _cagr(start_value: float, end_value: float, n_years: int) -> float:
@@ -1516,10 +1689,22 @@ with st.sidebar:
     )
     fill_method = st.selectbox(
         "Doldurma yöntemi",
-        options=["Lineer interpolasyon"],
+        options=["Lineer interpolasyon", "CAGR (üstel büyüme)", "Logistic (S-curve)"],
         index=0,
         disabled=not fill_years_enabled,
     )
+
+    # Logistic eğrisi şiddeti (k)
+    logistic_intensity = st.selectbox(
+        "S-eğrisi şiddeti (k)",
+        options=["Yumuşak (k=4)", "Orta (k=8)", "Sert (k=12)"],
+        index=1,
+        disabled=(not fill_years_enabled) or (fill_method != "Logistic (S-curve)"),
+        help="Logistic doldurmada eğrinin ne kadar hızlı ivmeleneceğini belirler. Orta (k=8) çoğu seri için dengelidir.",
+    )
+
+    LOGISTIC_K_MAP = {"Yumuşak (k=4)": 4.0, "Orta (k=8)": 8.0, "Sert (k=12)": 12.0}
+    fill_logistic_k = float(LOGISTIC_K_MAP.get(logistic_intensity, 8.0))
     MAX_YEAR = int(max_year)
 
     st.divider()
@@ -1540,6 +1725,8 @@ with st.sidebar:
             "Yan yana sütun — aynı yılda kıyas",
         ],
         index=0,
+        key="compare_mode",
+        disabled=st.session_state.get("diff_mode_enabled", False),
         help="Birden fazla senaryoyu farklı görünümlerle kıyaslayın. Okunabilirlik için çoğu durumda 'Küçük paneller' önerilir.",
     )
 
@@ -1607,12 +1794,18 @@ if len(selected_scenarios) >= 4:
     selected_scenarios = selected_scenarios[:3]
 
 if len(selected_scenarios) == 2:
+    def _on_diff_toggle():
+        if st.session_state.get("diff_mode_enabled", False):
+            st.session_state["compare_mode"] = "Yan yana sütun — aynı yılda kıyas"
+
     with st.sidebar:
         st.divider()
-        st.caption("ℹ️ **2 Senaryo Fark Modu**, *Small multiples* dışındaki karşılaştırma modlarında çalışır.")
+        st.caption("ℹ️ **2 Senaryo Fark Modu** aktifken görünüm otomatik **Yan yana sütun** moduna alınır.")
         diff_mode_enabled = st.checkbox(
             "Farkı göster (A - B)",
             value=False,
+            key="diff_mode_enabled",
+            on_change=_on_diff_toggle,
             help="Sadece 2 senaryo seçiliyken aktif olur. A - B farkını tek seri olarak çizer.",
         )
         diff_scn_a = st.selectbox("İlave önlem/politika Senaryoları", options=selected_scenarios, index=0)
@@ -1637,7 +1830,7 @@ def _ncols_for_selected(n: int) -> int:
 # Scenario read/compute
 # -----------------------------
 @st.cache_data(show_spinner=False)
-def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year: int, interpolate_years: bool):
+def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year: int, interpolate_years: bool, fill_method: str, fill_logistic_k: float):
     blocks = read_power_generation(xlsx_file)
     balance = blocks["electricity_balance"]
     gross_gen = blocks["gross_generation"]
@@ -1747,7 +1940,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
 
     def _add_scn_filled(df: pd.DataFrame) -> pd.DataFrame:
         df2 = _add_scn(df)
-        return _maybe_fill_years(df2, start_year, max_year, interpolate_years)
+        return _maybe_fill_years(df2, start_year, max_year, interpolate_years, method=fill_method, logistic_k=fill_logistic_k)
 
     bundle = {
         "scenario": scenario,
@@ -1778,7 +1971,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
 bundles = []
 for scn in selected_scenarios:
     f = scenario_to_file[scn]
-    bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR, fill_years_enabled))
+    bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR, fill_years_enabled, fill_method, fill_logistic_k))
 
 
 def _concat(key: str):
@@ -1930,7 +2123,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
     dfp["year"] = dfp["year"].astype(int)
 
-    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)") and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)")
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") == "Yan yana sütun — aynı yılda kıyas")
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
     if diff_on and a and b:
@@ -2129,7 +2322,7 @@ def _sparkline_chart(
     dfp["year"] = dfp["year"].astype(int)
 
     # Apply diff mode (same rules as _line_chart)
-    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)")
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") == "Yan yana sütun — aynı yılda kıyas")
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
     if diff_on and a and b:
@@ -2663,7 +2856,7 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     value_format_use = value_format
     is_percent = False
 
-    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)") and (globals().get("compare_mode") != "Küçük paneller (Ayrı Grafikler)")
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") == "Yan yana sütun — aynı yılda kıyas")
     a = globals().get("diff_scn_a")
     b = globals().get("diff_scn_b")
     if diff_on and a and b and (globals().get("stacked_value_mode") != "Pay (%)"):
