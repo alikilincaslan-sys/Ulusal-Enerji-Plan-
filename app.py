@@ -3061,27 +3061,30 @@ if "Elektrik" in selected_panels:
 
     st.divider()
 
-    # --- Yeni Kapasite (GW) – Depolama & PTX Hariç ---
-    try:
-        if 'df_capmix' in locals():
-            df_kg_base = df_capmix.copy()
-            if not df_kg_base.empty:
-                df_kg_base = df_kg_base.sort_values(["scenario","year"])
-                df_new_cap = df_kg_base.copy()
-                df_new_cap["value"] = (
-                    df_new_cap.groupby("scenario")["value"]
-                    .diff()
-                )
-                df_new_cap = df_new_cap.dropna(subset=["value"])
 
-                _line_chart(
-                    df_new_cap,
-                    title="Yeni Kapasite (GW) – Depolama & PTX Hariç",
-                    y_title="GW",
-                    value_format=",.3f",
-                )
-    except Exception:
-        pass
+# --- Yeni Kapasite (GW) – Depolama & PTX Hariç (Kaynak bazında) ---
+# Not: Bu grafik, hemen üstteki "Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç" serisinden türetilir.
+# Yeni kapasite = KG(t) - KG(t-1). Ara yılları doldurma (Lineer/CAGR/Logistic) seçimi açıksa, yıllık seri üzerinden hesaplanır.
+try:
+    if "df_capmix" in locals():
+        df_new_cap = df_capmix.copy()
+        if df_new_cap is not None and not df_new_cap.empty:
+            df_new_cap = df_new_cap.sort_values(["scenario", "group", "year"])
+            df_new_cap["value"] = df_new_cap.groupby(["scenario", "group"])["value"].diff()
+            df_new_cap = df_new_cap.dropna(subset=["value"])
+
+            _render_stacked(
+                df_new_cap.rename(columns={"group": "category"}),
+                title="Yeni Kapasite (GW) – Depolama & PTX Hariç",
+                x_field="year",
+                stack_field="category",
+                y_title="GW",
+                category_title="Teknoloji",
+                value_format=",.2f",
+                order=order_cap,
+            )
+except Exception:
+    pass
 
 
 
