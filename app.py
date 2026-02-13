@@ -3061,6 +3061,23 @@ if "Elektrik" in selected_panels:
 
     st.divider()
 
+
+    order_storage_ptx = ["Total Storage", "Power to X"]
+    _render_stacked(
+        df_storage_ptx.rename(columns={"group": "category"}),
+        title="Depolama & PTX Kurulu Gücü (GW)",
+        x_field="year",
+        stack_field="category",
+        y_title="GW",
+        category_title="Kategori",
+        value_format=",.3f",
+        order=order_storage_ptx,
+        color_map=STORAGE_PTX_COLOR_MAP,
+    )
+
+    st.divider()
+
+
     _render_stacked(
         _convert_energy_df(df_sector_el).rename(columns={"sector": "category"}),
         title=f"Sektörlere Göre Elektrik Tüketimi ({_energy_unit_label()})",
@@ -3104,20 +3121,6 @@ if "Elektrik" in selected_panels:
 
     st.divider()
 
-    order_storage_ptx = ["Total Storage", "Power to X"]
-    _render_stacked(
-        df_storage_ptx.rename(columns={"group": "category"}),
-        title="Depolama & PTX Kurulu Gücü (GW)",
-        x_field="year",
-        stack_field="category",
-        y_title="GW",
-        category_title="Kategori",
-        value_format=",.3f",
-        order=order_storage_ptx,
-        color_map=STORAGE_PTX_COLOR_MAP,
-    )
-
-    st.divider()
 
 # ENERGY PANEL
 if "Enerji" in selected_panels:
