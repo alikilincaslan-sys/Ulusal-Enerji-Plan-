@@ -883,18 +883,22 @@ def _read_power_generation_new_capacity_stack(xlsx_file) -> pd.DataFrame:
         # Hâlâ yoksa satır numarasıyla isimlendir (grafikte kaybolmasın)
         if not label:
             label = f"Yeni Kapasite Satırı {r1}"
-
-        any_val = False
+        # Değerler: bazı yıllarda boş olabilir. Tamamen boş satırı atla; kısmi boşlukları 0 kabul et.
+        row_vals = []
         for y, c in zip(years, year_cols_idx):
             if int(y) > MAX_YEAR:
                 continue
             v = pd.to_numeric(raw.iloc[r0, c], errors="coerce")
-            if pd.isna(v):
-                continue
-            any_val = True
-            recs.append({"year": int(y), "group": label, "value": float(v)})
+            row_vals.append((int(y), v))
 
-        # satırda hiç değer yoksa zaten rec eklenmedi
+        # Satır tamamen boşsa (tüm yıllar NaN) skip
+        if not any([np.isfinite(v) for _, v in row_vals]):
+            continue
+
+        for y, v in row_vals:
+            if not np.isfinite(v):
+                v = 0.0
+            recs.append({"year": int(y), "group": label, "value": float(v)})
 
     df = pd.DataFrame(recs)
     if df.empty:
