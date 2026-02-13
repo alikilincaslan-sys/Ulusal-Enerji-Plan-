@@ -2581,23 +2581,6 @@ def _kpi_for_bundle(b):
     if latest_year and cap_total is not None and not cap_total.empty and (cap_total["year"] == latest_year).any():
         latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
 
-    # Dışa bağımlılık oranı (%) — seçili senaryo, son yıl
-    dep_rate = np.nan
-    dep = b.get("dependency_ratio")
-    if latest_year and dep is not None and (not dep.empty) and (dep["year"] == latest_year).any():
-        dep_rate = float(dep.loc[dep["year"] == latest_year, "value"].iloc[0])
-
-    gdp_cagr = np.nan
-    if gdp is not None and not gdp.empty:
-        g = gdp.sort_values("year")
-        y0 = int(g.iloc[0]["year"])
-        y1 = int(g.iloc[-1]["year"])
-        v0 = float(g.iloc[0]["value"])
-        v1 = float(g.iloc[-1]["value"])
-        gdp_cagr = _cagr(v0, v1, int(y1 - y0))
-
-
-
     # KPI donut (elektrik üretimi dağılımı) — seçili yıl
     donut_y = globals().get("donut_year", None)
     try:
