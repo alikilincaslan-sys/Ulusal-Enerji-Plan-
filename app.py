@@ -3061,6 +3061,29 @@ if "Elektrik" in selected_panels:
 
     st.divider()
 
+    # --- Yeni Kapasite (GW) – Depolama & PTX Hariç ---
+    try:
+        if 'df_capmix' in locals():
+            df_kg_base = df_capmix.copy()
+            if not df_kg_base.empty:
+                df_kg_base = df_kg_base.sort_values(["scenario","year"])
+                df_new_cap = df_kg_base.copy()
+                df_new_cap["value"] = (
+                    df_new_cap.groupby("scenario")["value"]
+                    .diff()
+                )
+                df_new_cap = df_new_cap.dropna(subset=["value"])
+
+                _line_chart(
+                    df_new_cap,
+                    title="Yeni Kapasite (GW) – Depolama & PTX Hariç",
+                    y_title="GW",
+                    value_format=",.3f",
+                )
+    except Exception:
+        pass
+
+
 
     order_storage_ptx = ["Total Storage", "Power to X"]
     _render_stacked(
