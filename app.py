@@ -258,11 +258,6 @@ EXTRA_ROW_NAME_MAP = {
     101: "Geothermal",
 }
 
-# --- NEW: Yeni Kapasite (5 yıllık dönem) - Power_Generation sabit satırlar (Excel 1-indexed) ---
-NEW_CAPACITY_YEARS_ROW_1IDX = 3  # Power_Generation sekmesinde yıllar satırı
-NEW_CAPACITY_ROWS_1IDX = [112] + list(range(114, 120)) + list(range(121, 134)) + [134, 138]
-
-
 # --- GDP / POP / CARBON PRICE RULES (Scenario_Assumptions sheet) ---
 GDP_ROW_1IDX = 6  # Scenario_Assumptions sekmesinde 6. satır (GSYH)
 POP_ROW_1IDX = 5  # Scenario_Assumptions sekmesinde 5. satır (Nüfus)
@@ -835,66 +830,6 @@ def _read_power_generation_fixed_rows_as_stack(xlsx_file, value_rows_1idx: list[
         return pd.DataFrame(columns=["year", "group", "value"])
     return df.sort_values(["year", "group"])
 
-
-
-# -----------------------------
-# NEW: Fixed-row reading for "Yeni Kapasite" (Power_Generation) – stacked (skip blanks)
-# -----------------------------
-@st.cache_data(show_spinner=False)
-def _read_power_generation_new_capacity_stack(xlsx_file) -> pd.DataFrame:
-    """
-    Power_Generation sekmesinden, modelin 5 yıllık dönem 'yeni kapasite' satırlarını direkt okur.
-    - Yıllar: NEW_CAPACITY_YEARS_ROW_1IDX (varsayılan: 3. satır)
-    - Değer satırları: NEW_CAPACITY_ROWS_1IDX
-    - Boş hücreleri ve tamamen boş satırları pas geçer.
-    Çıktı kolonları: year, group, value
-    """
-    try:
-        raw = pd.read_excel(xlsx_file, sheet_name="Power_Generation", header=None)
-    except Exception:
-        return pd.DataFrame(columns=["year", "group", "value"])
-
-    # years row (explicit)
-    year_row = int(NEW_CAPACITY_YEARS_ROW_1IDX) - 1
-    if year_row < 0 or year_row >= len(raw):
-        # fallback to heuristic
-        year_row = _find_year_row(raw)
-        if year_row is None:
-            return pd.DataFrame(columns=["year", "group", "value"])
-
-    years, year_cols_idx = _extract_years(raw, year_row)
-    if not years:
-        return pd.DataFrame(columns=["year", "group", "value"])
-
-    recs = []
-    for r1 in NEW_CAPACITY_ROWS_1IDX:
-        r0 = int(r1) - 1
-        if r0 < 0 or r0 >= len(raw):
-            continue
-
-        label = raw.iloc[r0, 0]
-        label = "" if pd.isna(label) else str(label).strip()
-        # bu blokta label yoksa satırı tamamen pas geçelim
-        if (not label) or (label.lower() == "nan"):
-            continue
-
-        any_val = False
-        for y, c in zip(years, year_cols_idx):
-            if int(y) > MAX_YEAR:
-                continue
-            v = pd.to_numeric(raw.iloc[r0, c], errors="coerce")
-            if pd.isna(v):
-                continue
-            any_val = True
-            recs.append({"year": int(y), "group": label, "value": float(v)})
-
-        # satırda hiç değer yoksa zaten rec eklenmedi
-
-    df = pd.DataFrame(recs)
-    if df.empty:
-        return pd.DataFrame(columns=["year", "group", "value"])
-
-    return df.sort_values(["year", "group"])
 
 # -----------------------------
 # Reading: Scenario assumptions (Nüfus & GSYH & Karbon)
@@ -1973,9 +1908,6 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     if extra_cap is not None and not extra_cap.empty:
         cap_mix = pd.concat([cap_mix, extra_cap], ignore_index=True) if cap_mix is not None else extra_cap
 
-    
-    new_capacity_stack = _filter_years(_read_power_generation_new_capacity_stack(xlsx_file), start_year, max_year)
-
     electricity_by_sector = _filter_years(read_electricity_consumption_by_sector(xlsx_file), start_year, max_year)
 
     per_capita = pd.DataFrame(columns=["year", "value"])
@@ -2032,7 +1964,6 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "ye_both": _add_scn_filled(ye_both),
         "per_capita_el": _add_scn_filled(per_capita),
         "storage_ptx": _add_scn_filled(storage_ptx),
-        "new_capacity_stack": _add_scn_filled(new_capacity_stack),
     }
     return bundle
 
@@ -2065,7 +1996,6 @@ df_electrification = _concat("electrification_ratio")
 df_dependency = _concat("dependency_ratio")
 df_local_content = _concat("local_content_ratio")
 df_storage_ptx = _concat("storage_ptx")
-df_new_capacity = _concat("new_capacity_stack")
 
 
 
@@ -2580,6 +2510,23 @@ def _kpi_for_bundle(b):
     latest_cap = np.nan
     if latest_year and cap_total is not None and not cap_total.empty and (cap_total["year"] == latest_year).any():
         latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
+
+    # Dışa bağımlılık oranı (%) — seçili senaryo, son yıl
+    dep_rate = np.nan
+    dep = b.get("dependency_ratio")
+    if latest_year and dep is not None and (not dep.empty) and (dep["year"] == latest_year).any():
+        dep_rate = float(dep.loc[dep["year"] == latest_year, "value"].iloc[0])
+
+    gdp_cagr = np.nan
+    if gdp is not None and not gdp.empty:
+        g = gdp.sort_values("year")
+        y0 = int(g.iloc[0]["year"])
+        y1 = int(g.iloc[-1]["year"])
+        v0 = float(g.iloc[0]["value"])
+        v1 = float(g.iloc[-1]["value"])
+        gdp_cagr = _cagr(v0, v1, int(y1 - y0))
+
+
 
     # KPI donut (elektrik üretimi dağılımı) — seçili yıl
     donut_y = globals().get("donut_year", None)
