@@ -1139,7 +1139,8 @@ def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     df = df.sort_values(["year", "source"])
     df["series"] = "Nihai Enerji Tüketimi"
     df["sheet"] = "Summary&Indicators"
-    
+    return df
+
 
 def read_final_energy_consumption_by_sector(xlsx_file) -> pd.DataFrame:
     """Summary&Indicators: Total Final Energy by Sector (rows 54–57, years row 3, values from column C)."""
