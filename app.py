@@ -1139,7 +1139,63 @@ def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     df = df.sort_values(["year", "source"])
     df["series"] = "Nihai Enerji Tüketimi"
     df["sheet"] = "Summary&Indicators"
+    
+
+def read_final_energy_consumption_by_sector(xlsx_file) -> pd.DataFrame:
+    """Summary&Indicators: Total Final Energy by Sector (rows 54–57, years row 3, values from column C)."""
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "sector", "value", "series", "sheet"])
+
+    YEARS_ROW_1IDX = 3
+    START_COL_IDX = 2  # column C
+    ROW_START_1IDX = 54
+    ROW_END_1IDX = 57
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    if yr_r0 < 0 or yr_r0 >= len(raw):
+        return pd.DataFrame(columns=["year", "sector", "value", "series", "sheet"])
+
+    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
+
+    years = []
+    for y_cell in years_row:
+        y = _as_int_year(y_cell)
+        if y is not None and int(y) <= MAX_YEAR:
+            years.append(int(y))
+        else:
+            years.append(None)
+
+    records = []
+    for r1 in range(ROW_START_1IDX, ROW_END_1IDX + 1):
+        r0 = r1 - 1
+        if r0 < 0 or r0 >= len(raw):
+            continue
+
+        label = raw.iloc[r0, 0]
+        label = "" if pd.isna(label) else str(label).strip()
+        if label == "" or label.lower() == "nan":
+            continue
+
+        vals_row = raw.iloc[r0, START_COL_IDX : START_COL_IDX + len(years)].tolist()
+        for y, v_cell in zip(years, vals_row):
+            if y is None:
+                continue
+            v = pd.to_numeric(v_cell, errors="coerce")
+            if pd.isna(v):
+                continue
+            records.append({"year": int(y), "sector": label, "value": float(v)})
+
+    df = pd.DataFrame(records)
+    if df.empty:
+        return pd.DataFrame(columns=["year", "sector", "value", "series", "sheet"])
+
+    df = df.sort_values(["year", "sector"])
+    df["series"] = "Nihai Enerji Tüketimi (Sektör)"
+    df["sheet"] = "Summary&Indicators"
     return df
+
 
 
 def read_final_energy_electrification_ratio(xlsx_file) -> pd.DataFrame:
@@ -1867,6 +1923,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
 
     primary_energy_source = _filter_years(read_primary_energy_consumption_by_source(xlsx_file), start_year, max_year)
     final_energy_source = _filter_years(read_final_energy_consumption_by_source(xlsx_file), start_year, max_year)
+    final_energy_sector = _filter_years(read_final_energy_consumption_by_sector(xlsx_file), start_year, max_year)
     dependency_ratio = _filter_years(read_energy_import_dependency_ratio(xlsx_file), start_year, max_year)
     electrification_ratio = _filter_years(read_final_energy_electrification_ratio(xlsx_file), start_year, max_year)
     local_content_ratio = _filter_years(read_local_content_ratio(xlsx_file), start_year, max_year)
@@ -1958,6 +2015,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "electricity_by_sector": _add_scn_filled(electricity_by_sector),
         "primary_energy_source": _add_scn_filled(primary_energy_source),
         "final_energy_source": _add_scn_filled(final_energy_source),
+        "final_energy_sector": _add_scn_filled(final_energy_sector),
         "dependency_ratio": _add_scn_filled(dependency_ratio),
         "electrification_ratio": _add_scn_filled(electrification_ratio),
         "local_content_ratio": _add_scn_filled(local_content_ratio),
@@ -1992,6 +2050,7 @@ df_capmix = _concat("cap_mix")
 df_primary = _concat("primary_energy_source")
 df_sector_el = _concat("electricity_by_sector")
 df_final = _concat("final_energy_source")
+df_final_sector = _concat("final_energy_sector")
 df_electrification = _concat("electrification_ratio")
 df_local_content = _concat("local_content_ratio")
 df_storage_ptx = _concat("storage_ptx")
@@ -3171,6 +3230,19 @@ if "Enerji" in selected_panels:
     )
 
     st.divider()
+
+    _render_stacked(
+        _convert_energy_df(df_final_sector).rename(columns={"sector": "category"}),
+        title=f"Sektörlerine Göre Nihai Enerji Tüketimi ({_energy_unit_label()})",
+        x_field="year",
+        stack_field="category",
+        y_title=_energy_unit_label(),
+        category_title="Sektör",
+        value_format=_energy_value_format(),
+    )
+
+    st.divider()
+
 
 # EMISSIONS PANEL
 if "Sera Gazı Emisyonları" in selected_panels:
