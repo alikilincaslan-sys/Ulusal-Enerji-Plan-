@@ -3062,31 +3062,27 @@ if "Elektrik" in selected_panels:
     st.divider()
 
 
-# --- Yeni Kapasite (GW) – Depolama & PTX Hariç (Kaynak bazında) ---
-# Not: Bu grafik, hemen üstteki "Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç" serisinden türetilir.
-# Yeni kapasite = KG(t) - KG(t-1). Ara yılları doldurma (Lineer/CAGR/Logistic) seçimi açıksa, yıllık seri üzerinden hesaplanır.
-try:
-    if "df_capmix" in locals():
+    # --- Yeni Kapasite (GW) – Depolama & PTX Hariç (Kaynak bazında) ---
+    # Not: Bu grafik, hemen üstteki "Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç" serisinden türetilir.
+    # Yeni kapasite = KG(t) - KG(t-1). Ara yılları doldurma (Lineer/CAGR/Logistic) seçimi açıksa, yıllık seri üzerinden hesaplanır.
+    if df_capmix is not None and not df_capmix.empty:
         df_new_cap = df_capmix.copy()
-        if df_new_cap is not None and not df_new_cap.empty:
-            df_new_cap = df_new_cap.sort_values(["scenario", "group", "year"])
-            df_new_cap["value"] = df_new_cap.groupby(["scenario", "group"])["value"].diff()
-            df_new_cap = df_new_cap.dropna(subset=["value"])
+        df_new_cap = df_new_cap.sort_values(["scenario", "group", "year"])
+        df_new_cap["value"] = df_new_cap.groupby(["scenario", "group"])["value"].diff()
+        df_new_cap = df_new_cap.dropna(subset=["value"])
 
-            _render_stacked(
-                df_new_cap.rename(columns={"group": "category"}),
-                title="Yeni Kapasite (GW) – Depolama & PTX Hariç",
-                x_field="year",
-                stack_field="category",
-                y_title="GW",
-                category_title="Teknoloji",
-                value_format=",.2f",
-                order=order_cap,
-            )
-except Exception:
-    pass
+        _render_stacked(
+            df_new_cap.rename(columns={"group": "category"}),
+            title="Yeni Kapasite (GW) – Depolama & PTX Hariç",
+            x_field="year",
+            stack_field="category",
+            y_title="GW",
+            category_title="Teknoloji",
+            value_format=",.2f",
+            order=order_cap,
+        )
 
-
+    st.divider()
 
     order_storage_ptx = ["Total Storage", "Power to X"]
     _render_stacked(
