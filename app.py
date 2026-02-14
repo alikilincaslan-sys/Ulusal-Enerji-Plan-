@@ -1088,13 +1088,19 @@ def read_primary_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
 
 
 def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
+    """Summary&Indicators: Total Final Energy by Fuel (rows 47–52), GWh.
+
+    - Yıllar satırı: 3 (ama güvenli olması için _extract_years kullanılır)
+    - Etiket: bazı dosyalarda A sütunu boş olabildiği için ilk 3 sütunda ilk dolu metin alınır.
+    - Boş hücreler pas geçilir.
+    Çıktı: year, source, value, series, sheet
+    """
     try:
         raw = pd.read_excel(xlsx_file, sheet_name="Summary&Indicators", header=None)
     except Exception:
         return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
 
     YEARS_ROW_1IDX = 3
-    START_COL_IDX = 2  # column C
     ROW_START_1IDX = 47
     ROW_END_1IDX = 52
 
@@ -1102,15 +1108,11 @@ def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
     if yr_r0 < 0 or yr_r0 >= len(raw):
         return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
 
-    years_row = raw.iloc[yr_r0, START_COL_IDX:].tolist()
-
-    years = []
-    for y_cell in years_row:
-        y = _as_int_year(y_cell)
-        if y is not None and int(y) <= MAX_YEAR:
-            years.append(int(y))
-        else:
-            years.append(None)
+    years, year_cols_idx = _extract_years(raw, yr_r0)
+    # MAX_YEAR filtresi
+    years_cols = [(int(y), int(c)) for y, c in zip(years, year_cols_idx) if y is not None and int(y) <= MAX_YEAR]
+    if not years_cols:
+        return pd.DataFrame(columns=["year", "source", "value", "series", "sheet"])
 
     records = []
     for r1 in range(ROW_START_1IDX, ROW_END_1IDX + 1):
@@ -1118,16 +1120,19 @@ def read_final_energy_consumption_by_source(xlsx_file) -> pd.DataFrame:
         if r0 < 0 or r0 >= len(raw):
             continue
 
-        label = raw.iloc[r0, 0]
-        label = "" if pd.isna(label) else str(label).strip()
-        if label == "" or label.lower() == "nan":
+        # label: ilk 3 sütunda ilk dolu metin
+        label = ""
+        for cc in range(min(3, raw.shape[1])):
+            cell = raw.iloc[r0, cc]
+            s = "" if pd.isna(cell) else str(cell).strip()
+            if s and s.lower() != "nan":
+                label = s
+                break
+        if not label:
             continue
 
-        vals_row = raw.iloc[r0, START_COL_IDX : START_COL_IDX + len(years)].tolist()
-        for y, v_cell in zip(years, vals_row):
-            if y is None:
-                continue
-            v = pd.to_numeric(v_cell, errors="coerce")
+        for y, c in years_cols:
+            v = pd.to_numeric(raw.iloc[r0, c], errors="coerce")
             if pd.isna(v):
                 continue
             records.append({"year": int(y), "source": label, "value": float(v)})
