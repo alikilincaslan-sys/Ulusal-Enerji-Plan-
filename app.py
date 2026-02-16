@@ -227,48 +227,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import altair as alt
-
-# =======================
-# IEA-benzeri tema: daha belirgin yazılar + okunur tooltip (Altair)
-# =======================
-def _apply_iea_chart_theme(chart: alt.Chart) -> alt.Chart:
-    """Grafik yazılarını koyu arkaplanda okunur hale getir + tooltip'i büyüt.
-    Not: Bu fonksiyon *yalnızca* görünüm ayarı yapar; veri/hesap mantığına dokunmaz.
-    """
-    try:
-        return (
-            chart
-            .configure_view(strokeOpacity=0)
-            .configure_axis(
-                labelColor="#EDEDED",
-                titleColor="#FFFFFF",
-                tickColor="#EDEDED",
-                gridColor="rgba(255,255,255,0.16)",
-                gridOpacity=0.30,
-                labelFontSize=11,
-                titleFontSize=12,
-            )
-            .configure_legend(
-                labelColor="#EDEDED",
-                titleColor="#FFFFFF",
-                labelFontSize=11,
-                titleFontSize=12,
-                symbolSize=120,
-            )
-            .configure_title(color="#FFFFFF", fontSize=18)
-            .configure_tooltip(
-                fill="rgba(20,20,20,0.95)",
-                stroke="rgba(255,255,255,0.10)",
-                cornerRadius=6,
-                padding=10,
-                fontSize=13,
-                titleFontSize=13,
-                labelColor="#FFFFFF",
-                titleColor="#FFFFFF",
-            )
-        )
-    except Exception:
-        return chart
 from io import BytesIO
 
 import base64
@@ -2411,7 +2369,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
             y=_y_enc(),
         )
 
-    st.altair_chart(_apply_iea_chart_theme(chart.properties(height=320)), use_container_width=True)
+    st.altair_chart(chart.properties(height=320), use_container_width=True)
 
 
 
@@ -2497,7 +2455,7 @@ def _sparkline_chart(
         y=alt.Y("value:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False)),
     ).properties(height=120)
 
-    st.altair_chart(_apply_iea_chart_theme(chart), use_container_width=True)
+    st.altair_chart(chart, use_container_width=True)
 
 
 
@@ -2563,7 +2521,7 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
     arcs_hi = base.transform_filter(sel).mark_arc(innerRadius=60, outerRadius=112)
 
     st.caption(title)
-    st.altair_chart(_apply_iea_chart_theme((arcs + arcs_hi).properties(height=260)), use_container_width=True)
+    st.altair_chart((arcs + arcs_hi).properties(height=260), use_container_width=True)
 
     # NOTE: Bazı Streamlit/Altair sürümlerinde donut'un üzerine yazı (mark_text + radius)
     # chart'ı tamamen boş gösterebiliyor. Bu yüzden yüzdeleri "donut üstüne" değil,
@@ -2852,7 +2810,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
 
         with cols[idx % ncols]:
             st.markdown(f"**{scn}**")
-            st.altair_chart(_apply_iea_chart_theme(bars.properties(height=380, padding={"bottom": 28})), use_container_width=True)
+            st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
 
 
 def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None):
@@ -2921,7 +2879,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         )
         .add_params(sel)
     )
-    st.altair_chart(_apply_iea_chart_theme(bars.properties(height=420, padding={"bottom": 28})), use_container_width=True)
+    st.altair_chart(bars.properties(height=420, padding={"bottom": 28}), use_container_width=True)
 
 
 def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False, color_map=None):
@@ -2968,7 +2926,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         )
         .add_params(sel)
     )
-    st.altair_chart(_apply_iea_chart_theme(bars.properties(height=420)), use_container_width=True)
+    st.altair_chart(bars.properties(height=420), use_container_width=True)
 
 
 def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None, color_map=None):
@@ -3094,7 +3052,7 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
     )
 
     st.markdown(f"**{title}**")
-    st.altair_chart(_apply_iea_chart_theme(ch), use_container_width=True)
+    st.altair_chart(ch, use_container_width=True)
 
 
 # -----------------------------
@@ -3420,4 +3378,4 @@ for scn in selected_scenarios:
         st.warning("Bu senaryo için veri bulunamadı.")
     else:
         fig = _plot_generation_bar_race(d_plotly, _energy_unit_label())
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"plotly_genmix_{scn}")
