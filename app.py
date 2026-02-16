@@ -216,7 +216,82 @@ def _source_color_encoding(df, field: str, title: str, order=None, color_map=Non
         )
     except Exception:
         # fallback: Altair default
-        return alt.Color(f"{field}:N", title=title)
+        
+# =======================
+# IEA-benzeri hover kutusu ve koyu tema (Altair)
+# =======================
+def _apply_iea_chart_theme(chart: alt.Chart) -> alt.Chart:
+    """Grafik yazılarını koyu arkaplanda okunur hale getir (beyaz yazı, hafif grid)."""
+    try:
+        return (
+            chart
+            .configure_view(strokeOpacity=0)
+            .configure_axis(
+                labelColor="#EDEDED",
+                titleColor="#FFFFFF",
+                tickColor="#EDEDED",
+                gridColor="rgba(255,255,255,0.14)",
+                gridOpacity=0.25,
+                labelFontSize=11,
+                titleFontSize=12,
+            )
+            .configure_legend(
+                labelColor="#EDEDED",
+                titleColor="#FFFFFF",
+                labelFontSize=11,
+                titleFontSize=12,
+            )
+            .configure_title(color="#FFFFFF", fontSize=16)
+        )
+    except Exception:
+        return chart
+
+def _iea_hover_box_layers(
+    base: alt.Chart,
+    *,
+    dot_color_enc,
+    lines: list[tuple[str, str]],
+    box_w: int = 250,
+    box_h: int = 120,
+    x0: int = 10,
+    y0: int = 10,
+    dot_size: int = 14,
+    text_size: int = 12,
+) -> alt.LayerChart:
+    """Seçili (transform_filter uygulanmış) `base` için IEA tarzı hover kutusu üret."""
+    bg = base.mark_rect(opacity=0.88, cornerRadius=6).encode(
+        x=alt.value(x0),
+        x2=alt.value(x0 + box_w),
+        y=alt.value(y0),
+        y2=alt.value(y0 + box_h),
+    )
+
+    # İlk satır: renkli nokta
+    dot = base.mark_text(text="●", align="left", baseline="top", size=dot_size).encode(
+        x=alt.value(x0 + 10),
+        y=alt.value(y0 + 10),
+        color=dot_color_enc,
+    )
+
+    layers = [bg, dot]
+
+    # Metin satırları (beyaz)
+    for i, (expr, _) in enumerate(lines):
+        dy = 10 + i * 18
+        t = (
+            base.transform_calculate(_lbl=expr)
+            .mark_text(align="left", baseline="top", size=text_size, color="#FFFFFF")
+            .encode(
+                x=alt.value(x0 + 28),
+                y=alt.value(y0 + dy),
+                text=alt.Text("_lbl:N"),
+            )
+        )
+        layers.append(t)
+
+    return alt.layer(*layers)
+
+return alt.Color(f"{field}:N", title=title)
 
 
 # app.py
@@ -226,19 +301,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import streamlit as st
-import itertools
-
-# -----------------------------
-# Streamlit plotly key helper (fix DuplicateElementId)
-# -----------------------------
-_PLOTLY_COUNTER = itertools.count()
-
-def st_plotly(fig, **kwargs):
-    """Wrapper to always pass a unique key to st.plotly_chart."""
-    kwargs.setdefault("use_container_width", True)
-    kwargs.setdefault("key", f"plotly_{next(_PLOTLY_COUNTER)}")
-    return st.plotly_chart(fig, **kwargs)
-
 import altair as alt
 from io import BytesIO
 
@@ -2367,7 +2429,37 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
             opacity=alt.condition(hover, alt.value(1.0), alt.value(0.0)),
         ).transform_filter(hover)
 
-        chart = (lines + points).configure_axis(grid=True, gridOpacity=0.15)
+        
+        # IEA benzeri hover kutusu
+        hover_pt = alt.selection_point(
+            on="mouseover",
+            nearest=True,
+            clear="mouseout",
+            empty=False,
+            fields=["scenario", "year"],
+        )
+        lines_h = lines.add_params(hover_pt)
+        pts_h = points.add_params(hover_pt)
+
+        box_base = alt.Chart(dfp).transform_filter(hover_pt)
+        lines_box = [
+            ("'Senaryo  ' + datum.scenario", ""),
+            ("'Yıl  ' + toString(datum.year)", ""),
+            ("'%s  ' + format(datum.value, '%s')" % (y_title, value_format), ""),
+        ]
+        hover_box = _iea_hover_box_layers(
+            box_base,
+            dot_color_enc=_scenario_color_encoding(dfp, "scenario", title="Senaryo", legend=None),
+            lines=lines_box,
+            box_w=240,
+            box_h=85,
+            x0=12,
+            y0=12,
+            dot_size=14,
+            text_size=12,
+        )
+
+        chart = _apply_iea_chart_theme(alt.layer(lines_h, pts_h, hover_box))
 
     elif style == "Bar (Stack)":
         chart = base.mark_bar().encode(
@@ -2727,16 +2819,25 @@ st.divider()
 # Stacked charts helpers (with legend-click filter)
 # -----------------------------
 def _normalize_stacked_to_percent(df: pd.DataFrame, stack_field: str) -> pd.DataFrame:
+    """Stacked değerleri senaryo+yıl toplamına göre %'ye çevirir.
+
+    Ayrıca, mutlak toplamı kaybetmemek için `total_abs` sütununu korur (tooltip için).
+    """
     if df is None or df.empty:
         return df
     dfp = df.copy()
     dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce").astype("Int64")
     dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
     dfp = dfp.dropna(subset=["scenario", "year", stack_field, "value"])
-    totals = dfp.groupby(["scenario", "year"], as_index=False)["value"].sum().rename(columns={"value": "total"})
+
+    totals = (
+        dfp.groupby(["scenario", "year"], as_index=False)["value"]
+        .sum()
+        .rename(columns={"value": "total_abs"})
+    )
     dfp = dfp.merge(totals, on=["scenario", "year"], how="left")
-    dfp["value"] = np.where(dfp["total"] > 0, (dfp["value"] / dfp["total"]) * 100.0, np.nan)
-    dfp = dfp.drop(columns=["total"])
+
+    dfp["value"] = np.where(dfp["total_abs"] > 0, (dfp["value"] / dfp["total_abs"]) * 100.0, np.nan)
     return dfp
 
 
@@ -2804,26 +2905,59 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         if not is_percent:
             bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=[x_field])
 
-        bars = (
+        
+        # Toplam (mutlak) değer - hover kutusunda göstermek için
+        if "total_abs" not in sub.columns:
+            try:
+                sub["total_abs"] = sub.groupby([x_field])["value"].transform("sum")
+            except Exception:
+                pass
+
+        bars_src = (
             bars_src.mark_bar()
             .encode(
                 x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
                 y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
                 color=_source_color_encoding(sub, stack_field, category_title, order=order, color_map=color_map),
                 opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
-                tooltip=[
-                    alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                    alt.Tooltip(f"{stack_field}:N", title=category_title),
-                    alt.Tooltip("value:Q", title=y_title, format=value_format),
-                    *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
-                ],
             )
             .add_params(sel)
         )
 
+        hover = alt.selection_point(
+            on="mouseover",
+            nearest=True,
+            clear="mouseout",
+            empty=False,
+            fields=[x_field, stack_field],
+        )
+
+        bars = bars_src.add_params(hover)
+
+        box_base = alt.Chart(sub).transform_filter(hover)
+        lines = [
+            ("'Yıl  ' + toString(datum.%s)" % x_field, ""),
+            ("'%s  ' + datum.%s" % (category_title, stack_field), ""),
+            ("'%s  ' + format(datum.value, '%s')" % (y_title, value_format), ""),
+            ("'Toplam  ' + format(datum.total_abs, '%s')" % (",.0f" if is_percent else value_format), ""),
+        ]
+        hover_box = _iea_hover_box_layers(
+            box_base,
+            dot_color_enc=_source_color_encoding(sub, stack_field, category_title, order=order, color_map=color_map),
+            lines=lines,
+            box_w=240,
+            box_h=105,
+            x0=12,
+            y0=12,
+            dot_size=14,
+            text_size=12,
+        )
+
+        chart = _apply_iea_chart_theme(alt.layer(bars, hover_box)).properties(height=380, padding={"bottom": 28})
+
         with cols[idx % ncols]:
             st.markdown(f"**{scn}**")
-            st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
+            st.altair_chart(chart, use_container_width=True)
 
 
 def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None):
@@ -2874,25 +3008,65 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
     if not is_percent:
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
 
-    bars = (
-        bars_src.mark_bar()
+    
+    # Toplam (mutlak) değer - tooltip/hover kutusunda göstermek için
+    if "total_abs" not in dfp.columns:
+        try:
+            dfp["total_abs"] = dfp.groupby(["scenario", x_field])["value"].transform("sum")
+        except Exception:
+            pass
+
+    sel = _legend_filter_params(stack_field, sel_name=f"legend_{re.sub(r'[^0-9a-zA-Z_]+','_',str(stack_field))}")
+
+    bars_src = (
+        alt.Chart(dfp)
+        .mark_bar()
         .encode(
-            x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
+            x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(labelAngle=0)),
             xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
             opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
-            tooltip=[
-                alt.Tooltip("scenario:N", title="Senaryo"),
-                alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                alt.Tooltip(f"{stack_field}:N", title=category_title),
-                alt.Tooltip("value:Q", title=y_title, format=value_format),
-                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
-            ],
         )
         .add_params(sel)
     )
-    st.altair_chart(bars.properties(height=420, padding={"bottom": 28}), use_container_width=True)
+
+    hover = alt.selection_point(
+        on="mouseover",
+        nearest=True,
+        clear="mouseout",
+        empty=False,
+        fields=["scenario", x_field, stack_field],
+    )
+
+    bars = bars_src.add_params(hover)
+
+    # Hover kutusu (IEA benzeri) - sabit konumda, renkli nokta + net yazılar
+    box_base = alt.Chart(dfp).transform_filter(hover)
+
+    unit_lbl = y_title if (not is_percent) else f"{y_title} (Toplam: {_energy_unit_label()})"
+    lines = [
+        ("'Senaryo  ' + datum.scenario", ""),
+        ("'Yıl  ' + toString(datum.%s)" % x_field, ""),
+        ("'%s  ' + datum.%s" % (category_title, stack_field), ""),
+        ("'%s  ' + format(datum.value, '%s')" % (y_title, value_format), ""),
+        ("'Toplam  ' + format(datum.total_abs, '%s')" % (",.0f" if is_percent else value_format), ""),
+    ]
+
+    hover_box = _iea_hover_box_layers(
+        box_base,
+        dot_color_enc=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
+        lines=lines,
+        box_w=260,
+        box_h=120,
+        x0=12,
+        y0=12,
+        dot_size=14,
+        text_size=12,
+    )
+
+    chart = _apply_iea_chart_theme(alt.layer(bars, hover_box)).properties(height=420, padding={"bottom": 28})
+    st.altair_chart(chart, use_container_width=True)
 
 
 def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False, color_map=None):
@@ -3391,4 +3565,4 @@ for scn in selected_scenarios:
         st.warning("Bu senaryo için veri bulunamadı.")
     else:
         fig = _plot_generation_bar_race(d_plotly, _energy_unit_label())
-        st_plotly(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
