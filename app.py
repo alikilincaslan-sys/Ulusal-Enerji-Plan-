@@ -3,24 +3,34 @@
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
 SOURCE_COLOR_MAP = {
-    "Coal": "#3a3a3a",        # koyu gri
-    "Lignite": "#9e9e9e",     # açık gri
-    "Natural Gas": "#1f77b4", # mavi
-    "Gas": "#1f77b4",
-    "Hydro": "#0b3d91",       # lacivert
+    # --- Nihai Enerji (Fuel) – Kurumsal Enerji Paleti ---
+    "Gas": "#2F5597",
+    "Electricity": "#4F81BD",
+    "Oil": "#C55A11",
+    "Renewables": "#2E7D32",
+    "Solids": "#595959",
+    "Steam": "#A6A6A6",
+
+    # --- Elektrik/Arz tarafındaki teknoloji grupları (mevcut kullanım uyumu) ---
+    "Coal": "#3a3a3a",         # koyu gri
+    "Lignite": "#9e9e9e",      # açık gri
+    "Natural Gas": "#2F5597",  # Gas ile aynı kurumsal mavi
+    "Hydro": "#0b3d91",        # lacivert
     "Hydropower": "#0b3d91",
-    "Wind": "#2ca02c",        # yeşil
-    "Solar": "#ffd60a",       # sarı
-    "Nuclear": "#ff7f0e",     # turuncu
-    # Alternatif/Türkçe etiketler (Excel / arayüz uyumu)
+    "Wind": "#2ca02c",         # yeşil
+    "Solar": "#ffd60a",        # sarı
+    "Nuclear": "#ff7f0e",      # turuncu
+
+    # --- Alternatif/Türkçe etiketler (Excel / arayüz uyumu) ---
     "Kömür": "#3a3a3a",
     "Linyit": "#9e9e9e",
-    "Doğal Gaz": "#1f77b4",
+    "Doğal Gaz": "#2F5597",
     "Hidro": "#0b3d91",
     "Rüzgar": "#2ca02c",
     "Güneş": "#ffd60a",
     "Nükleer": "#ff7f0e",
-    # Modeldeki grup adları
+
+    # --- Modeldeki grup adları ---
     "Wind (RES)": "#2ca02c",
     "Solar (GES)": "#ffd60a",
 }
@@ -29,12 +39,17 @@ SOURCE_COLOR_MAP = {
 # Grafik-Türüne Özel Renk Haritaları (IEA/Bloomberg benzeri, yüksek kontrast)
 # =======================
 SECTOR_COLOR_MAP = {
-    # Pastel ama birbirinden ayrışan (EU Commission dashboard hissi)
-    "Energy Branch & Other Uses": "#6f9fb8",
-    "Industry": "#f0b48f",
-    "Residential": "#9fd3a5",
-    "Tertiary": "#d0b3f0",
-    "Transport": "#f29aa3",
+    # Nihai / elektrik tüketimi sektörleri (kurumsal, yüksek kontrast)
+    "Households": "#1F4E79",   # Lacivert
+    "Residential": "#1F4E79",  # (alternatif etiket)
+    "Industry": "#70AD47",     # Kurumsal yeşil
+    "Tertiary": "#2CA6A4",     # Turkuaz
+    "Services": "#2CA6A4",     # (alternatif etiket)
+    "Commercial": "#2CA6A4",   # (alternatif etiket)
+    "Transport": "#C00000",    # Koyu kırmızı
+
+    # Bazı dosyalarda görünebilen ek grup
+    "Energy Branch & Other Uses": "#6F9FB8",
 }
 
 
@@ -217,6 +232,28 @@ from io import BytesIO
 import base64
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 
+
+# -----------------------------
+# Tooltip styling (IEA-like)
+# -----------------------------
+def _apply_tooltip_style(chart: alt.Chart) -> alt.Chart:
+    """Make hover tooltips larger and higher-contrast (IEA-style)."""
+    try:
+        return chart.configure_tooltip(
+            fill="#0B0F17",
+            stroke="#3A3F4B",
+            strokeWidth=1,
+            cornerRadius=8,
+            padding=10,
+            labelColor="#F2F2F2",
+            titleColor="#F2F2F2",
+            labelFontSize=14,
+            titleFontSize=13,
+        )
+    except Exception:
+        return chart
+
+
 # -----------------------------
 # Units
 # -----------------------------
@@ -224,6 +261,31 @@ st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 # Optional display conversion: GWh -> thousand toe (ktoe, "bin TEP").
 # 1 toe = 11.63 MWh  =>  1 GWh = 1000/11.63 = 85.9845 toe = 0.0859845 ktoe
 GWH_TO_KTOE = 0.0859845
+# Global Altair theme so all charts inherit the tooltip style
+def _iea_theme():
+    return {
+        "config": {
+            "tooltip": {
+                "fill": "#0B0F17",
+                "stroke": "#3A3F4B",
+                "strokeWidth": 1,
+                "cornerRadius": 8,
+                "padding": 10,
+                "labelColor": "#F2F2F2",
+                "titleColor": "#F2F2F2",
+                "labelFontSize": 14,
+                "titleFontSize": 13,
+            }
+        }
+    }
+
+try:
+    alt.themes.register("iea_theme", _iea_theme)
+    alt.themes.enable("iea_theme")
+except Exception:
+    pass
+
+
 
 # -----------------------------
 # Config
@@ -2440,7 +2502,7 @@ def _sparkline_chart(
         y=alt.Y("value:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False)),
     ).properties(height=120)
 
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(_apply_tooltip_style(chart), use_container_width=True)
 
 
 
@@ -2717,7 +2779,7 @@ def _legend_filter_params(stack_field: str):
     return sel
 
 
-def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None):
+def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None, total_format: str = None):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -2787,7 +2849,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
                     alt.Tooltip(f"{stack_field}:N", title=category_title),
                     alt.Tooltip("value:Q", title=y_title, format=value_format),
-                    *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
+                    alt.Tooltip("total:Q", title="Total", format=(total_format or value_format)),
                 ],
             )
             .add_params(sel)
@@ -2798,7 +2860,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
 
 
-def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None):
+def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None, total_format: str = None):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -2859,7 +2921,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
-                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
+                alt.Tooltip("total:Q", title="Total", format=(total_format or value_format)),
             ],
         )
         .add_params(sel)
@@ -2906,7 +2968,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
-                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
+                alt.Tooltip("total:Q", title="Total", format=(total_format or value_format)),
             ],
         )
         .add_params(sel)
@@ -2919,6 +2981,8 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     y_title_use = y_title
     value_format_use = value_format
     is_percent = False
+    total_format = value_format_use
+
 
     diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") == "Yan yana sütun — aynı yılda kıyas")
     a = globals().get("diff_scn_a")
@@ -2950,9 +3014,9 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     title_use = title + (" (Pay %)" if is_percent else "")
     def _render_main():
         if compare_mode == "Küçük paneller (Ayrı Grafikler)":
-            _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map)
+            _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map, total_format=total_format)
         else:
-            _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
+            _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map, total_format=total_format)
     _render_main()
 # =========================
 # Waterfall helpers (unchanged)
@@ -3037,7 +3101,7 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
     )
 
     st.markdown(f"**{title}**")
-    st.altair_chart(ch, use_container_width=True)
+    st.altair_chart(_apply_tooltip_style(ch), use_container_width=True)
 
 
 # -----------------------------
@@ -3173,7 +3237,7 @@ if "Elektrik" in selected_panels:
         y_title=_energy_unit_label(),
         category_title="Sektör",
         value_format=_energy_value_format(),
-        order=["Energy Branch & Other Uses", "Industry", "Residential", "Tertiary", "Transport"],
+        order=["Energy Branch & Other Uses", "Households", "Residential", "Industry", "Tertiary", "Services", "Commercial", "Transport"],
         color_map=SECTOR_COLOR_MAP,
     )
 
@@ -3245,6 +3309,8 @@ if "Enerji" in selected_panels:
         y_title=_energy_unit_label(),
         category_title="Sektör",
         value_format=_energy_value_format(),
+        order=["Energy Branch & Other Uses", "Households", "Residential", "Industry", "Tertiary", "Services", "Commercial", "Transport"],
+        color_map=SECTOR_COLOR_MAP,
     )
 
     st.divider()
