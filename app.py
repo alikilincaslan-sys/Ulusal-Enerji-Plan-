@@ -226,33 +226,24 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import streamlit as st
+import itertools
+
+# -----------------------------
+# Streamlit plotly key helper (fix DuplicateElementId)
+# -----------------------------
+_PLOTLY_COUNTER = itertools.count()
+
+def st_plotly(fig, **kwargs):
+    """Wrapper to always pass a unique key to st.plotly_chart."""
+    kwargs.setdefault("use_container_width", True)
+    kwargs.setdefault("key", f"plotly_{next(_PLOTLY_COUNTER)}")
+    return st.plotly_chart(fig, **kwargs)
+
 import altair as alt
 from io import BytesIO
 
 import base64
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
-
-
-# -----------------------------
-# Tooltip styling (IEA-like)
-# -----------------------------
-def _apply_tooltip_style(chart: alt.Chart) -> alt.Chart:
-    """Make hover tooltips larger and higher-contrast (IEA-style)."""
-    try:
-        return chart.configure_tooltip(
-            fill="#0B0F17",
-            stroke="#3A3F4B",
-            strokeWidth=1,
-            cornerRadius=8,
-            padding=10,
-            labelColor="#F2F2F2",
-            titleColor="#F2F2F2",
-            labelFontSize=14,
-            titleFontSize=13,
-        )
-    except Exception:
-        return chart
-
 
 # -----------------------------
 # Units
@@ -261,31 +252,6 @@ def _apply_tooltip_style(chart: alt.Chart) -> alt.Chart:
 # Optional display conversion: GWh -> thousand toe (ktoe, "bin TEP").
 # 1 toe = 11.63 MWh  =>  1 GWh = 1000/11.63 = 85.9845 toe = 0.0859845 ktoe
 GWH_TO_KTOE = 0.0859845
-# Global Altair theme so all charts inherit the tooltip style
-def _iea_theme():
-    return {
-        "config": {
-            "tooltip": {
-                "fill": "#0B0F17",
-                "stroke": "#3A3F4B",
-                "strokeWidth": 1,
-                "cornerRadius": 8,
-                "padding": 10,
-                "labelColor": "#F2F2F2",
-                "titleColor": "#F2F2F2",
-                "labelFontSize": 14,
-                "titleFontSize": 13,
-            }
-        }
-    }
-
-try:
-    alt.themes.register("iea_theme", _iea_theme)
-    alt.themes.enable("iea_theme")
-except Exception:
-    pass
-
-
 
 # -----------------------------
 # Config
@@ -2502,7 +2468,7 @@ def _sparkline_chart(
         y=alt.Y("value:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False)),
     ).properties(height=120)
 
-    st.altair_chart(_apply_tooltip_style(chart), use_container_width=True)
+    st.altair_chart(chart, use_container_width=True)
 
 
 
@@ -2779,7 +2745,7 @@ def _legend_filter_params(stack_field: str):
     return sel
 
 
-def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None, total_format: str = None):
+def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -2849,7 +2815,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
                     alt.Tooltip(f"{stack_field}:N", title=category_title),
                     alt.Tooltip("value:Q", title=y_title, format=value_format),
-                    alt.Tooltip("total:Q", title="Total", format=(total_format or value_format)),
+                    *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
                 ],
             )
             .add_params(sel)
@@ -2860,7 +2826,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
 
 
-def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None, total_format: str = None):
+def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -2921,7 +2887,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
-                alt.Tooltip("total:Q", title="Total", format=(total_format or value_format)),
+                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
             ],
         )
         .add_params(sel)
@@ -2968,7 +2934,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
-                alt.Tooltip("total:Q", title="Total", format=(total_format or value_format)),
+                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
             ],
         )
         .add_params(sel)
@@ -2981,8 +2947,6 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     y_title_use = y_title
     value_format_use = value_format
     is_percent = False
-    total_format = value_format_use
-
 
     diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("compare_mode") == "Yan yana sütun — aynı yılda kıyas")
     a = globals().get("diff_scn_a")
@@ -3014,9 +2978,9 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     title_use = title + (" (Pay %)" if is_percent else "")
     def _render_main():
         if compare_mode == "Küçük paneller (Ayrı Grafikler)":
-            _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map, total_format=total_format)
+            _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map)
         else:
-            _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map, total_format=total_format)
+            _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
     _render_main()
 # =========================
 # Waterfall helpers (unchanged)
@@ -3101,7 +3065,7 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
     )
 
     st.markdown(f"**{title}**")
-    st.altair_chart(_apply_tooltip_style(ch), use_container_width=True)
+    st.altair_chart(ch, use_container_width=True)
 
 
 # -----------------------------
@@ -3427,4 +3391,4 @@ for scn in selected_scenarios:
         st.warning("Bu senaryo için veri bulunamadı.")
     else:
         fig = _plot_generation_bar_race(d_plotly, _energy_unit_label())
-        st.plotly_chart(fig, use_container_width=True)
+        st_plotly(fig, use_container_width=True)
