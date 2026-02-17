@@ -1916,7 +1916,7 @@ def _render_ai_commentary_block(df_long: pd.DataFrame, title: str, kind: str, un
         bullets = _ai_commentary_power_mix_diff(df_long, kind=kind, unit_label=unit_label, scn_a=scn_a, scn_b=scn_b)
         if not bullets:
             return
-        with st.expander(f"Yapay Zekâ Yorumu (Fark: {scn_a} − {scn_b})", expanded=False):
+        with st.expander(f"Yapay Zekâ Yorumu (offline) (Fark: {scn_a} − {scn_b})", expanded=False):
             for b in bullets:
                 st.markdown(f"- {b}")
         return
@@ -1925,7 +1925,7 @@ def _render_ai_commentary_block(df_long: pd.DataFrame, title: str, kind: str, un
     comments = _ai_commentary_power_mix(df_long, kind=kind, unit_label=unit_label)
     if not comments:
         return
-    with st.expander("Yapay Zekâ Yorumu", expanded=False):
+    with st.expander("Yapay Zekâ Yorumu (offline)", expanded=False):
         for scn, bullets in comments.items():
             if len(comments) > 1 and scn != "Tek Senaryo":
                 st.markdown(f"**{scn}**")
@@ -1994,7 +1994,7 @@ def _render_ai_commentary_line_block(df: pd.DataFrame, title: str, unit_label: s
     bullets = _ai_commentary_line_diff(df, unit_label=unit_label, scn_a=scn_a, scn_b=scn_b)
     if not bullets:
         return
-    with st.expander(f"Yapay Zekâ Yorumu (Fark: {scn_a} − {scn_b})", expanded=False):
+    with st.expander(f"Yapay Zekâ Yorumu (offline) (Fark: {scn_a} − {scn_b})", expanded=False):
         for b in bullets:
             st.markdown(f"- {b}")
 # -----------------------------
@@ -2143,7 +2143,7 @@ def _render_ai_commentary_custom(df_long: pd.DataFrame, title: str, fn, unit_lab
     comments = fn(df_long, unit_label=unit_label)
     if not comments:
         return
-    with st.expander("Yapay Zekâ Yorumu", expanded=False):
+    with st.expander("Yapay Zekâ Yorumu (offline)", expanded=False):
         for scn, bullets in comments.items():
             if len(comments) > 1 and scn != "Tek Senaryo":
                 st.markdown(f"**{scn}**")
