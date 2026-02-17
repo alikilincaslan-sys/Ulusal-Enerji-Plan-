@@ -85,6 +85,10 @@ SCENARIO_PALETTE = [
     "#9edae5",  # açık turkuaz
 ]
 
+
+# Sentinel for optional legend argument in encodings
+_LEGEND_DEFAULT = object()
+
 def _scenario_color_encoding(df, field: str = "scenario", title: str = "Senaryo", legend=None):
     """Scenario renklerini tüm çizgi grafiklerde sabit ve ayrışır yap."""
     try:
@@ -114,6 +118,36 @@ def _scenario_color_encoding(df, field: str = "scenario", title: str = "Senaryo"
         )
     except Exception:
         return alt.Color(f"{field}:N", title=title, legend=legend)
+
+
+
+def _scenario_domain(df: pd.DataFrame, field: str = "scenario") -> list[str]:
+    """Deterministic scenario order for clustered bars (left→right).
+    Priority:
+      1) selected_scenarios (sidebar selection order)
+      2) alphabetical order of unique scenario names in df
+    """
+    try:
+        # 1) UI selection order (if available)
+        sel = globals().get("selected_scenarios", None)
+        dom: list[str] = []
+        if isinstance(sel, list) and len(sel) > 0:
+            dom = [str(s) for s in sel if s is not None]
+        # 2) fallback: sort unique values
+        if not dom:
+            dom = [str(x) for x in df[field].dropna().unique().tolist()]
+            dom = sorted(list(dict.fromkeys(dom)))
+        # Keep only scenarios that exist in the df
+        present = set([str(x) for x in df[field].dropna().unique().tolist()])
+        dom = [d for d in dom if d in present]
+        # If df contains scenarios not in dom (rare), append them deterministically
+        extra = [d for d in sorted(present) if d not in dom]
+        return dom + extra
+    except Exception:
+        try:
+            return sorted([str(x) for x in df[field].dropna().unique().tolist()])
+        except Exception:
+            return []
 
 
 def get_source_color(name):
@@ -165,7 +199,7 @@ def _ordered_domain(values: list[str]) -> list[str]:
 
     return sorted(uniq, key=prio_key)
 
-def _source_color_encoding(df, field: str, title: str, order=None, color_map=None):
+def _source_color_encoding(df, field: str, title: str, order=None, color_map=None, legend=_LEGEND_DEFAULT):
     """Altair color encoding (deterministik, case-insensitive).
 
     - Eğer color_map verilirse (dict: {kategori: '#RRGGBB'}) *case-insensitive* eşleştirir.
@@ -208,11 +242,19 @@ def _source_color_encoding(df, field: str, title: str, order=None, color_map=Non
             # 4) deterministic fallback
             rng.append(c if c else _hash_color(d))
 
+        if legend is _LEGEND_DEFAULT:
+            return alt.Color(
+                f"{field}:N",
+                title=title,
+                sort=domain,
+                scale=alt.Scale(domain=domain, range=rng),
+            )
         return alt.Color(
             f"{field}:N",
             title=title,
             sort=domain,
             scale=alt.Scale(domain=domain, range=rng),
+            legend=legend,
         )
     except Exception:
         # fallback: Altair default
@@ -2941,6 +2983,9 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
             return alt.Y("value:Q", title=y_title, scale=y_scale, axis=y_axis)
         return alt.Y("value:Q", title=y_title)
     style = "Çizgi"  # zaman serilerinde bar kapatıldı
+    scn_domain = _scenario_domain(dfp, field="scenario")
+    if scn_domain:
+        dfp["scenario"] = pd.Categorical(dfp["scenario"], categories=scn_domain, ordered=True)
 
     base = alt.Chart(dfp).encode(
         color=_scenario_color_encoding(dfp, "scenario", title="Senaryo", legend=alt.Legend(orient='right', direction='vertical', labelLimit=180, titleLimit=0)),
@@ -2995,7 +3040,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     else:
         chart = base.mark_bar().encode(
             x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
-            xOffset=alt.XOffset("scenario:N"),
+            xOffset=alt.XOffset("scenario:N", sort=scn_domain),
             y=_y_enc(),
         )
 
@@ -3389,7 +3434,7 @@ def _legend_filter_params(stack_field: str):
     return sel
 
 
-def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None):
+def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None, show_legend: bool = True):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -3442,7 +3487,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         if sub.empty:
             continue
 
-        sel = _legend_filter_params(stack_field)
+        sel = _legend_filter_params(stack_field) if show_legend else None
 
         bars_src = alt.Chart(sub)
         if not is_percent:
@@ -3453,8 +3498,8 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             .encode(
                 x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
                 y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-                color=_source_color_encoding(sub, stack_field, category_title, order=order, color_map=color_map),
-                opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
+                color=_source_color_encoding(sub, stack_field, category_title, order=order, color_map=color_map, legend=(None if not show_legend else _LEGEND_DEFAULT)),
+                opacity=(alt.condition(sel, alt.value(1), alt.value(0.15)) if sel is not None else alt.value(1)),
                 tooltip=[
                     alt.Tooltip(f"{x_field}:O", title="Yıl"),
                     alt.Tooltip(f"{stack_field}:N", title=category_title),
@@ -3462,15 +3507,17 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
                     *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
                 ],
             )
-            .add_params(sel)
         )
 
         with cols[idx % ncols]:
             st.markdown(f"**{scn}**")
+            if sel is not None:
+                bars = bars.add_params(sel)
+
             st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
 
 
-def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None):
+def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None, show_legend: bool = True):
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
@@ -3481,9 +3528,18 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
     dfp = dfp.dropna(subset=["year"])
     dfp["year"] = dfp["year"].astype(int)
     year_vals = sorted(pd.to_numeric(dfp[x_field], errors="coerce").dropna().astype(int).unique().tolist())
+    scn_domain = _scenario_domain(dfp, field="scenario")
+    if scn_domain:
+        dfp["scenario"] = pd.Categorical(dfp["scenario"], categories=scn_domain, ordered=True)
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
-        dfp = dfp.sort_values(["year", "scenario", stack_field])
+
+    # ensure deterministic scenario order for clustered bars
+    if scn_domain:
+        if order is not None:
+            dfp = dfp.sort_values(["year", "scenario", stack_field])
+        else:
+            dfp = dfp.sort_values(["year", "scenario"])
 
     if is_percent:
         yscale = alt.Scale(domain=[0, 100])
@@ -3512,7 +3568,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         else:
             yscale = alt.Undefined
 
-    sel = _legend_filter_params(stack_field)
+    sel = _legend_filter_params(stack_field) if show_legend else None
 
     bars_src = alt.Chart(dfp)
     if not is_percent:
@@ -3522,10 +3578,10 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         bars_src.mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
-            xOffset=alt.XOffset("scenario:N"),
+            xOffset=alt.XOffset("scenario:N", sort=scn_domain),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-            color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
-            opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
+            color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map, legend=(None if not show_legend else _LEGEND_DEFAULT)),
+            opacity=(alt.condition(sel, alt.value(1), alt.value(0.15)) if sel is not None else alt.value(1)),
             tooltip=[
                 alt.Tooltip("scenario:N", title="Senaryo"),
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
@@ -3534,8 +3590,10 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
                 *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
             ],
         )
-        .add_params(sel)
     )
+    if sel is not None:
+        bars = bars.add_params(sel)
+
     st.altair_chart(bars.properties(height=420, padding={"bottom": 28}), use_container_width=True)
 
 
@@ -3553,9 +3611,16 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         st.warning("Seçilen yıllar için veri yok (seçili snapshot yılları).")
         return
 
+    scn_domain = _scenario_domain(dfp, field="scenario")
+    if scn_domain:
+        dfp["scenario"] = pd.Categorical(dfp["scenario"], categories=scn_domain, ordered=True)
+
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
         dfp = dfp.sort_values(["year", "scenario", stack_field])
+    else:
+        if scn_domain:
+            dfp = dfp.sort_values(["year", "scenario"])
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
@@ -3569,7 +3634,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         bars_src.mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
-            xOffset=alt.XOffset("scenario:N"),
+            xOffset=alt.XOffset("scenario:N", sort=scn_domain),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
             opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
@@ -3586,7 +3651,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
     st.altair_chart(bars.properties(height=420), use_container_width=True)
 
 
-def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None, color_map=None):
+def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None, color_map=None, show_legend: bool = True):
     df_use = df
     y_title_use = y_title
     value_format_use = value_format
@@ -3622,9 +3687,9 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     title_use = title + (" (Pay %)" if is_percent else "")
     def _render_main():
         if compare_mode == "Küçük paneller (Ayrı Grafikler)":
-            _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map)
+            _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map, show_legend=show_legend)
         else:
-            _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent)
+            _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map, show_legend=show_legend)
     _render_main()
 # =========================
 # Waterfall helpers (unchanged)
@@ -3912,15 +3977,16 @@ if "Elektrik" in selected_panels:
 
 
     _render_stacked(
-        _convert_energy_df(df_sector_el).rename(columns={"sector": "category"}),
+        _convert_energy_df(df_sector_el).rename(columns={"sector": "category"}).query("category in ['Industry', 'Residential', 'Tertiary', 'Transport']"),
         title=f"Sektörlere Göre Elektrik Tüketimi ({_energy_unit_label()})",
         x_field="year",
         stack_field="category",
         y_title=_energy_unit_label(),
         category_title="Sektör",
         value_format=_energy_value_format(),
-        order=["Energy Branch & Other Uses", "Households", "Residential", "Industry", "Tertiary", "Services", "Commercial", "Transport"],
+        order=["Industry", "Residential", "Tertiary", "Transport"],
         color_map=SECTOR_COLOR_MAP,
+        show_legend=True,
     )
 
     st.divider()
@@ -4026,15 +4092,16 @@ if "Enerji" in selected_panels:
 
 
     _render_stacked(
-        _convert_energy_df(df_final_sector).rename(columns={"sector": "category"}),
+        _convert_energy_df(df_final_sector).rename(columns={"sector": "category"}).query("category in ['Households', 'Industry', 'Tertiary', 'Transport']"),
         title=f"Sektörlerine Göre Nihai Enerji Tüketimi ({_energy_unit_label()})",
         x_field="year",
         stack_field="category",
         y_title=_energy_unit_label(),
         category_title="Sektör",
         value_format=_energy_value_format(),
-        order=["Energy Branch & Other Uses", "Households", "Residential", "Industry", "Tertiary", "Services", "Commercial", "Transport"],
+        order=["Households", "Industry", "Tertiary", "Transport"],
         color_map=SECTOR_COLOR_MAP,
+        show_legend=True,
     )
 
     
