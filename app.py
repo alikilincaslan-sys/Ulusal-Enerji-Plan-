@@ -1632,6 +1632,371 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
     return mix
 
 
+
+# -----------------------------
+# AI-style commentary (offline, rule-based)
+# -----------------------------
+def _fmt_num(x, fmt=",.0f"):
+    try:
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "—"
+        return format(float(x), fmt)
+    except Exception:
+        return "—"
+
+def _safe_pct(num, den):
+    try:
+        num = float(num); den = float(den)
+        if not np.isfinite(num) or not np.isfinite(den) or den == 0:
+            return np.nan
+        return (num / den) * 100.0
+    except Exception:
+        return np.nan
+
+def _ai_commentary_power_mix(df_long: pd.DataFrame, kind: str, unit_label: str):
+    """Generate short, persuasive bullets for stacked charts.
+    kind: 'generation' | 'capacity'
+    Expects columns: year, category, value, scenario (optional)
+    """
+    if df_long is None or df_long.empty:
+        return {}
+
+    d = df_long.copy()
+    # normalize columns
+    if "group" in d.columns and "category" not in d.columns:
+        d = d.rename(columns={"group": "category"})
+    if "sector" in d.columns and "category" not in d.columns:
+        d = d.rename(columns={"sector": "category"})
+
+    if "scenario" not in d.columns:
+        d["scenario"] = "Tek Senaryo"
+
+    d["year"] = pd.to_numeric(d["year"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d = d.dropna(subset=["year", "category", "value", "scenario"])
+    if d.empty:
+        return {}
+
+    d["year"] = d["year"].astype(int)
+
+    # evaluation window
+    y0 = int(globals().get("start_year", int(d["year"].min())))
+    y1 = int(globals().get("MAX_YEAR", int(d["year"].max())))
+    # clamp to available years
+    y0 = max(int(d["year"].min()), y0)
+    y1 = min(int(d["year"].max()), y1)
+
+    # buckets
+    ren_set = {"Hydro", "Wind (RES)", "Solar (GES)", "Other Renewables", "Renewables"}
+    vre_set = {"Wind (RES)", "Solar (GES)"}
+    fos_set = {"Natural gas", "Coal", "Lignite", "Oil", "Gas", "Solids"}
+    nuc_set = {"Nuclear"}
+
+    out = {}
+    for scn, g in d.groupby("scenario", sort=False):
+        gg = g.copy()
+
+        # totals
+        tot = gg.groupby("year", as_index=False)["value"].sum().rename(columns={"value": "total"})
+        t0 = float(tot.loc[tot["year"] == y0, "total"].iloc[0]) if (tot["year"] == y0).any() else np.nan
+        t1 = float(tot.loc[tot["year"] == y1, "total"].iloc[0]) if (tot["year"] == y1).any() else np.nan
+
+        # category at y0/y1
+        piv = gg.pivot_table(index="year", columns="category", values="value", aggfunc="sum").fillna(0.0)
+        if y0 not in piv.index or y1 not in piv.index:
+            continue
+
+        v0 = piv.loc[y0]
+        v1 = piv.loc[y1]
+
+        # top categories (latest)
+        top_cat = str(v1.sort_values(ascending=False).index[0]) if len(v1) else "—"
+
+        # biggest change (abs)
+        delta = (v1 - v0)
+        up_cat = str(delta.sort_values(ascending=False).index[0]) if len(delta) else "—"
+        dn_cat = str(delta.sort_values(ascending=True).index[0]) if len(delta) else "—"
+
+        # shares
+        ren0 = float(v0[[c for c in v0.index if c in ren_set]].sum()) if len(v0) else 0.0
+        ren1 = float(v1[[c for c in v1.index if c in ren_set]].sum()) if len(v1) else 0.0
+        vre0 = float(v0[[c for c in v0.index if c in vre_set]].sum()) if len(v0) else 0.0
+        vre1 = float(v1[[c for c in v1.index if c in vre_set]].sum()) if len(v1) else 0.0
+        fos0 = float(v0[[c for c in v0.index if c in fos_set]].sum()) if len(v0) else 0.0
+        fos1 = float(v1[[c for c in v1.index if c in fos_set]].sum()) if len(v1) else 0.0
+        nuc0 = float(v0[[c for c in v0.index if c in nuc_set]].sum()) if len(v0) else 0.0
+        nuc1 = float(v1[[c for c in v1.index if c in nuc_set]].sum()) if len(v1) else 0.0
+
+        ren_share0 = _safe_pct(ren0, t0)
+        ren_share1 = _safe_pct(ren1, t1)
+        fos_share0 = _safe_pct(fos0, t0)
+        fos_share1 = _safe_pct(fos1, t1)
+        vre_share0 = _safe_pct(vre0, t0)
+        vre_share1 = _safe_pct(vre1, t1)
+        nuc_share1 = _safe_pct(nuc1, t1)
+
+        # messages (short, “alıcı ve etkili”)
+        bullets = []
+        if np.isfinite(t0) and np.isfinite(t1):
+            chg = ((t1 - t0) / t0 * 100.0) if t0 != 0 else np.nan
+            if np.isfinite(chg):
+                bullets.append(f"Toplam {('üretim' if kind=='generation' else ('birincil enerji talebi' if kind=='energy' else 'kurulu güç'))} {y0}→{y1} döneminde yaklaşık **%{chg:.1f}** değişiyor (son yıl: **{_fmt_num(t1, ',.0f')} {unit_label}**).")
+
+        bullets.append(f"{y1} itibarıyla en büyük bileşen: **{top_cat}**.")
+        # change bullets
+        bullets.append(f"{y0}→{y1} döneminde en güçlü artış: **{up_cat}** (Δ ≈ **{_fmt_num(delta[up_cat], ',.0f')} {unit_label}**)." if up_cat in delta.index else f"En güçlü artış: **{up_cat}**.")
+        if dn_cat in delta.index:
+            bullets.append(f"En belirgin gerileme / en düşük artış: **{dn_cat}** (Δ ≈ **{_fmt_num(delta[dn_cat], ',.0f')} {unit_label}**).")
+
+        # mix message tailored
+        if kind == "generation":
+            if np.isfinite(ren_share0) and np.isfinite(ren_share1):
+                bullets.append(f"Yenilenebilir payı **%{ren_share0:.1f} → %{ren_share1:.1f}**; bu artış, karbon maliyeti/ithalat riski hassasiyetini azaltır.")
+            if np.isfinite(fos_share0) and np.isfinite(fos_share1):
+                bullets.append(f"Fosil yakıt payı **%{fos_share0:.1f} → %{fos_share1:.1f}**; düşüş trendi sürüyorsa ETS/SDMK baskısı daha yönetilebilir olur.")
+            if np.isfinite(vre_share0) and np.isfinite(vre_share1) and (vre_share1 - vre_share0) > 3:
+                bullets.append(f"Rüzgâr+Güneş payı **%{vre_share0:.1f} → %{vre_share1:.1f}**; esneklik (depolama/şebeke) yatırımlarını kritik hale getirir.")
+            if np.isfinite(nuc_share1) and nuc_share1 > 0.5:
+                bullets.append(f"Nükleer payı %{nuc_share1:.1f} seviyesinde; baz yük etkisiyle değişken RES entegrasyonunu destekler.")
+        else:  # capacity
+            if np.isfinite(ren_share0) and np.isfinite(ren_share1):
+                bullets.append(f"Yenilenebilir kapasite payı **%{ren_share0:.1f} → %{ren_share1:.1f}**; arz güvenliği için kapasite faktörü yüksek kaynaklarla denge önem kazanır.")
+            if np.isfinite(vre_share0) and np.isfinite(vre_share1) and (vre_share1 - vre_share0) > 3:
+                bullets.append(f"Rüzgâr+Güneş kapasite payı **%{vre_share0:.1f} → %{vre_share1:.1f}**; şebeke esnekliği ve sistem hizmetleri (yedek/reaktif) ihtiyacını artırır.")
+
+        out[str(scn)] = bullets[:6]  # keep compact
+    return out
+
+
+# -----------------------------
+# Diff-mode AI-style commentary (offline, rule-based)
+# -----------------------------
+def _fmt_signed(x, fmt=",.0f", unit=""):
+    try:
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return "—"
+        x = float(x)
+        s = "+" if x >= 0 else ""
+        u = f" {unit}" if unit else ""
+        return f"{s}{format(x, fmt)}{u}"
+    except Exception:
+        return "—"
+
+def _ai_commentary_power_mix_diff(df_long: pd.DataFrame, kind: str, unit_label: str, scn_a: str, scn_b: str):
+    """Diff-mode bullets for stacked charts: compare scenario A vs B.
+    Produces compact bullets that explicitly name scenarios and explain substitutions (e.g., gas replaced by wind/solar).
+    Expects columns: year, category (or group), value, scenario.
+    """
+    if df_long is None or df_long.empty or not scn_a or not scn_b:
+        return []
+
+    d = df_long.copy()
+    if "group" in d.columns and "category" not in d.columns:
+        d = d.rename(columns={"group": "category"})
+    if "sector" in d.columns and "category" not in d.columns:
+        d = d.rename(columns={"sector": "category"})
+    if "scenario" not in d.columns:
+        return []
+
+    d["year"] = pd.to_numeric(d["year"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d = d.dropna(subset=["year", "category", "value", "scenario"])
+    if d.empty:
+        return []
+    d["year"] = d["year"].astype(int)
+
+    # window
+    y0 = int(globals().get("start_year", int(d["year"].min())))
+    y1 = int(globals().get("MAX_YEAR", int(d["year"].max())))
+    y0 = max(int(d["year"].min()), y0)
+    y1 = min(int(d["year"].max()), y1)
+
+    da = d[d["scenario"].astype(str) == str(scn_a)].copy()
+    db = d[d["scenario"].astype(str) == str(scn_b)].copy()
+    if da.empty or db.empty:
+        return []
+
+    # totals by year
+    ta = da.groupby("year", as_index=False)["value"].sum().rename(columns={"value": "A"})
+    tb = db.groupby("year", as_index=False)["value"].sum().rename(columns={"value": "B"})
+    tt = pd.merge(ta, tb, on="year", how="inner").sort_values("year")
+    if tt.empty or (y1 not in tt["year"].values):
+        return []
+
+    tt["delta"] = tt["A"] - tt["B"]
+    last = tt[tt["year"] == y1].iloc[0]
+    delta_last = float(last["delta"])
+    A_last = float(last["A"])
+    B_last = float(last["B"])
+
+    # peak delta year (absolute)
+    peak_row = tt.iloc[int(np.argmax(np.abs(tt["delta"].values)))]
+    peak_year = int(peak_row["year"])
+    peak_delta = float(peak_row["delta"])
+
+    # category pivot at y1 (and y0 for context)
+    pa = da.pivot_table(index="year", columns="category", values="value", aggfunc="sum").fillna(0.0)
+    pb = db.pivot_table(index="year", columns="category", values="value", aggfunc="sum").fillna(0.0)
+    # align columns
+    cols = sorted(set(pa.columns).union(set(pb.columns)))
+    pa = pa.reindex(columns=cols, fill_value=0.0)
+    pb = pb.reindex(columns=cols, fill_value=0.0)
+
+    if y1 not in pa.index or y1 not in pb.index:
+        return []
+
+    da_y1 = (pa.loc[y1] - pb.loc[y1]).sort_values(ascending=False)
+
+    # top drivers (last year)
+    pos = da_y1[da_y1 > 0].head(3)
+    neg = da_y1[da_y1 < 0].tail(3)  # most negative
+
+    def _drivers_line(s: pd.Series, prefix: str):
+        if s is None or s.empty:
+            return None
+        parts = [f"{idx} ({_fmt_signed(val, ',.0f', unit_label)})" for idx, val in s.items()]
+        return f"{prefix}: " + ", ".join(parts)
+
+    # substitution narrative heuristic
+    ren_like = {"Hydro", "Hydropower", "Wind (RES)", "Wind", "Solar (GES)", "Solar", "Other Renewables", "Renewables"}
+    vre_like = {"Wind (RES)", "Wind", "Solar (GES)", "Solar"}
+    fos_like = {"Natural gas", "Gas", "Coal", "Lignite", "Oil", "Solids"}
+
+    def _sum_delta(nameset):
+        idxs = [c for c in da_y1.index if c in nameset]
+        return float(da_y1[idxs].sum()) if idxs else 0.0
+
+    d_fos = _sum_delta(fos_like)
+    d_vre = _sum_delta(vre_like)
+    d_ren = _sum_delta(ren_like)
+
+    # label by kind
+    kind_map = {
+        "capacity": "kurulu güç",
+        "generation": "elektrik üretimi",
+        "energy": "birincil enerji talebi",
+        "final_fuel": "nihai enerji tüketimi",
+        "final_sector": "nihai enerji tüketimi",
+        "emissions": "emisyonlar",
+    }
+    main_label = kind_map.get(kind, "elektrik üretimi")
+
+    bullets = []
+    bullets.append(
+        f"**Fark (A − B):** **{scn_a}** senaryosu, **{scn_b}** senaryosuna göre {y1} yılında toplam {main_label}da **{_fmt_signed(delta_last, ',.0f', unit_label)}** fark yaratıyor (A: **{_fmt_num(A_last, ',.0f')}**, B: **{_fmt_num(B_last, ',.0f')}** {unit_label})."
+    )
+
+    dl1 = _drivers_line(pos, f"{y1} itibarıyla A lehine artanlar")
+    if dl1:
+        bullets.append(dl1 + ".")
+    dl2 = _drivers_line(neg, f"{y1} itibarıyla A'da daha düşük olanlar")
+    if dl2:
+        bullets.append(dl2 + ".")
+
+    # substitution: fossil down, VRE up (only meaningful for fuel/tech mixes)
+    if (kind not in ["capacity", "final_sector", "emissions"]) and (d_fos < 0) and (d_vre > 0):
+        bullets.append(
+            f"Okuma ipucu: A senaryosunda fosil (özellikle gaz/kömür) katkısı azalırken rüzgâr+güneş artıyor; bu görünüm, **fosilden RES'e ikame** edildiğini gösterir."
+        )
+    elif (kind not in ["capacity", "final_sector", "emissions"]) and (d_fos < 0) and (d_ren > 0):
+        bullets.append(
+            f"Okuma ipucu: A senaryosunda fosil payı gerilerken yenilenebilir kaynaklar artıyor; toplam fark küçük olsa bile **kompozisyon değişimi** belirgin."
+        )
+
+    bullets.append(f"Farkın en belirgin olduğu yıl: **{peak_year}** (A − B ≈ **{_fmt_signed(peak_delta, ',.0f', unit_label)}**).")
+
+    return bullets[:6]
+def _render_ai_commentary_block(df_long: pd.DataFrame, title: str, kind: str, unit_label: str):
+    # Diff-mode (A-B) if enabled and two scenarios chosen
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("diff_scn_a") is not None) and (globals().get("diff_scn_b") is not None)
+
+    if diff_on:
+        scn_a = str(globals().get("diff_scn_a"))
+        scn_b = str(globals().get("diff_scn_b"))
+        bullets = _ai_commentary_power_mix_diff(df_long, kind=kind, unit_label=unit_label, scn_a=scn_a, scn_b=scn_b)
+        if not bullets:
+            return
+        with st.expander(f"Yapay Zekâ Yorumu (Fark: {scn_a} − {scn_b})", expanded=False):
+            for b in bullets:
+                st.markdown(f"- {b}")
+        return
+
+    # Default (per-scenario)
+    comments = _ai_commentary_power_mix(df_long, kind=kind, unit_label=unit_label)
+    if not comments:
+        return
+    with st.expander("Yapay Zekâ Yorumu", expanded=False):
+        for scn, bullets in comments.items():
+            if len(comments) > 1 and scn != "Tek Senaryo":
+                st.markdown(f"**{scn}**")
+            for b in bullets:
+                st.markdown(f"- {b}")
+
+
+# -----------------------------
+# Line-chart diff commentary (offline, rule-based)
+# -----------------------------
+def _ai_commentary_line_diff(df: pd.DataFrame, unit_label: str, scn_a: str, scn_b: str):
+    """Diff bullets for line charts (single metric by scenario). Expects columns: year, value, scenario."""
+    if df is None or df.empty or not scn_a or not scn_b:
+        return []
+    d = df.copy()
+    d["year"] = pd.to_numeric(d["year"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d = d.dropna(subset=["year", "value", "scenario"])
+    if d.empty:
+        return []
+    d["year"] = d["year"].astype(int)
+
+    da = d[d["scenario"].astype(str) == str(scn_a)]
+    db = d[d["scenario"].astype(str) == str(scn_b)]
+    if da.empty or db.empty:
+        return []
+
+    ya = da.groupby("year", as_index=False)["value"].mean().rename(columns={"value": "A"})
+    yb = db.groupby("year", as_index=False)["value"].mean().rename(columns={"value": "B"})
+    tt = pd.merge(ya, yb, on="year", how="inner").sort_values("year")
+    if tt.empty:
+        return []
+
+    y1 = int(globals().get("MAX_YEAR", int(tt["year"].max())))
+    if y1 not in tt["year"].values:
+        y1 = int(tt["year"].max())
+
+    tt["delta"] = tt["A"] - tt["B"]
+    last = tt[tt["year"] == y1].iloc[0]
+    delta_last = float(last["delta"])
+    A_last = float(last["A"])
+    B_last = float(last["B"])
+
+    peak_row = tt.iloc[int(np.argmax(np.abs(tt["delta"].values)))]
+    peak_year = int(peak_row["year"])
+    peak_delta = float(peak_row["delta"])
+
+    bullets = []
+    bullets.append(
+        f"**Fark (A − B):** **{scn_a}**, **{scn_b}**'ye göre {y1} yılında **{_fmt_signed(delta_last, ',.0f', unit_label)}** fark gösteriyor (A: **{_fmt_num(A_last, ',.0f')}**, B: **{_fmt_num(B_last, ',.0f')}** {unit_label})."
+    )
+    # trend hint
+    sign = "yüksek" if delta_last > 0 else "düşük" if delta_last < 0 else "benzer"
+    bullets.append(f"Okuma ipucu: {y1} itibarıyla A senaryosu B'ye göre daha **{sign}** seviyede.")
+
+    bullets.append(f"Farkın en belirgin olduğu yıl: **{peak_year}** (A − B ≈ **{_fmt_signed(peak_delta, ',.0f', unit_label)}**).")
+
+    return bullets[:5]
+
+def _render_ai_commentary_line_block(df: pd.DataFrame, title: str, unit_label: str):
+    diff_on = bool(globals().get("diff_mode_enabled", False)) and (globals().get("diff_scn_a") is not None) and (globals().get("diff_scn_b") is not None)
+    if not diff_on:
+        return
+    scn_a = str(globals().get("diff_scn_a"))
+    scn_b = str(globals().get("diff_scn_b"))
+    bullets = _ai_commentary_line_diff(df, unit_label=unit_label, scn_a=scn_a, scn_b=scn_b)
+    if not bullets:
+        return
+    with st.expander(f"Yapay Zekâ Yorumu (Fark: {scn_a} − {scn_b})", expanded=False):
+        for b in bullets:
+            st.markdown(f"- {b}")
 # -----------------------------
 # UI
 # -----------------------------
@@ -1639,6 +2004,153 @@ def capacity_mix_excl_storage_ptx(installed_cap_df: pd.DataFrame, cap_total: pd.
 # -----------------------------
 # Header helper (title + logo on the same line)
 # -----------------------------
+
+# -----------------------------
+# AI-style commentary for New Capacity & Storage/PTX (offline, rule-based)
+# -----------------------------
+def _ai_commentary_new_capacity(df_long: pd.DataFrame, unit_label: str = "GW"):
+    """Persuasive bullets for 'Yeni Kapasite' charts (diff of capacity).
+    Expects columns: year, category, value, scenario
+    value can be negative (retirements).
+    """
+    if df_long is None or df_long.empty:
+        return {}
+    d = df_long.copy()
+    if "group" in d.columns and "category" not in d.columns:
+        d = d.rename(columns={"group": "category"})
+    if "scenario" not in d.columns:
+        d["scenario"] = "Tek Senaryo"
+
+    d["year"] = pd.to_numeric(d["year"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d = d.dropna(subset=["year", "category", "value", "scenario"])
+    if d.empty:
+        return {}
+    d["year"] = d["year"].astype(int)
+
+    y0 = int(globals().get("start_year", int(d["year"].min())))
+    y1 = int(globals().get("MAX_YEAR", int(d["year"].max())))
+    y0 = max(int(d["year"].min()), y0)
+    y1 = min(int(d["year"].max()), y1)
+
+    out = {}
+    for scn, g in d.groupby("scenario", sort=False):
+        gg = g[(g["year"] >= y0) & (g["year"] <= y1)].copy()
+        if gg.empty:
+            continue
+
+        # totals by year
+        tot_y = gg.groupby("year", as_index=False)["value"].sum().sort_values("year")
+        net = float(tot_y["value"].sum())  # net additions over period (includes negatives)
+        gross_add = float(tot_y["value"].clip(lower=0).sum())
+        gross_ret = float((-tot_y["value"]).clip(lower=0).sum())
+
+        # peak build year (gross positive)
+        pos_y = tot_y.copy()
+        pos_y["pos"] = pos_y["value"].clip(lower=0)
+        peak_year = int(pos_y.sort_values("pos", ascending=False).iloc[0]["year"]) if not pos_y.empty else y1
+        peak_val = float(pos_y.sort_values("pos", ascending=False).iloc[0]["pos"]) if not pos_y.empty else 0.0
+
+        # cumulative by tech (positive additions)
+        by_cat = gg.copy()
+        by_cat["pos"] = by_cat["value"].clip(lower=0)
+        cum_cat = by_cat.groupby("category", as_index=False)["pos"].sum().sort_values("pos", ascending=False)
+        top_cat = str(cum_cat.iloc[0]["category"]) if not cum_cat.empty else "—"
+        top_cat_val = float(cum_cat.iloc[0]["pos"]) if not cum_cat.empty else 0.0
+
+        # net retirements dominant tech (negative)
+        by_cat["neg"] = (-by_cat["value"]).clip(lower=0)
+        cum_neg = by_cat.groupby("category", as_index=False)["neg"].sum().sort_values("neg", ascending=False)
+        top_ret_cat = str(cum_neg.iloc[0]["category"]) if (not cum_neg.empty and float(cum_neg.iloc[0]["neg"]) > 0) else None
+        top_ret_val = float(cum_neg.iloc[0]["neg"]) if (not cum_neg.empty and float(cum_neg.iloc[0]["neg"]) > 0) else 0.0
+
+        avg_add = gross_add / max(1, (y1 - y0))  # per-year over interval
+        bullets = []
+        bullets.append(f"{y0}–{y1} döneminde **net yeni kapasite**: **{_fmt_num(net, ',.2f')} {unit_label}** (brüt ekleme: {_fmt_num(gross_add, ',.2f')} {unit_label}).")
+        bullets.append(f"Yatırım temposunun zirvesi: **{peak_year}** (yaklaşık **{_fmt_num(peak_val, ',.2f')} {unit_label}** yıllık ek kapasite).")
+        bullets.append(f"Eklemenin omurgası: **{top_cat}** (kümülatif **{_fmt_num(top_cat_val, ',.2f')} {unit_label}**).")
+        bullets.append(f"Ortalama yıllık ekleme hızı: **{_fmt_num(avg_add, ',.2f')} {unit_label}/yıl** — şebeke bağlantısı ve izin süreçleri kritikleşir.")
+        if gross_ret > 0 and top_ret_cat:
+            bullets.append(f"Aynı dönemde **{_fmt_num(gross_ret, ',.2f')} {unit_label}** kapasite devreden çıkıyor; en belirgin çıkış **{top_ret_cat}** (≈ {_fmt_num(top_ret_val, ',.2f')} {unit_label}).")
+
+        out[str(scn)] = bullets[:6]
+    return out
+
+
+def _ai_commentary_storage_ptx(df_long: pd.DataFrame, unit_label: str = "GW"):
+    """Persuasive bullets for Storage & PTX capacity charts.
+    Expects categories: Total Storage, Power to X
+    """
+    if df_long is None or df_long.empty:
+        return {}
+    d = df_long.copy()
+    if "group" in d.columns and "category" not in d.columns:
+        d = d.rename(columns={"group": "category"})
+    if "scenario" not in d.columns:
+        d["scenario"] = "Tek Senaryo"
+
+    d["year"] = pd.to_numeric(d["year"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d = d.dropna(subset=["year", "category", "value", "scenario"])
+    if d.empty:
+        return {}
+    d["year"] = d["year"].astype(int)
+
+    y0 = int(globals().get("start_year", int(d["year"].min())))
+    y1 = int(globals().get("MAX_YEAR", int(d["year"].max())))
+    y0 = max(int(d["year"].min()), y0)
+    y1 = min(int(d["year"].max()), y1)
+
+    out = {}
+    for scn, g in d.groupby("scenario", sort=False):
+        gg = g.copy()
+        piv = gg.pivot_table(index="year", columns="category", values="value", aggfunc="sum").fillna(0.0)
+        if y0 not in piv.index or y1 not in piv.index:
+            continue
+        s0 = float(piv.loc[y0].get("Total Storage", 0.0))
+        s1 = float(piv.loc[y1].get("Total Storage", 0.0))
+        p0 = float(piv.loc[y0].get("Power to X", 0.0))
+        p1 = float(piv.loc[y1].get("Power to X", 0.0))
+
+        def _growth(a, b):
+            if a == 0:
+                return np.inf if b > 0 else 0.0
+            return (b - a) / a * 100.0
+
+        g_s = _growth(s0, s1)
+        g_p = _growth(p0, p1)
+
+        bullets = []
+        bullets.append(f"{y0}→{y1} döneminde **Depolama** {_fmt_num(s0, ',.3f')}→{_fmt_num(s1, ',.3f')} {unit_label} (**%{0 if not np.isfinite(g_s) else g_s:.0f}** değişim).")
+        bullets.append(f"Aynı dönemde **PTX** {_fmt_num(p0, ',.3f')}→{_fmt_num(p1, ',.3f')} {unit_label} (**%{0 if not np.isfinite(g_p) else g_p:.0f}** değişim).")
+        # balance message
+        if (s1 + p1) > 0:
+            share_storage = _safe_pct(s1, (s1 + p1))
+            bullets.append(f"2050’de esneklik sepetinde **Depolama payı ≈ %{share_storage:.0f}** — pik saat yönetimi ve sistem güvenliği açısından olumlu.")
+        # strategic implications
+        if s1 > 0 and p1 > 0:
+            bullets.append("Depolama kısa dönem dengeleme sağlarken, PTX fazla üretimi sektörel dönüşüme taşır; **ikisi birlikte** yüksek RES payı için güçlü bir sigortadır.")
+        elif s1 > 0 and p1 == 0:
+            bullets.append("Depolama büyümesi, VRE dalgalanmasını yönetmek için temel; PTX yoksa uzun dönem esneklik ve sektörel entegrasyon sınırlı kalabilir.")
+        elif p1 > 0 and s1 == 0:
+            bullets.append("PTX artışı, fazla üretimi değerlendirir; depolama zayıfsa kısa dönem frekans/rezerv ihtiyacı daha çok diğer esneklik kaynaklarına biner.")
+
+        out[str(scn)] = bullets[:6]
+    return out
+
+
+def _render_ai_commentary_custom(df_long: pd.DataFrame, title: str, fn, unit_label: str):
+    comments = fn(df_long, unit_label=unit_label)
+    if not comments:
+        return
+    with st.expander("Yapay Zekâ Yorumu", expanded=False):
+        for scn, bullets in comments.items():
+            if len(comments) > 1 and scn != "Tek Senaryo":
+                st.markdown(f"**{scn}**")
+            for b in bullets:
+                st.markdown(f"- {b}")
+
+
 def render_title_with_logo(title: str, logo_filename: str = "logo.png", logo_height_px: int = 58):
     """Render a single-line header with an optional logo on the right (offline-safe)."""
     try:
@@ -2186,6 +2698,124 @@ with st.expander("📥 Grafik verilerini indir", expanded=False):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
+def _ai_commentary_simple_kpi(dfp: pd.DataFrame, title: str, y_title: str, unit_hint: str = ""):
+    """Simple, offline commentary for line-chart indicators.
+    Expects dfp columns: year, value, scenario
+    Produces per-scenario bullets focusing on YoY and period growth.
+    """
+    if dfp is None or dfp.empty:
+        return {}
+
+    d = dfp.copy()
+    d["year"] = pd.to_numeric(d["year"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d = d.dropna(subset=["year", "value", "scenario"])
+    if d.empty:
+        return {}
+
+    d["year"] = d["year"].astype(int)
+
+    years = sorted(d["year"].unique().tolist())
+    if len(years) < 2:
+        return {}
+
+    y0 = int(globals().get("start_year", years[0]))
+    y1 = int(globals().get("MAX_YEAR", years[-1]))
+    y0 = max(years[0], y0)
+    y1 = min(years[-1], y1)
+
+    # choose two key periods if available
+    # Prefer 2025→2035 and 2035→2050; otherwise split mid.
+    def _pick_period(a, b):
+        if a in years and b in years and a < b:
+            return (a, b)
+        return None
+
+    p1 = _pick_period(2025, 2035)
+    p2 = _pick_period(2035, 2050)
+
+    if p1 is None or p2 is None:
+        mid = years[len(years)//2]
+        p1 = (y0, mid) if (y0 in years and mid in years and y0 < mid) else (years[0], years[-1])
+        p2 = (mid, y1) if (mid in years and y1 in years and mid < y1) else None
+
+    out = {}
+    for scn, g in d.groupby("scenario", sort=False):
+        gg = g.sort_values("year")
+        s = gg.set_index("year")["value"]
+
+        if y0 not in s.index or y1 not in s.index:
+            # fallback to available boundaries
+            ya, yb = int(s.index.min()), int(s.index.max())
+        else:
+            ya, yb = y0, y1
+
+        v0, v1 = float(s.loc[ya]), float(s.loc[yb])
+        years_span = max(1, yb - ya)
+
+        # CAGR
+        cagr = None
+        try:
+            if np.isfinite(v0) and np.isfinite(v1) and v0 > 0 and years_span > 0:
+                cagr = (v1 / v0) ** (1/years_span) - 1
+        except Exception:
+            cagr = None
+
+        # last YoY (if consecutive years exist)
+        yoy = None
+        try:
+            if len(s.index) >= 2:
+                y_last = int(s.index.max())
+                y_prev = int(sorted(s.index)[-2])
+                if y_last > y_prev:
+                    v_prev = float(s.loc[y_prev])
+                    if np.isfinite(v_prev) and v_prev != 0:
+                        yoy = (float(s.loc[y_last]) - v_prev) / v_prev
+        except Exception:
+            yoy = None
+
+        # period growth helper
+        def _period_line(pa):
+            if pa is None:
+                return None
+            a, b = pa
+            if a in s.index and b in s.index:
+                va, vb = float(s.loc[a]), float(s.loc[b])
+                if np.isfinite(va) and va != 0:
+                    return (a, b, (vb - va) / va)
+            return None
+
+        pg1 = _period_line(p1)
+        pg2 = _period_line(p2)
+
+        bullets = []
+        bullets.append(f"**{ya}→{yb}** döneminde toplam değişim: **{_fmt_num(v1 - v0, ',.2f')}** {unit_hint} (≈ **%{_fmt_num(((v1 - v0) / v0) * 100 if v0 else np.nan, ',.1f')}**).")
+
+        if cagr is not None:
+            bullets.append(f"Bu dönemde yıllık ortalama büyüme (CAGR): **%{_fmt_num(cagr*100, ',.2f')}**.")
+        if yoy is not None:
+            bullets.append(f"Son gözlenen yılda yıllık değişim: **%{_fmt_num(yoy*100, ',.2f')}**.")
+
+        if pg1 is not None:
+            a, b, p = pg1
+            bullets.append(f"**{a}→{b}** aralığında büyüme: **%{_fmt_num(p*100, ',.1f')}**.")
+        if pg2 is not None:
+            a, b, p = pg2
+            bullets.append(f"**{a}→{b}** aralığında büyüme: **%{_fmt_num(p*100, ',.1f')}**.")
+        # add short implication for electricity KPIs
+        t = str(title).lower()
+        if "elektrifikasyon" in t:
+            bullets.append("Elektrifikasyon artışı, düşük karbonlu dönüşümü destekler; şebeke esnekliği ve pik talep yönetimi ihtiyacını büyütür.")
+        elif "kişi" in t and "elektrik" in t:
+            bullets.append("Kişi başına tüketimde artış; sanayi/yaşam standardı etkisini yansıtır ve iletim-dağıtım yatırım ihtiyacını artırabilir.")
+        elif "dışa" in t or "bağıml" in t:
+            bullets.append("Dışa bağımlılıktaki düşüş arz güvenliği açısından olumlu; artış ise fiyat şoklarına hassasiyeti yükseltir.")
+
+        out[scn] = bullets
+
+    return out
+
+
 
 # -----------------------------
 # Line charts (single axis, scenario colors)
@@ -2370,6 +3000,33 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
         )
 
     st.altair_chart(chart.properties(height=320), use_container_width=True)
+
+
+    # --- Basit göstergeler için (elektrik KPI'ları) kısa yorum ---
+    _title_l = str(title).lower()
+    _kpi_keys = [
+        "kişi başına elektrik tüketimi",
+        "kisi basina elektrik tüketimi",
+        "kisi basina elektrik tuketimi",
+        "nihai enerjide elektrifikasyon oranı",
+        "nihai enerjide elektrifikasyon orani",
+        "enerjide dışa bağımlılık",
+        "enerjide disa bagimlilik",
+    ]
+    if any(k in _title_l for k in _kpi_keys):
+        unit_hint = ""
+        if "kwh" in str(y_title).lower() or "kişi" in _title_l:
+            unit_hint = "kWh/kişi"
+        elif "%" in str(y_title):
+            unit_hint = "%"
+        comm = _ai_commentary_simple_kpi(dfp, title=title, y_title=y_title, unit_hint=unit_hint)
+        if comm:
+            with st.expander("Kısa Yorum (büyüme ve dönem analizi)", expanded=False):
+                for scn, bullets in comm.items():
+                    st.markdown(f"**{scn}**")
+                    for b in bullets:
+                        st.markdown(f"- {b}")
+
 
 
 
@@ -3023,6 +3680,52 @@ def prepare_yearly_transition_waterfall(df_mix: pd.DataFrame, scenario: str, sta
     return pd.DataFrame(records)
 
 
+
+def _commentary_transition_waterfall(df_wf: pd.DataFrame, subject: str, unit: str, start_year: int, end_year: int, max_items: int = 2) -> str:
+    """Minimal, deterministic commentary for transformation waterfall charts (NOT diff mode).
+    Uses 'dönüşüm' wording to make the chart easier to read."""
+    if df_wf is None or df_wf.empty or "step" not in df_wf.columns or "delta" not in df_wf.columns:
+        return ""
+    df = df_wf.copy()
+    df["delta"] = pd.to_numeric(df["delta"], errors="coerce").fillna(0.0)
+    df = df[df["step"].astype(str) != "Net Değişim"]
+    if df.empty:
+        return ""
+
+    total = float(df["delta"].sum())
+
+    pos_df = df[df["delta"] > 0].sort_values("delta", ascending=False).head(max_items)
+    neg_df = df[df["delta"] < 0].sort_values("delta", ascending=True).head(max_items)
+
+    def _fmt(v: float) -> str:
+        # keep it readable; no excessive decimals for big numbers
+        av = abs(v)
+        if av >= 1000:
+            return f"{v:,.0f}"
+        if av >= 100:
+            return f"{v:,.1f}"
+        return f"{v:,.2f}"
+
+    parts = []
+    # 1) net message
+    if abs(total) < 1e-6:
+        parts.append(f"{start_year}–{end_year} döneminde {subject} açısından net değişim sınırlıdır.")
+    else:
+        direction = "artış" if total > 0 else "azalış"
+        parts.append(f"{start_year}–{end_year} döneminde {subject} dönüşümü net olarak {_fmt(total)} {unit} {direction} göstermektedir.")
+
+    # 2) drivers (negative then positive) — short
+    if not neg_df.empty:
+        items = [f"{r['step']} ({_fmt(float(r['delta']))} {unit})" for _, r in neg_df.iterrows()]
+        parts.append("Azalış tarafında öne çıkan teknolojiler: " + ", ".join(items) + ".")
+    if not pos_df.empty:
+        items = [f"{r['step']} (+{_fmt(float(r['delta']))} {unit})" for _, r in pos_df.iterrows()]
+        parts.append("Artış tarafında öne çıkan teknolojiler: " + ", ".join(items) + ".")
+
+    # Keep at most 3 sentences
+    return " ".join(parts[:3]).strip()
+
+
 def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
     if df_wf is None or df_wf.empty:
         st.info("Seçilen yıllar için dönüşüm verisi bulunamadı.")
@@ -3125,6 +3828,13 @@ if "Elektrik" in selected_panels:
         order=order_gen,
     )
 
+    _render_ai_commentary_block(
+        _convert_energy_df(df_genmix).rename(columns={"group": "category"}),
+        title="Kaynaklarına Göre Elektrik Üretimi",
+        kind="generation",
+        unit_label=_energy_unit_label(),
+    )
+
     st.divider()
 
     order_cap = ["Hydro", "Wind (RES)", "Solar (GES)", "Natural gas", "Coal", "Lignite", "Nuclear", "Other"]
@@ -3137,6 +3847,13 @@ if "Elektrik" in selected_panels:
         category_title="Teknoloji",
         value_format=",.2f",
         order=order_cap,
+    )
+
+    _render_ai_commentary_block(
+        df_capmix.rename(columns={"group": "category"}),
+        title="Elektrik Kurulu Gücü – Depolama & PTX Hariç",
+        kind="capacity",
+        unit_label="GW",
     )
 
     st.divider()
@@ -3162,6 +3879,13 @@ if "Elektrik" in selected_panels:
             order=order_cap,
         )
 
+        _render_ai_commentary_custom(
+            df_new_cap.rename(columns={"group": "category"}),
+            title="Yeni Kapasite – Depolama & PTX Hariç",
+            fn=_ai_commentary_new_capacity,
+            unit_label="GW",
+        )
+
     st.divider()
 
     order_storage_ptx = ["Total Storage", "Power to X"]
@@ -3177,6 +3901,13 @@ if "Elektrik" in selected_panels:
         color_map=STORAGE_PTX_COLOR_MAP,
     )
 
+    _render_ai_commentary_custom(
+        df_storage_ptx.rename(columns={"group": "category"}),
+        title="Depolama & PTX Kurulu Gücü",
+        fn=_ai_commentary_storage_ptx,
+        unit_label="GW",
+    )
+
     st.divider()
 
 
@@ -3188,6 +3919,7 @@ if "Elektrik" in selected_panels:
         y_title=_energy_unit_label(),
         category_title="Sektör",
         value_format=_energy_value_format(),
+        order=["Energy Branch & Other Uses", "Households", "Residential", "Industry", "Tertiary", "Services", "Commercial", "Transport"],
         color_map=SECTOR_COLOR_MAP,
     )
 
@@ -3216,9 +3948,35 @@ if "Elektrik" in selected_panels:
 
         colA, colB = st.columns(2)
         with colA:
-            render_waterfall(wf_gen, title=f"Elektrik Üretimi Dönüşümü ({_energy_unit_label()}) — {start_year} → {MAX_YEAR}", y_title=_energy_unit_label())
+            render_waterfall(
+                wf_gen,
+                title=f"Elektrik Üretimi Dönüşümü ({_energy_unit_label()}) — {start_year} → {MAX_YEAR}",
+                y_title=_energy_unit_label(),
+            )
+            _c = _commentary_transition_waterfall(
+                wf_gen,
+                subject="elektrik üretimi",
+                unit=_energy_unit_label(),
+                start_year=int(start_year),
+                end_year=int(MAX_YEAR),
+            )
+            if _c:
+                st.caption("Yorum: " + _c)
         with colB:
-            render_waterfall(wf_cap, title=f"Kurulu Güç Dönüşümü (GW) — {start_year} → {MAX_YEAR}", y_title="GW")
+            render_waterfall(
+                wf_cap,
+                title=f"Kurulu Güç Dönüşümü (GW) — {start_year} → {MAX_YEAR}",
+                y_title="GW",
+            )
+            _c2 = _commentary_transition_waterfall(
+                wf_cap,
+                subject="kurulu güç",
+                unit="GW",
+                start_year=int(start_year),
+                end_year=int(MAX_YEAR),
+            )
+            if _c2:
+                st.caption("Yorum: " + _c2)
 
     st.divider()
 
@@ -3237,6 +3995,13 @@ if "Enerji" in selected_panels:
         value_format=_energy_value_format(),
     )
 
+    _render_ai_commentary_block(
+        _convert_energy_df(df_primary).rename(columns={"source": "category"}),
+        title="Birincil Enerji Talebi",
+        kind="energy",
+        unit_label=_energy_unit_label(),
+    )
+
     st.divider()
 
     _render_stacked(
@@ -3249,7 +4014,16 @@ if "Enerji" in selected_panels:
         value_format=_energy_value_format(),
     )
 
+    
+    _render_ai_commentary_block(
+        _convert_energy_df(df_final).rename(columns={"source": "category"}),
+        title="Kaynaklarına Göre Nihai Enerji Tüketimi",
+        kind="final_fuel",
+        unit_label=_energy_unit_label(),
+    )
+
     st.divider()
+
 
     _render_stacked(
         _convert_energy_df(df_final_sector).rename(columns={"sector": "category"}),
@@ -3259,13 +4033,20 @@ if "Enerji" in selected_panels:
         y_title=_energy_unit_label(),
         category_title="Sektör",
         value_format=_energy_value_format(),
-        # Summary&Indicators → Total Final Energy by Sector (in GWh): satırlar 54–57
-        # Bu nedenle legend yalnızca 4 ana sektörü göstermeli.
-        order=["Industry", "Households", "Tertiary", "Transport"],
+        order=["Energy Branch & Other Uses", "Households", "Residential", "Industry", "Tertiary", "Services", "Commercial", "Transport"],
         color_map=SECTOR_COLOR_MAP,
     )
 
+    
+    _render_ai_commentary_block(
+        _convert_energy_df(df_final_sector).rename(columns={"sector": "category"}),
+        title="Sektörlerine Göre Nihai Enerji Tüketimi",
+        kind="final_sector",
+        unit_label=_energy_unit_label(),
+    )
+
     st.divider()
+
 
 
 # EMISSIONS PANEL
@@ -3273,6 +4054,7 @@ if "Sera Gazı Emisyonları" in selected_panels:
     st.markdown("## Sera Gazı Emisyonları")
 
     _line_chart(df_co2, "CO2 Emisyonları (ktn CO2)", "ktn CO2", value_format=",.0f")
+    _render_ai_commentary_line_block(df_co2, title="CO2 Emisyonları", unit_label="ktn CO2")
     _line_chart(df_cp, "Karbon Fiyatı (Varsayım) -$", "ABD Doları (2015) / tCO₂", value_format=",.2f")
 
     st.divider()
@@ -3303,7 +4085,16 @@ if "Sera Gazı Emisyonları" in selected_panels:
         color_map=EMISSION_COMPONENT_COLOR_MAP,
     )
 
-    st.divider()
+    
+    _render_ai_commentary_block(
+        df_nz_plot,
+        title="CO₂e Emisyon Bileşenleri",
+        kind="emissions",
+        unit_label="ktn CO₂e",
+    )
+
+st.divider()
+
 
 with st.expander("Çalıştırma"):
     st.code("pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py", language="bash")
