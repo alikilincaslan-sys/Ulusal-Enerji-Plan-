@@ -3188,7 +3188,6 @@ if "Elektrik" in selected_panels:
         y_title=_energy_unit_label(),
         category_title="Sektör",
         value_format=_energy_value_format(),
-        order=["Energy Branch & Other Uses", "Households", "Residential", "Industry", "Tertiary", "Services", "Commercial", "Transport"],
         color_map=SECTOR_COLOR_MAP,
     )
 
@@ -3260,7 +3259,9 @@ if "Enerji" in selected_panels:
         y_title=_energy_unit_label(),
         category_title="Sektör",
         value_format=_energy_value_format(),
-        order=["Energy Branch & Other Uses", "Households", "Residential", "Industry", "Tertiary", "Services", "Commercial", "Transport"],
+        # Summary&Indicators → Total Final Energy by Sector (in GWh): satırlar 54–57
+        # Bu nedenle legend yalnızca 4 ana sektörü göstermeli.
+        order=["Industry", "Households", "Tertiary", "Transport"],
         color_map=SECTOR_COLOR_MAP,
     )
 
