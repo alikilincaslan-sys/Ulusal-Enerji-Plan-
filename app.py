@@ -1,3 +1,4 @@
+
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
@@ -264,41 +265,6 @@ from io import BytesIO
 
 import base64
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
-
-# -----------------------------
-# IEA-style KPI card look (compact, high-contrast)
-# -----------------------------
-st.markdown(
-    '''
-    <style>
-      /* Metric containers */
-      div[data-testid="stMetric"] {
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(255, 255, 255, 0.10);
-        border-radius: 14px;
-        padding: 10px 12px;
-      }
-      /* Metric label */
-      div[data-testid="stMetric"] label, div[data-testid="stMetric"] [data-testid="stMetricLabel"] {
-        font-size: 0.80rem !important;
-        opacity: 0.85;
-        letter-spacing: 0.2px;
-      }
-      /* Metric value */
-      div[data-testid="stMetric"] [data-testid="stMetricValue"] {
-        font-size: 1.55rem !important;
-        font-weight: 650;
-        line-height: 1.10;
-      }
-      /* Help text spacing (if any) */
-      div[data-testid="stMetric"] [data-testid="stMetricDelta"]{
-        margin-top: 2px;
-      }
-    </style>
-    ''',
-    unsafe_allow_html=True
-)
-
 
 # -----------------------------
 # Units
@@ -3278,170 +3244,241 @@ st.subheader("Özet Bilgi Kartları (Seçili Senaryolar)")
 ncols = _ncols_for_selected(len(selected_scenarios))
 cols = st.columns(ncols)
 
+def _year_value(df: pd.DataFrame, year: int, series: str | None = None) -> float:
+    """Return value for (year[, series]) from a 4-col long df: scenario, year, value, [series]."""
+    if df is None or df.empty or year is None:
+        return np.nan
+    d = df.copy()
+    d["year"] = pd.to_numeric(d["year"], errors="coerce")
+    d["value"] = pd.to_numeric(d["value"], errors="coerce")
+    d = d.dropna(subset=["year", "value"])
+    d["year"] = d["year"].astype(int)
+    if series is not None and "series" in d.columns:
+        d = d[d["series"].astype(str) == str(series)]
+    if d.empty or year not in set(d["year"].unique().tolist()):
+        return np.nan
+    return float(d.loc[d["year"] == int(year), "value"].iloc[0])
 
-
-def _kpi_gen_bucket(cat: str) -> str:
-    """KPI donut için 4'lü sınıflama."""
-    s = (cat or "").strip().lower()
-
-    # Fossil fuels
-    if ("coal" in s and "lignite" not in s) or ("lignite" in s) or ("natural gas" in s) or (s == "gas"):
-        return "Fossil fuels"
-
-    # Renewables
-    if "solar" in s or "wind" in s or "hydro" in s:
-        return "Renewables"
-
-    # Nuclear
-    if "nuclear" in s:
-        return "Nuclear"
-
-    return "Other"
-
-
+def _metric_delta(v0: float, v1: float, kind: str = "pct") -> str | None:
+    """kind: 'pct' -> percent change, 'pp' -> percentage point change, 'abs' -> absolute delta"""
+    if not (np.isfinite(v0) and np.isfinite(v1)):
+        return None
+    if kind == "pp":
+        return f"{(v1 - v0):+.1f} puan"
+    if kind == "abs":
+        return f"{(v1 - v0):+,.2f}"
+    # pct
+    if v0 == 0:
+        return None
+    return f"{((v1 - v0) / abs(v0) * 100.0):+.1f}%"
 
 def _kpi_for_bundle(b):
     scn = b["scenario"]
-    supply = b["total_supply"]
-    ye = b["ye_both"]
-    gen_mix = b.get("gen_mix")
-    cap_mix = b.get("cap_mix")
-    cap_total = b["cap_total"]
-    gdp = b["gdp"]
 
+    # Years
+    y0 = int(globals().get("start_year", np.nan))
+    # For safety, compute latest_year from total_supply availability
+    supply = b.get("total_supply")
     available_max_year = int(supply["year"].max()) if supply is not None and not supply.empty else None
-    latest_year = int(min(int(MAX_YEAR), available_max_year)) if available_max_year is not None else None
-    latest_total = float(supply.loc[supply["year"] == latest_year, "value"].iloc[0]) if latest_year else np.nan
+    y1 = int(min(int(MAX_YEAR), available_max_year)) if available_max_year is not None else None
 
-    latest_ye_total = np.nan
-    latest_ye_int = np.nan
-    if latest_year and ye is not None and not ye.empty and (ye["year"] == latest_year).any():
-        tmp = ye[ye["year"] == latest_year].set_index("series")["value"].to_dict()
-        latest_ye_total = float(tmp.get("Toplam YE", np.nan))
-        latest_ye_int = float(tmp.get("Kesintili YE", np.nan))
-
-    latest_cap = np.nan
-    if latest_year and cap_total is not None and not cap_total.empty and (cap_total["year"] == latest_year).any():
-        latest_cap = float(cap_total.loc[cap_total["year"] == latest_year, "value"].iloc[0])
-
-    # Dışa bağımlılık oranı (%) — seçili senaryo, son yıl
-    dep_rate = np.nan
+    # Series dataframes
+    gdp = b.get("gdp")
+    per_cap = b.get("per_capita_el")
+    cp = b.get("carbon_price")
+    cap_total = b.get("cap_total")
+    ye = b.get("ye_both")
     dep = b.get("dependency_ratio")
-    if latest_year and dep is not None and (not dep.empty) and (dep["year"] == latest_year).any():
-        dep_rate = float(dep.loc[dep["year"] == latest_year, "value"].iloc[0])
+    co2 = b.get("co2")
 
+    # Values (end)
+    gdp_1 = _year_value(gdp, y1) if y1 else np.nan
+    gdp_0 = _year_value(gdp, y0) if y1 else np.nan
+
+    supply_1 = _year_value(supply, y1) if y1 else np.nan
+    supply_0 = _year_value(supply, y0) if y1 else np.nan
+
+    cap_1 = _year_value(cap_total, y1) if y1 else np.nan
+    cap_0 = _year_value(cap_total, y0) if y1 else np.nan
+
+    pc_1 = _year_value(per_cap, y1) if y1 else np.nan
+    pc_0 = _year_value(per_cap, y0) if y1 else np.nan
+
+    cp_1 = _year_value(cp, y1) if y1 else np.nan
+    cp_0 = _year_value(cp, y0) if y1 else np.nan
+
+    dep_1 = _year_value(dep, y1) if y1 else np.nan
+    dep_0 = _year_value(dep, y0) if y1 else np.nan
+
+    co2_1 = _year_value(co2, y1, series="CO2 Emisyonları (ktn CO2)") if y1 else np.nan
+    co2_0 = _year_value(co2, y0, series="CO2 Emisyonları (ktn CO2)") if y1 else np.nan
+
+    # YE shares (%)
+    ye_total_1 = np.nan
+    ye_int_1 = np.nan
+    ye_total_0 = np.nan
+    ye_int_0 = np.nan
+    if ye is not None and not ye.empty and y1 is not None:
+        d = ye.copy()
+        d["year"] = pd.to_numeric(d["year"], errors="coerce")
+        d["value"] = pd.to_numeric(d["value"], errors="coerce")
+        d = d.dropna(subset=["year", "series", "value"])
+        d["year"] = d["year"].astype(int)
+        if (d["year"] == y1).any():
+            tmp = d[d["year"] == y1].set_index("series")["value"].to_dict()
+            ye_total_1 = float(tmp.get("Toplam YE", np.nan))
+            ye_int_1 = float(tmp.get("Kesintili YE", np.nan))
+        if (d["year"] == y0).any():
+            tmp = d[d["year"] == y0].set_index("series")["value"].to_dict()
+            ye_total_0 = float(tmp.get("Toplam YE", np.nan))
+            ye_int_0 = float(tmp.get("Kesintili YE", np.nan))
+
+    # CAGR
     gdp_cagr = np.nan
     if gdp is not None and not gdp.empty:
         g = gdp.sort_values("year")
-        y0 = int(g.iloc[0]["year"])
-        y1 = int(g.iloc[-1]["year"])
+        yy0 = int(g.iloc[0]["year"])
+        yy1 = int(g.iloc[-1]["year"])
         v0 = float(g.iloc[0]["value"])
         v1 = float(g.iloc[-1]["value"])
-        gdp_cagr = _cagr(v0, v1, int(y1 - y0))
-
-
-
-    # KPI donut (elektrik üretimi dağılımı) — seçili yıl
-    donut_y = globals().get("donut_year", None)
-    try:
-        donut_y = int(donut_y) if donut_y is not None else None
-    except Exception:
-        donut_y = None
-    if donut_y is None:
-        donut_y = latest_year
-
-    pie_gen = pd.DataFrame(columns=["category", "value"])
-    if donut_y and gen_mix is not None and (not gen_mix.empty):
-        gm = gen_mix.copy()
-        # gen_mix kolon adı bazen group olabilir
-        if "group" in gm.columns and "category" not in gm.columns:
-            gm = gm.rename(columns={"group": "category"})
-        gm["year"] = pd.to_numeric(gm["year"], errors="coerce")
-        gm["value"] = pd.to_numeric(gm["value"], errors="coerce")
-        gm = gm.dropna(subset=["year", "category", "value"])
-        gm["year"] = gm["year"].astype(int)
-
-        # Eğer donut_y dosyada yoksa, en yakın (maks) yılı kullan
-        if int(donut_y) not in set(gm["year"].unique().tolist()):
-            donut_y = int(gm["year"].max())
-
-        gm = gm[gm["year"] == int(donut_y)]
-        if _energy_unit_is_ktoe():
-            gm["value"] = gm["value"] * float(GWH_TO_KTOE)
-
-        if not gm.empty:
-            gm["bucket"] = gm["category"].apply(_kpi_gen_bucket)
-            pie_gen = gm.groupby("bucket", as_index=False)["value"].sum().rename(columns={"bucket": "category"})
-            # Sabit sırayla göster
-            order = ["Fossil fuels", "Renewables", "Nuclear", "Other"]
-            pie_gen["category"] = pd.Categorical(pie_gen["category"], categories=order, ordered=True)
-            pie_gen = pie_gen.sort_values("category")
-
-            # Donut için yüzde (Pay %) hesapla (gösterim için; hesaplamaları etkilemez)
-            _tot = float(pd.to_numeric(pie_gen["value"], errors="coerce").sum())
-            if np.isfinite(_tot) and _tot != 0:
-                pie_gen["pct"] = (pd.to_numeric(pie_gen["value"], errors="coerce") / _tot) * 100.0
-            else:
-                pie_gen["pct"] = np.nan
-
-            # Yüzde (pay) değerini donut üstüne yazmak bazı ortamlarda grafiği boş gösterebildiği için
-            # yüzdeyi tooltip + grafiğin altında kompakt metin olarak gösteriyoruz.
+        gdp_cagr = _cagr(v0, v1, int(yy1 - yy0))
 
     return {
         "scenario": scn,
-        "latest_year": latest_year,
-        "total_supply": latest_total,
-        "ye_total": latest_ye_total,
-        "ye_int": latest_ye_int,
-        "cap_total": latest_cap,
-        "dep_rate": dep_rate,
+        "y0": y0,
+        "y1": y1,
+        "gdp_0": gdp_0,
+        "gdp_1": gdp_1,
         "gdp_cagr": gdp_cagr,
-        "donut_year": donut_y,
-        "pie_gen": pie_gen,
-        
+        "supply_0": supply_0,
+        "supply_1": supply_1,
+        "cap_0": cap_0,
+        "cap_1": cap_1,
+        "ye_total_0": ye_total_0,
+        "ye_total_1": ye_total_1,
+        "ye_int_0": ye_int_0,
+        "ye_int_1": ye_int_1,
+        "dep_0": dep_0,
+        "dep_1": dep_1,
+        "pc_0": pc_0,
+        "pc_1": pc_1,
+        "cp_0": cp_0,
+        "cp_1": cp_1,
+        "co2_0": co2_0,
+        "co2_1": co2_1,
     }
 
-
 kpis = [_kpi_for_bundle(b) for b in bundles]
-
 
 for i, kpi in enumerate(kpis[:ncols]):
     with cols[i]:
         st.markdown(f"**{kpi['scenario']}**")
-        st.metric("GSYH CAGR (%)", f"{kpi['gdp_cagr']*100:.2f}%" if np.isfinite(kpi["gdp_cagr"]) else "—")
 
-        supply_display = (kpi["total_supply"] * GWH_TO_KTOE) if (_energy_unit_is_ktoe() and np.isfinite(kpi["total_supply"])) else kpi["total_supply"]
+        y0 = kpi.get("y0")
+        y1 = kpi.get("y1")
+        yr = f"{y1}" if y1 is not None else ""
+
+        # 1) GSYH (son yıl)
         st.metric(
-            f"Toplam Arz ({_energy_unit_label()}) – {kpi['latest_year'] or ''}",
-            f"{supply_display:{_energy_value_format()}}" if np.isfinite(supply_display) else "—",
+            f"GSYH (milyar $, {yr})",
+            f"{kpi['gdp_1']:,.1f}" if np.isfinite(kpi.get("gdp_1", np.nan)) else "—",
+            delta=_metric_delta(kpi.get("gdp_0", np.nan), kpi.get("gdp_1", np.nan), kind="pct"),
+            delta_color="normal",
         )
 
-        st.metric("YE Payı (%)", f"{kpi['ye_total']:.1f}%" if np.isfinite(kpi.get("ye_total", np.nan)) else "—")
-        st.metric("Kesintili YE Payı (%)", f"{kpi['ye_int']:.1f}%" if np.isfinite(kpi.get("ye_int", np.nan)) else "—")
-        st.metric("Dışa Bağımlılık (%)", f"{kpi['dep_rate']:.1f}%" if np.isfinite(kpi.get("dep_rate", np.nan)) else "—")
-        st.metric("Elektrik Kurulu Gücü (GW)", f"{kpi['cap_total']:,.3f}" if np.isfinite(kpi["cap_total"]) else "—")
+        # 2) GSYH CAGR
+        st.metric(
+            "GSYH CAGR (%)",
+            f"{kpi['gdp_cagr']*100:.2f}%" if np.isfinite(kpi.get("gdp_cagr", np.nan)) else "—",
+        )
 
-        # Mini dağılım grafiği (donut) — dilime tıklayınca büyür
-        _donut_chart(
-            kpi.get("pie_gen"),
-            category_col="category",
-            value_col="value",
-            title=f"Elektrik üretimi dağılımı ({kpi.get('donut_year')}) — {_energy_unit_label()}",
-            value_format=_energy_value_format(),
+        # 3) Toplam arz
+        supply_1 = kpi.get("supply_1", np.nan)
+        supply_0 = kpi.get("supply_0", np.nan)
+        if _energy_unit_is_ktoe():
+            supply_1 = supply_1 * float(GWH_TO_KTOE) if np.isfinite(supply_1) else supply_1
+            supply_0 = supply_0 * float(GWH_TO_KTOE) if np.isfinite(supply_0) else supply_0
+
+        st.metric(
+            f"Toplam Arz ({_energy_unit_label()}, {yr})",
+            f"{supply_1:{_energy_value_format()}}" if np.isfinite(supply_1) else "—",
+            delta=_metric_delta(supply_0, supply_1, kind="pct"),
+            delta_color="normal",
+        )
+
+        # 4) Elektrik kurulu güç
+        st.metric(
+            f"Kurulu Güç (GW, {yr})",
+            f"{kpi['cap_1']:,.3f}" if np.isfinite(kpi.get("cap_1", np.nan)) else "—",
+            delta=_metric_delta(kpi.get("cap_0", np.nan), kpi.get("cap_1", np.nan), kind="pct"),
+            delta_color="normal",
+        )
+
+        # 5) YE Payı
+        st.metric(
+            f"YE Payı (%, {yr})",
+            f"{kpi['ye_total_1']:.1f}%" if np.isfinite(kpi.get("ye_total_1", np.nan)) else "—",
+            delta=_metric_delta(kpi.get("ye_total_0", np.nan), kpi.get("ye_total_1", np.nan), kind="pp"),
+            delta_color="normal",
+        )
+
+        # 6) Kesintili YE Payı
+        st.metric(
+            f"Kesintili YE Payı (%, {yr})",
+            f"{kpi['ye_int_1']:.1f}%" if np.isfinite(kpi.get("ye_int_1", np.nan)) else "—",
+            delta=_metric_delta(kpi.get("ye_int_0", np.nan), kpi.get("ye_int_1", np.nan), kind="pp"),
+            delta_color="normal",
+        )
+
+        # 7) Dışa bağımlılık (azalış iyidir -> inverse)
+        st.metric(
+            f"Dışa Bağımlılık (%, {yr})",
+            f"{kpi['dep_1']:.1f}%" if np.isfinite(kpi.get("dep_1", np.nan)) else "—",
+            delta=_metric_delta(kpi.get("dep_0", np.nan), kpi.get("dep_1", np.nan), kind="pp"),
+            delta_color="inverse",
+        )
+
+        # 8) Kişi başına elektrik
+        st.metric(
+            f"Kişi Başına Elektrik (kWh/kişi, {yr})",
+            f"{kpi['pc_1']:,.0f}" if np.isfinite(kpi.get("pc_1", np.nan)) else "—",
+            delta=_metric_delta(kpi.get("pc_0", np.nan), kpi.get("pc_1", np.nan), kind="pct"),
+            delta_color="normal",
+        )
+
+        # 9) Karbon fiyatı
+        st.metric(
+            f"Karbon Fiyatı ($/tCO₂, {yr})",
+            f"{kpi['cp_1']:,.2f}" if np.isfinite(kpi.get("cp_1", np.nan)) else "—",
+            delta=_metric_delta(kpi.get("cp_0", np.nan), kpi.get("cp_1", np.nan), kind="pct"),
+            delta_color="normal",
+        )
+
+        # 10) Elektrik emisyonları (azalış iyidir -> inverse)
+        st.metric(
+            f"Elektrik Emisyonları (ktn CO₂, {yr})",
+            f"{kpi['co2_1']:,.1f}" if np.isfinite(kpi.get("co2_1", np.nan)) else "—",
+            delta=_metric_delta(kpi.get("co2_0", np.nan), kpi.get("co2_1", np.nan), kind="pct"),
+            delta_color="inverse",
         )
 
 if len(kpis) > ncols:
     with st.expander("Diğer seçili senaryoların KPI’ları"):
         for kpi in kpis[ncols:]:
-            supply_display = (kpi["total_supply"] * GWH_TO_KTOE) if (_energy_unit_is_ktoe() and np.isfinite(kpi["total_supply"])) else kpi["total_supply"]
+            y1 = kpi.get("y1")
+            yr = f"{y1}" if y1 is not None else ""
             st.markdown(
                 f"**{kpi['scenario']}** — "
-                f"GSYH CAGR: {(kpi['gdp_cagr']*100):.2f}% | "
-                f"Toplam Arz: {supply_display:{_energy_value_format()}} {_energy_unit_label()} | "
-                f"YE Payı: {kpi['ye_total']:.1f}% | Kesintili YE: {kpi['ye_int']:.1f}% | "
-                f"KG: {kpi['cap_total']:,.3f} GW"
+                f"GSYH: {kpi.get('gdp_1', np.nan):,.1f} (milyar $, {yr}) | "
+                f"CAGR: {(kpi.get('gdp_cagr', np.nan)*100):.2f}% | "
+                f"Toplam Arz: {((kpi.get('supply_1', np.nan)*GWH_TO_KTOE) if _energy_unit_is_ktoe() else kpi.get('supply_1', np.nan)):{_energy_value_format()}} {_energy_unit_label()} | "
+                f"Kurulu Güç: {kpi.get('cap_1', np.nan):,.3f} GW | "
+                f"YE: {kpi.get('ye_total_1', np.nan):.1f}% | Kesintili YE: {kpi.get('ye_int_1', np.nan):.1f}% | "
+                f"Dışa Bağımlılık: {kpi.get('dep_1', np.nan):.1f}% | "
+                f"KB Elektrik: {kpi.get('pc_1', np.nan):,.0f} kWh/kişi | "
+                f"Karbon: {kpi.get('cp_1', np.nan):,.2f} $/tCO₂ | "
+                f"Elektrik Emisyonu: {kpi.get('co2_1', np.nan):,.1f} ktn CO₂"
             )
-
 
 st.divider()
 
@@ -3844,40 +3881,7 @@ def render_waterfall(df_wf: pd.DataFrame, title: str, y_title: str):
 # PANELS
 # -----------------------------
 # ELECTRICITY PANEL
-# -----------------------------
-# Compact top KPIs (space-efficient)
-# -----------------------------
-try:
-    _show_compact_top = bool(globals().get("compact_top_kpis", True))
-except Exception:
-    _show_compact_top = True
-
-if _show_compact_top:
-    st.markdown("## Özet Varsayımlar")
-    st.caption("Senaryo varsayımları: Nüfus • GSYH • Kişi başına elektrik • Karbon fiyatı")
-    c1, c2, c3, c4, c5 = st.columns(5, gap="small")
-
-    with c1:
-        _sparkline_chart(df_pop, "Nüfus", "milyon kişi", value_format=",.0f", metric_unit="milyon kişi")
-    with c2:
-        _sparkline_chart(df_gdp, "GSYH", "milyar $ (2015)", value_format=",.1f", metric_unit="milyar $")
-    with c3:
-        try:
-            df_pc_top = _concat("per_capita_el")
-        except Exception:
-            df_pc_top = pd.DataFrame()
-        _sparkline_chart(df_pc_top, "Kişi Başına Elektrik", "kWh/kişi", value_format=",.0f", metric_unit="kWh/kişi")
-    with c4:
-        _sparkline_chart(df_cp, "Karbon Fiyatı", "ABD Doları (2015) / tCO₂", value_format=",.2f", metric_unit="$/tCO₂")
-
-    with c5:
-        try:
-            df_lc_top = _concat("local_content_ratio")
-        except Exception:
-            df_lc_top = pd.DataFrame()
-        _sparkline_chart(df_lc_top, "Enerjide Dışa Bağımlılık Yüzdesi", "%", value_format=",.1f", metric_unit="%")
-
-    st.divider()
+# (Removed) Özet Varsayımlar sparkline panel (moved into KPI cards)
 
 
 if "Senaryo Varsayımları" in selected_panels:
