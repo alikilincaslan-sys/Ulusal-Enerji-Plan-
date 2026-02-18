@@ -3597,7 +3597,12 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
 
     bars = (
-        bars_src.mark_bar()
+        bars_src = alt.Chart(sub).mark_bar().encode(
+    x=alt.X("year:O"),
+    xOffset=_scenario_offset_encoding("scenario"),
+    y=alt.Y("value:Q"),
+    color=_source_color_encoding(sub, "group", "Kaynak"),
+    )
 
     # --- Yan yana senaryo etiketi (stacked grafikte bar üstüne) ---
     _lbl = _scenario_label_layer(dfp if 'dfp' in locals() else df, x_field=x_field, scenario_field='scenario', value_field='value')
