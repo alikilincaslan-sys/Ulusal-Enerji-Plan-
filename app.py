@@ -1,4 +1,3 @@
-
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
@@ -120,6 +119,28 @@ def _scenario_color_encoding(df, field: str = "scenario", title: str = "Senaryo"
         return alt.Color(f"{field}:N", title=title, legend=legend)
 
 
+
+
+def _scenario_offset_encoding(field: str = "scenario"):
+    """Ensure scenario bars are ordered consistently left→right within each year.
+
+    Uses global 'selected_scenarios' if available (preserves the user's comparison order).
+    """
+    try:
+        sel = globals().get("selected_scenarios", None)
+        if isinstance(sel, list) and len(sel) > 0:
+            domain = [str(s) for s in sel if s is not None]
+            # unique preserve order
+            seen = set()
+            dom_u = []
+            for d in domain:
+                if d not in seen:
+                    seen.add(d); dom_u.append(d)
+            domain = dom_u
+            return alt.XOffset(f"{field}:N", sort=domain)
+        return alt.XOffset(f"{field}:N")
+    except Exception:
+        return alt.XOffset(f"{field}:N")
 def get_source_color(name):
     if isinstance(name, str):
         for key, val in SOURCE_COLOR_MAP.items():
@@ -243,6 +264,41 @@ from io import BytesIO
 
 import base64
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
+
+# -----------------------------
+# IEA-style KPI card look (compact, high-contrast)
+# -----------------------------
+st.markdown(
+    '''
+    <style>
+      /* Metric containers */
+      div[data-testid="stMetric"] {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 14px;
+        padding: 10px 12px;
+      }
+      /* Metric label */
+      div[data-testid="stMetric"] label, div[data-testid="stMetric"] [data-testid="stMetricLabel"] {
+        font-size: 0.80rem !important;
+        opacity: 0.85;
+        letter-spacing: 0.2px;
+      }
+      /* Metric value */
+      div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+        font-size: 1.55rem !important;
+        font-weight: 650;
+        line-height: 1.10;
+      }
+      /* Help text spacing (if any) */
+      div[data-testid="stMetric"] [data-testid="stMetricDelta"]{
+        margin-top: 2px;
+      }
+    </style>
+    ''',
+    unsafe_allow_html=True
+)
+
 
 # -----------------------------
 # Units
@@ -1752,7 +1808,16 @@ def _ai_commentary_power_mix(df_long: pd.DataFrame, kind: str, unit_label: str):
         if np.isfinite(t0) and np.isfinite(t1):
             chg = ((t1 - t0) / t0 * 100.0) if t0 != 0 else np.nan
             if np.isfinite(chg):
-                bullets.append(f"Toplam {('üretim' if kind=='generation' else ('birincil enerji talebi' if kind=='energy' else 'kurulu güç'))} {y0}→{y1} döneminde yaklaşık **%{chg:.1f}** değişiyor (son yıl: **{_fmt_num(t1, ',.0f')} {unit_label}**).")
+                label_map = {
+            'generation': 'üretim',
+            'capacity': 'kurulu güç',
+            'energy': 'birincil enerji talebi',
+            'final_fuel': 'nihai enerji tüketimi',
+            'final_sector': 'nihai enerji tüketimi',
+            'emissions': 'sera gazı emisyonları',
+        }
+        metric_label = label_map.get(kind, 'toplam')
+        bullets.append(f"Toplam {metric_label} {y0}→{y1} döneminde yaklaşık **%{chg:.1f}** değişiyor (son yıl: **{_fmt_num(t1, ',.0f')} {unit_label}**).")
 
         bullets.append(f"{y1} itibarıyla en büyük bileşen: **{top_cat}**.")
         # change bullets
@@ -3007,7 +3072,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     else:
         chart = base.mark_bar().encode(
             x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
-            xOffset=alt.XOffset("scenario:N"),
+            xOffset=_scenario_offset_encoding("scenario"),
             y=_y_enc(),
         )
 
@@ -3351,7 +3416,8 @@ for i, kpi in enumerate(kpis[:ncols]):
             f"{supply_display:{_energy_value_format()}}" if np.isfinite(supply_display) else "—",
         )
 
-        st.metric("YE Payı (%)", f"{kpi['ye_total']:.1f}% / {kpi['ye_int']:.1f}%" if np.isfinite(kpi["ye_total"]) else "—")
+        st.metric("YE Payı (%)", f"{kpi['ye_total']:.1f}%" if np.isfinite(kpi.get("ye_total", np.nan)) else "—")
+        st.metric("Kesintili YE Payı (%)", f"{kpi['ye_int']:.1f}%" if np.isfinite(kpi.get("ye_int", np.nan)) else "—")
         st.metric("Dışa Bağımlılık (%)", f"{kpi['dep_rate']:.1f}%" if np.isfinite(kpi.get("dep_rate", np.nan)) else "—")
         st.metric("Elektrik Kurulu Gücü (GW)", f"{kpi['cap_total']:,.3f}" if np.isfinite(kpi["cap_total"]) else "—")
 
@@ -3372,7 +3438,7 @@ if len(kpis) > ncols:
                 f"**{kpi['scenario']}** — "
                 f"GSYH CAGR: {(kpi['gdp_cagr']*100):.2f}% | "
                 f"Toplam Arz: {supply_display:{_energy_value_format()}} {_energy_unit_label()} | "
-                f"YE Payı: {kpi['ye_total']:.1f}%/{kpi['ye_int']:.1f}% | "
+                f"YE Payı: {kpi['ye_total']:.1f}% | Kesintili YE: {kpi['ye_int']:.1f}% | "
                 f"KG: {kpi['cap_total']:,.3f} GW"
             )
 
@@ -3536,7 +3602,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         bars_src.mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
-            xOffset=alt.XOffset("scenario:N"),
+            xOffset=_scenario_offset_encoding("scenario"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map, legend=(None if not show_legend else _LEGEND_DEFAULT)),
             opacity=(alt.condition(sel, alt.value(1), alt.value(0.15)) if sel is not None else alt.value(1)),
@@ -3585,7 +3651,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         bars_src.mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
-            xOffset=alt.XOffset("scenario:N"),
+            xOffset=_scenario_offset_encoding("scenario"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
             opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
