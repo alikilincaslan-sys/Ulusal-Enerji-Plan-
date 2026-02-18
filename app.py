@@ -1,4 +1,3 @@
-
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
@@ -3392,7 +3391,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 1) GSYH (son yıl)
         st.metric(
             f"GSYH (milyar $, {yr})",
-            _fmt_range(kpi.get("gdp_0", np.nan), kpi.get("gdp_1", np.nan), ",.1f"),
+            _fmt_range(kpi.get("gdp_0", np.nan), kpi.get("gdp_1", np.nan), ",.2f"),
             delta=_metric_delta(kpi.get("gdp_0", np.nan), kpi.get("gdp_1", np.nan), kind="pct"),
             delta_color="normal",
         )
@@ -3400,7 +3399,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 2) GSYH CAGR
         st.metric(
             "GSYH CAGR (%)",
-            f"{kpi['gdp_cagr']*100:.2f}%" if np.isfinite(kpi.get("gdp_cagr", np.nan)) else "—",
+            f"{kpi['gdp_cagr']*100:.1f}%" if np.isfinite(kpi.get("gdp_cagr", np.nan)) else "—",
         )
 
         # 3) Toplam arz
@@ -3412,7 +3411,7 @@ for i, kpi in enumerate(kpis[:ncols]):
 
         st.metric(
             f"Toplam Arz ({_energy_unit_label()}, {yr})",
-            _fmt_range(supply_0, supply_1, _energy_value_format()),
+            _fmt_range(supply_0, supply_1, ",.0f"),
             delta=_metric_delta(supply_0, supply_1, kind="pct"),
             delta_color="normal",
         )
@@ -3420,7 +3419,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 4) Elektrik kurulu güç
         st.metric(
             f"Kurulu Güç (GW, {yr})",
-            _fmt_range(kpi.get("cap_0", np.nan), kpi.get("cap_1", np.nan), ",.3f"),
+            _fmt_range(kpi.get("cap_0", np.nan), kpi.get("cap_1", np.nan), ",.0f"),
             delta=_metric_delta(kpi.get("cap_0", np.nan), kpi.get("cap_1", np.nan), kind="pct"),
             delta_color="normal",
         )
@@ -3460,7 +3459,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 9) Karbon fiyatı
         st.metric(
             f"Karbon Fiyatı ($/tCO₂, {yr})",
-            _fmt_range(kpi.get("cp_0", np.nan), kpi.get("cp_1", np.nan), ",.2f"),
+            _fmt_range(kpi.get("cp_0", np.nan), kpi.get("cp_1", np.nan), ",.0f"),
             delta=_metric_delta(kpi.get("cp_0", np.nan), kpi.get("cp_1", np.nan), kind="pct"),
             delta_color="normal",
         )
@@ -3468,7 +3467,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 10) Elektrik emisyonları (azalış iyidir -> inverse)
         st.metric(
             f"Elektrik Emisyonları (ktn CO₂, {yr})",
-            _fmt_range(kpi.get("co2_0", np.nan), kpi.get("co2_1", np.nan), ",.1f"),
+            _fmt_range(kpi.get("co2_0", np.nan), kpi.get("co2_1", np.nan), ",.0f"),
             delta=_metric_delta(kpi.get("co2_0", np.nan), kpi.get("co2_1", np.nan), kind="pct"),
             delta_color="inverse",
         )
@@ -3480,15 +3479,15 @@ if len(kpis) > ncols:
             yr = f"{y1}" if y1 is not None else ""
             st.markdown(
                 f"**{kpi['scenario']}** — "
-                f"GSYH: {kpi.get('gdp_1', np.nan):,.1f} (milyar $, {yr}) | "
-                f"CAGR: {(kpi.get('gdp_cagr', np.nan)*100):.2f}% | "
-                f"Toplam Arz: {((kpi.get('supply_1', np.nan)*GWH_TO_KTOE) if _energy_unit_is_ktoe() else kpi.get('supply_1', np.nan)):{_energy_value_format()}} {_energy_unit_label()} | "
-                f"Kurulu Güç: {kpi.get('cap_1', np.nan):,.3f} GW | "
+                f"GSYH: {kpi.get('gdp_1', np.nan):,.2f} (milyar $, {yr}) | "
+                f"CAGR: {(kpi.get('gdp_cagr', np.nan)*100):.1f}% | "
+                f"Toplam Arz: {((kpi.get('supply_1', np.nan)*GWH_TO_KTOE) if _energy_unit_is_ktoe() else kpi.get('supply_1', np.nan)):,.0f} {_energy_unit_label()} | "
+                f"Kurulu Güç: {kpi.get('cap_1', np.nan):,.0f} GW | "
                 f"YE: {kpi.get('ye_total_1', np.nan):.1f}% | Kesintili YE: {kpi.get('ye_int_1', np.nan):.1f}% | "
                 f"Dışa Bağımlılık: {kpi.get('dep_1', np.nan):.1f}% | "
                 f"KB Elektrik: {kpi.get('pc_1', np.nan):,.0f} kWh/kişi | "
-                f"Karbon: {kpi.get('cp_1', np.nan):,.2f} $/tCO₂ | "
-                f"Elektrik Emisyonu: {kpi.get('co2_1', np.nan):,.1f} ktn CO₂"
+                f"Karbon: {kpi.get('cp_1', np.nan):,.0f} $/tCO₂ | "
+                f"Elektrik Emisyonu: {kpi.get('co2_1', np.nan):,.0f} ktn CO₂"
             )
 
 st.divider()
