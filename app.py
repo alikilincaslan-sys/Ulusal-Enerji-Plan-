@@ -3272,6 +3272,17 @@ def _metric_delta(v0: float, v1: float, kind: str = "pct") -> str | None:
         return None
     return f"{((v1 - v0) / abs(v0) * 100.0):+.1f}%"
 
+
+def _fmt_range(v0, v1, fmt: str, suffix: str = "") -> str:
+    """Format first→last value range for KPI cards; falls back to last-only when needed."""
+    v0 = float(v0) if v0 is not None and np.isfinite(v0) else np.nan
+    v1 = float(v1) if v1 is not None and np.isfinite(v1) else np.nan
+    if np.isfinite(v0) and np.isfinite(v1):
+        return f"{format(v0, fmt)}{suffix} → {format(v1, fmt)}{suffix}"
+    if np.isfinite(v1):
+        return f"{format(v1, fmt)}{suffix}"
+    return "—"
+
 def _kpi_for_bundle(b):
     scn = b["scenario"]
 
@@ -3381,7 +3392,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 1) GSYH (son yıl)
         st.metric(
             f"GSYH (milyar $, {yr})",
-            f"{kpi['gdp_1']:,.1f}" if np.isfinite(kpi.get("gdp_1", np.nan)) else "—",
+            _fmt_range(kpi.get("gdp_0", np.nan), kpi.get("gdp_1", np.nan), ",.1f"),
             delta=_metric_delta(kpi.get("gdp_0", np.nan), kpi.get("gdp_1", np.nan), kind="pct"),
             delta_color="normal",
         )
@@ -3401,7 +3412,7 @@ for i, kpi in enumerate(kpis[:ncols]):
 
         st.metric(
             f"Toplam Arz ({_energy_unit_label()}, {yr})",
-            f"{supply_1:{_energy_value_format()}}" if np.isfinite(supply_1) else "—",
+            _fmt_range(supply_0, supply_1, _energy_value_format()),
             delta=_metric_delta(supply_0, supply_1, kind="pct"),
             delta_color="normal",
         )
@@ -3409,7 +3420,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 4) Elektrik kurulu güç
         st.metric(
             f"Kurulu Güç (GW, {yr})",
-            f"{kpi['cap_1']:,.3f}" if np.isfinite(kpi.get("cap_1", np.nan)) else "—",
+            _fmt_range(kpi.get("cap_0", np.nan), kpi.get("cap_1", np.nan), ",.3f"),
             delta=_metric_delta(kpi.get("cap_0", np.nan), kpi.get("cap_1", np.nan), kind="pct"),
             delta_color="normal",
         )
@@ -3417,7 +3428,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 5) YE Payı
         st.metric(
             f"YE Payı (%, {yr})",
-            f"{kpi['ye_total_1']:.1f}%" if np.isfinite(kpi.get("ye_total_1", np.nan)) else "—",
+            _fmt_range(kpi.get("ye_total_0", np.nan), kpi.get("ye_total_1", np.nan), ".1f", "%"),
             delta=_metric_delta(kpi.get("ye_total_0", np.nan), kpi.get("ye_total_1", np.nan), kind="pp"),
             delta_color="normal",
         )
@@ -3425,7 +3436,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 6) Kesintili YE Payı
         st.metric(
             f"Kesintili YE Payı (%, {yr})",
-            f"{kpi['ye_int_1']:.1f}%" if np.isfinite(kpi.get("ye_int_1", np.nan)) else "—",
+            _fmt_range(kpi.get("ye_int_0", np.nan), kpi.get("ye_int_1", np.nan), ".1f", "%"),
             delta=_metric_delta(kpi.get("ye_int_0", np.nan), kpi.get("ye_int_1", np.nan), kind="pp"),
             delta_color="normal",
         )
@@ -3433,7 +3444,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 7) Dışa bağımlılık (azalış iyidir -> inverse)
         st.metric(
             f"Dışa Bağımlılık (%, {yr})",
-            f"{kpi['dep_1']:.1f}%" if np.isfinite(kpi.get("dep_1", np.nan)) else "—",
+            _fmt_range(kpi.get("dep_0", np.nan), kpi.get("dep_1", np.nan), ".1f", "%"),
             delta=_metric_delta(kpi.get("dep_0", np.nan), kpi.get("dep_1", np.nan), kind="pp"),
             delta_color="inverse",
         )
@@ -3441,7 +3452,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 8) Kişi başına elektrik
         st.metric(
             f"Kişi Başına Elektrik (kWh/kişi, {yr})",
-            f"{kpi['pc_1']:,.0f}" if np.isfinite(kpi.get("pc_1", np.nan)) else "—",
+            _fmt_range(kpi.get("pc_0", np.nan), kpi.get("pc_1", np.nan), ",.0f"),
             delta=_metric_delta(kpi.get("pc_0", np.nan), kpi.get("pc_1", np.nan), kind="pct"),
             delta_color="normal",
         )
@@ -3449,7 +3460,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 9) Karbon fiyatı
         st.metric(
             f"Karbon Fiyatı ($/tCO₂, {yr})",
-            f"{kpi['cp_1']:,.2f}" if np.isfinite(kpi.get("cp_1", np.nan)) else "—",
+            _fmt_range(kpi.get("cp_0", np.nan), kpi.get("cp_1", np.nan), ",.2f"),
             delta=_metric_delta(kpi.get("cp_0", np.nan), kpi.get("cp_1", np.nan), kind="pct"),
             delta_color="normal",
         )
@@ -3457,7 +3468,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 10) Elektrik emisyonları (azalış iyidir -> inverse)
         st.metric(
             f"Elektrik Emisyonları (ktn CO₂, {yr})",
-            f"{kpi['co2_1']:,.1f}" if np.isfinite(kpi.get("co2_1", np.nan)) else "—",
+            _fmt_range(kpi.get("co2_0", np.nan), kpi.get("co2_1", np.nan), ",.1f"),
             delta=_metric_delta(kpi.get("co2_0", np.nan), kpi.get("co2_1", np.nan), kind="pct"),
             delta_color="inverse",
         )
