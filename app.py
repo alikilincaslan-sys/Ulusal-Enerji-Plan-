@@ -1,4 +1,3 @@
-
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
@@ -3548,27 +3547,55 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
 
 
-def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, order=None, is_percent: bool = False, color_map=None, show_legend: bool = True):
+def _stacked_clustered(
+    df,
+    title: str,
+    x_field: str,
+    stack_field: str,
+    y_title: str,
+    category_title: str,
+    value_format: str,
+    order=None,
+    is_percent: bool = False,
+    color_map=None,
+    show_legend: bool = True,
+):
+    """
+    Clustered stacked bars:
+    - x: year (or x_field)
+    - xOffset: scenario (kept in selected_scenarios order via _scenario_offset_encoding)
+    - stack_field: stacked categories (fuel/tech/sector etc.)
+    - Optional: show scenario name labels on top (only when multiple scenarios)
+    """
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
 
     dfp = df.copy()
-    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
-    dfp = dfp.dropna(subset=["year"])
-    dfp["year"] = dfp["year"].astype(int)
-    year_vals = sorted(pd.to_numeric(dfp[x_field], errors="coerce").dropna().astype(int).unique().tolist())
-    if order is not None:
-        dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
-        dfp = dfp.sort_values(["year", "scenario", stack_field])
 
+    # normalize x_field to int years if possible (needed for stable axis ordering)
+    dfp[x_field] = pd.to_numeric(dfp[x_field], errors="coerce")
+    dfp = dfp.dropna(subset=[x_field])
+    dfp[x_field] = dfp[x_field].astype(int)
+
+    # ensure value numeric
+    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
+
+    year_vals = sorted(dfp[x_field].dropna().astype(int).unique().tolist())
+
+    if order is not None and len(order):
+        try:
+            dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
+        except Exception:
+            pass
+        dfp = dfp.sort_values([x_field, "scenario", stack_field])
+
+    # y scale
     if is_percent:
         yscale = alt.Scale(domain=[0, 100])
     else:
-        # Stacked bar'larda y ekseni, tekil parçaların max'ına değil yıl bazında TOPLAM'a göre ayarlanmalı.
-        dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
-        # Pozitif ve negatif yığınları ayrı topla (negatifler aşağı doğru)
+        # domain based on stacked totals per (scenario, x_field), considering negatives separately
         pos_tot = (
             dfp.assign(_v=np.where(dfp["value"] > 0, dfp["value"], 0.0))
             .groupby(["scenario", x_field], as_index=False)["_v"]
@@ -3583,7 +3610,6 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         ymin = float(neg_tot.min()) if len(neg_tot) else 0.0
 
         if ymax is not None and np.isfinite(ymax) and np.isfinite(ymin):
-            # Daha fazla headroom: toplamın üstünde kesilmesin (özellikle 110-120 gibi sınırda)
             span = (ymax - ymin) if (ymax - ymin) > 0 else max(abs(ymax), 1.0)
             pad = 0.10 * span
             yscale = alt.Scale(domain=[ymin - pad, ymax + pad])
@@ -3596,59 +3622,90 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
     if not is_percent:
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
 
-    bars = (
-        bars_src = alt.Chart(sub).mark_bar().encode(
-    x=alt.X("year:O"),
-    xOffset=_scenario_offset_encoding("scenario"),
-    y=alt.Y("value:Q"),
-    color=_source_color_encoding(sub, "group", "Kaynak"),
+    bars = bars_src.mark_bar().encode(
+        x=alt.X(
+            f"{x_field}:O",
+            title="Yıl",
+            sort=year_vals,
+            axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10),
+        ),
+        xOffset=_scenario_offset_encoding("scenario"),
+        y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
+        color=_source_color_encoding(
+            dfp,
+            stack_field,
+            category_title,
+            order=order,
+            color_map=color_map,
+            legend=(None if not show_legend else _LEGEND_DEFAULT),
+        ),
+        opacity=(alt.condition(sel, alt.value(1), alt.value(0.15)) if sel is not None else alt.value(1)),
+        tooltip=[
+            alt.Tooltip("scenario:N", title="Senaryo"),
+            alt.Tooltip(f"{x_field}:O", title="Yıl"),
+            alt.Tooltip(f"{stack_field}:N", title=category_title),
+            alt.Tooltip("value:Q", title=y_title, format=value_format),
+            *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
+        ],
     )
 
-    # --- Yan yana senaryo etiketi (stacked grafikte bar üstüne) ---
-    _lbl = _scenario_label_layer(dfp if 'dfp' in locals() else df, x_field=x_field, scenario_field='scenario', value_field='value')
+    # Scenario labels on top (only meaningful in clustered view)
+    _lbl = _scenario_label_layer(dfp, x_field=x_field, scenario_field="scenario", value_field="value")
     if _lbl is not None:
         try:
             bars = bars + _lbl
         except Exception:
             pass
-        .encode(
-            x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
-            xOffset=_scenario_offset_encoding("scenario"),
-            y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-            color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map, legend=(None if not show_legend else _LEGEND_DEFAULT)),
-            opacity=(alt.condition(sel, alt.value(1), alt.value(0.15)) if sel is not None else alt.value(1)),
-            tooltip=[
-                alt.Tooltip("scenario:N", title="Senaryo"),
-                alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                alt.Tooltip(f"{stack_field}:N", title=category_title),
-                alt.Tooltip("value:Q", title=y_title, format=value_format),
-                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
-            ],
-        )
-    )
+
     if sel is not None:
         bars = bars.add_params(sel)
 
     st.altair_chart(bars.properties(height=420, padding={"bottom": 28}), use_container_width=True)
 
 
-def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: str, category_title: str, value_format: str, years=(2035, 2050), order=None, is_percent: bool = False, color_map=None):
+def _stacked_snapshot(
+    df,
+    title: str,
+    x_field: str,
+    stack_field: str,
+    y_title: str,
+    category_title: str,
+    value_format: str,
+    years=(2035, 2050),
+    order=None,
+    is_percent: bool = False,
+    color_map=None,
+):
+    """
+    Snapshot stacked bars for selected years, clustered by scenario (xOffset).
+    Used for "yan yana görünüm" comparisons at specific milestone years.
+    """
     st.subheader(title)
     if df is None or df.empty:
         st.warning("Veri bulunamadı.")
         return
+
     dfp = df.copy()
-    dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
-    dfp = dfp.dropna(subset=["year"])
-    dfp["year"] = dfp["year"].astype(int)
-    dfp = dfp[dfp["year"].isin(list(years))]
+    dfp[x_field] = pd.to_numeric(dfp[x_field], errors="coerce")
+    dfp = dfp.dropna(subset=[x_field])
+    dfp[x_field] = dfp[x_field].astype(int)
+
+    # keep only snapshot years
+    years_list = [int(y) for y in (list(years) if isinstance(years, (list, tuple, set)) else [years]) if y is not None]
+    if years_list:
+        dfp = dfp[dfp[x_field].isin(years_list)]
     if dfp.empty:
         st.warning("Seçilen yıllar için veri yok (seçili snapshot yılları).")
         return
 
-    if order is not None:
-        dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
-        dfp = dfp.sort_values(["year", "scenario", stack_field])
+    dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
+
+    if order is not None and len(order):
+        try:
+            dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
+        except Exception:
+            pass
+        dfp = dfp.sort_values([x_field, "scenario", stack_field])
 
     yscale = alt.Scale(domain=[0, 100]) if is_percent else alt.Undefined
 
@@ -3658,33 +3715,38 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
     if not is_percent:
         bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
 
-    bars = (
-        bars_src.mark_bar()
+    year_vals = sorted(dfp[x_field].unique().tolist())
 
-    # --- Yan yana senaryo etiketi (stacked grafikte bar üstüne) ---
-    _lbl = _scenario_label_layer(dfp if 'dfp' in locals() else df, x_field=x_field, scenario_field='scenario', value_field='value')
+    bars = bars_src.mark_bar().encode(
+        x=alt.X(
+            f"{x_field}:O",
+            title="Yıl",
+            sort=year_vals,
+            axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10),
+        ),
+        xOffset=_scenario_offset_encoding("scenario"),
+        y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
+        color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
+        opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
+        tooltip=[
+            alt.Tooltip("scenario:N", title="Senaryo"),
+            alt.Tooltip(f"{x_field}:O", title="Yıl"),
+            alt.Tooltip(f"{stack_field}:N", title=category_title),
+            alt.Tooltip("value:Q", title=y_title, format=value_format),
+            *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
+        ],
+    )
+
+    _lbl = _scenario_label_layer(dfp, x_field=x_field, scenario_field="scenario", value_field="value")
     if _lbl is not None:
         try:
             bars = bars + _lbl
         except Exception:
             pass
-        .encode(
-            x=alt.X(f"{x_field}:O", title="Yıl"),
-            xOffset=_scenario_offset_encoding("scenario"),
-            y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
-            color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
-            opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
-            tooltip=[
-                alt.Tooltip("scenario:N", title="Senaryo"),
-                alt.Tooltip(f"{x_field}:O", title="Yıl"),
-                alt.Tooltip(f"{stack_field}:N", title=category_title),
-                alt.Tooltip("value:Q", title=y_title, format=value_format),
-                *([] if is_percent else [alt.Tooltip("total:Q", title="Total", format=value_format)]),
-            ],
-        )
-        .add_params(sel)
-    )
-    st.altair_chart(bars.properties(height=420), use_container_width=True)
+
+    bars = bars.add_params(sel)
+
+    st.altair_chart(bars.properties(height=420, padding={"bottom": 28}), use_container_width=True)
 
 
 def _render_stacked(df, title, x_field, stack_field, y_title, category_title, value_format, order=None, color_map=None, show_legend: bool = True):
