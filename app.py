@@ -121,27 +121,61 @@ def _scenario_color_encoding(df, field: str = "scenario", title: str = "Senaryo"
 
 
 
-
 def _scenario_offset_encoding(field: str = "scenario"):
-    """Ensure scenario bars are ordered consistently left→right within each year.
-
-    Uses global 'selected_scenarios' if available (preserves the user's comparison order).
+    """
+    Senaryoların her yıl içinde sabit soldan sağa sıralanması:
+    - selected_scenarios listesi varsa o sıra kullanılır
+    - yoksa df içindeki benzersiz scenario sırası korunur
     """
     try:
         sel = globals().get("selected_scenarios", None)
+        domain = None
         if isinstance(sel, list) and len(sel) > 0:
             domain = [str(s) for s in sel if s is not None]
-            # unique preserve order
-            seen = set()
-            dom_u = []
-            for d in domain:
-                if d not in seen:
-                    seen.add(d); dom_u.append(d)
-            domain = dom_u
-            return alt.XOffset(f"{field}:N", sort=domain)
-        return alt.XOffset(f"{field}:N")
+        return alt.XOffset(f"{field}:N", sort=domain)
     except Exception:
         return alt.XOffset(f"{field}:N")
+
+
+def _scenario_label_layer(df, x_field: str = "year", scenario_field: str = "scenario", value_field: str = "value"):
+    """
+    Yan yana (xOffset) stacked grafiklerde senaryo adlarını barların üstüne hafif ve dikey yazar.
+    Tek senaryoda devre dışı kalır.
+    """
+    try:
+        if df is None or df.empty:
+            return None
+        if scenario_field not in df.columns:
+            return None
+        if df[scenario_field].nunique() <= 1:
+            return None
+
+        d = df[[x_field, scenario_field, value_field]].copy()
+        d[value_field] = pd.to_numeric(d[value_field], errors="coerce")
+        d = d.dropna(subset=[value_field])
+        if d.empty:
+            return None
+
+        tot = d.groupby([x_field, scenario_field], as_index=False)[value_field].sum()
+
+        return (
+            alt.Chart(tot).mark_text(
+                angle=270,      # yukarı doğru yazı
+                dy=-5,          # biraz yukarı kaldır
+                fontSize=11,
+                opacity=0.35,
+                color="#cccccc",
+            ).encode(
+                x=alt.X(f"{x_field}:O"),
+                xOffset=_scenario_offset_encoding(scenario_field),
+                y=alt.Y(f"{value_field}:Q"),
+                text=alt.Text(f"{scenario_field}:N"),
+            )
+        )
+    except Exception:
+        return None
+
+
 def get_source_color(name):
     if isinstance(name, str):
         for key, val in SOURCE_COLOR_MAP.items():
@@ -3033,6 +3067,14 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
             y=_y_enc(),
         )
 
+        # --- Yan yana senaryo etiketi ---
+        _lbl = _scenario_label_layer(df, x_field='year', scenario_field='scenario', value_field='value')
+        if _lbl is not None:
+            try:
+                chart = chart + _lbl
+            except Exception:
+                pass
+
     st.altair_chart(chart.properties(height=320), use_container_width=True)
 
 
@@ -3556,6 +3598,14 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
 
     bars = (
         bars_src.mark_bar()
+
+    # --- Yan yana senaryo etiketi (stacked grafikte bar üstüne) ---
+    _lbl = _scenario_label_layer(dfp if 'dfp' in locals() else df, x_field=x_field, scenario_field='scenario', value_field='value')
+    if _lbl is not None:
+        try:
+            bars = bars + _lbl
+        except Exception:
+            pass
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
             xOffset=_scenario_offset_encoding("scenario"),
@@ -3605,6 +3655,14 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
 
     bars = (
         bars_src.mark_bar()
+
+    # --- Yan yana senaryo etiketi (stacked grafikte bar üstüne) ---
+    _lbl = _scenario_label_layer(dfp if 'dfp' in locals() else df, x_field=x_field, scenario_field='scenario', value_field='value')
+    if _lbl is not None:
+        try:
+            bars = bars + _lbl
+        except Exception:
+            pass
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
             xOffset=_scenario_offset_encoding("scenario"),
