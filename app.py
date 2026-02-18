@@ -1,3 +1,4 @@
+
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
@@ -3471,6 +3472,8 @@ for i, kpi in enumerate(kpis[:ncols]):
             delta=_metric_delta(kpi.get("co2_0", np.nan), kpi.get("co2_1", np.nan), kind="pct"),
             delta_color="inverse",
         )
+
+        st.markdown("<hr style='border:0.5px solid rgba(255,255,255,0.08); margin-top:18px; margin-bottom:0px;'>", unsafe_allow_html=True)
 
 if len(kpis) > ncols:
     with st.expander("Diğer seçili senaryoların KPI’ları"):
