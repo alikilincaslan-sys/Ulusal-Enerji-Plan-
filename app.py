@@ -120,71 +120,6 @@ def _scenario_color_encoding(df, field: str = "scenario", title: str = "Senaryo"
         return alt.Color(f"{field}:N", title=title, legend=legend)
 
 
-
-def _scenario_offset_encoding(field: str = "scenario"):
-    """
-    Yan yana sütun modunda senaryoların her yıl içinde sabit soldan sağa sıralanması.
-    selected_scenarios listesi varsa o sıra kullanılır.
-    """
-    try:
-        sel = globals().get("selected_scenarios", None)
-        domain = None
-        if isinstance(sel, list) and len(sel) > 0:
-            domain = [str(s) for s in sel if s is not None]
-        return alt.XOffset(f"{field}:N", sort=domain)
-    except Exception:
-        return alt.XOffset(f"{field}:N")
-
-
-def _scenario_label_layer(df, x_field: str = "year", scenario_field: str = "scenario", value_field: str = "value"):
-    """
-    Yan yana (xOffset) stacked grafiklerde bar üstüne kısa senaryo etiketi yazar: S1/S2/S3.
-    Tam senaryo adı tooltip'te kalır. Tek senaryoda devre dışı kalır.
-    """
-    try:
-        if df is None or df.empty:
-            return None
-        if scenario_field not in df.columns:
-            return None
-
-        scenarios = df[scenario_field].dropna().astype(str).unique().tolist()
-        if len(scenarios) <= 1:
-            return None
-
-        d = df[[x_field, scenario_field, value_field]].copy()
-        d[value_field] = pd.to_numeric(d[value_field], errors="coerce")
-        d = d.dropna(subset=[value_field])
-        if d.empty:
-            return None
-
-        tot = d.groupby([x_field, scenario_field], as_index=False)[value_field].sum()
-
-        sel = globals().get("selected_scenarios", None)
-        if isinstance(sel, list) and len(sel) > 0:
-            order = [str(s) for s in sel if s is not None]
-        else:
-            order = scenarios
-
-        lab_map = {name: f"S{i+1}" for i, name in enumerate(order)}
-        tot["_scenario_short"] = tot[scenario_field].astype(str).map(lab_map).fillna(tot[scenario_field].astype(str))
-
-        return alt.Chart(tot).mark_text(
-            dy=-10,
-            fontSize=12,
-            opacity=0.95,
-            color="#9e9e9e",
-            fontWeight="bold",
-        ).encode(
-            x=alt.X(f"{x_field}:O"),
-            xOffset=_scenario_offset_encoding(scenario_field),
-            y=alt.Y(f"{value_field}:Q"),
-            text=alt.Text("_scenario_short:N", title=None),
-            tooltip=[alt.Tooltip(f"{scenario_field}:N", title="Senaryo (tam ad)")],
-        )
-    except Exception:
-        return None
-
-
 def get_source_color(name):
     if isinstance(name, str):
         for key, val in SOURCE_COLOR_MAP.items():
@@ -3072,7 +3007,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     else:
         chart = base.mark_bar().encode(
             x=alt.X("year:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0)),
-            xOffset=_scenario_offset_encoding("scenario"),
+            xOffset=alt.XOffset("scenario:N"),
             y=_y_enc(),
         )
 
@@ -3546,22 +3481,6 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
             if sel is not None:
                 bars = bars.add_params(sel)
 
-    # --- Senaryo kısa etiketi (S1/S2/S3) ---
-    _lbl = _scenario_label_layer(dfp, x_field=x_field, scenario_field="scenario", value_field="value")
-    if _lbl is not None:
-        try:
-            bars = bars + _lbl
-        except Exception:
-            pass
-
-    # --- Senaryo kısa etiketi (S1/S2/S3) ---
-    _lbl = _scenario_label_layer(dfp, x_field=x_field, scenario_field="scenario", value_field="value")
-    if _lbl is not None:
-        try:
-            bars = bars + _lbl
-        except Exception:
-            pass
-
             st.altair_chart(bars.properties(height=380, padding={"bottom": 28}), use_container_width=True)
 
 
@@ -3617,7 +3536,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         bars_src.mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl", sort=year_vals, axis=alt.Axis(values=year_vals, labelAngle=0, labelPadding=14, titlePadding=10)),
-            xOffset=_scenario_offset_encoding("scenario"),
+            xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map, legend=(None if not show_legend else _LEGEND_DEFAULT)),
             opacity=(alt.condition(sel, alt.value(1), alt.value(0.15)) if sel is not None else alt.value(1)),
@@ -3666,7 +3585,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
         bars_src.mark_bar()
         .encode(
             x=alt.X(f"{x_field}:O", title="Yıl"),
-            xOffset=_scenario_offset_encoding("scenario"),
+            xOffset=alt.XOffset("scenario:N"),
             y=alt.Y("value:Q", title=y_title, stack=True, scale=yscale),
             color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
             opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
