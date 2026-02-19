@@ -12,34 +12,18 @@ st.set_page_config(page_title="Soğutma ve Veri Merkezleri Analizi", layout="wid
 # Helpers
 # ----------------------------
 def _scenario_from_filename(name: str) -> str:
-    """
-    Rules:
-    - If filename starts with Demand_ or FinalReport_, scenario is the substring AFTER that prefix
-      and BEFORE _tria (if present).
-    - Keep "b_" if it's part of the scenario (do NOT drop).
-    """
-    base = re.sub(r"\.[^.]+$", "", name)  # drop extension
-
+    base = re.sub(r"\.[^.]+$", "", name)
     for pref in ("Demand_", "FinalReport_"):
         if base.startswith(pref):
             base = base[len(pref):]
             break
-
     m = re.search(r"(_tria.*)$", base, flags=re.IGNORECASE)
     if m:
         base = base[:m.start()]
-
     return base.strip() or name
 
 
 def _read_final_energy_matrix(filelike) -> Tuple[List[int], pd.DataFrame]:
-    """
-    Reads sheet FINAL_ENERGY without headers.
-    Years are in row 1 (Excel) starting from column C.
-    Returns:
-      years: list[int]
-      mat: DataFrame of numeric values for year columns only (C..)
-    """
     df = pd.read_excel(filelike, sheet_name="FINAL_ENERGY", header=None, engine=None)
 
     years_raw = df.iloc[0, 2:].tolist()  # row 1, from col C
@@ -66,7 +50,7 @@ def _read_final_energy_matrix(filelike) -> Tuple[List[int], pd.DataFrame]:
 
 
 def _rows_sum(mat: pd.DataFrame, excel_rows_1idx: List[int]) -> List[float]:
-    idxs = [r - 1 for r in excel_rows_1idx]  # Excel row -> 0-index
+    idxs = [r - 1 for r in excel_rows_1idx]
     idxs = [i for i in idxs if 0 <= i < len(mat)]
     if not idxs:
         return [0.0] * mat.shape[1]
@@ -93,23 +77,6 @@ def _build_services_series(mat: pd.DataFrame) -> Dict[str, List[float]]:
     }
 
 
-def _total(series_map: Dict[str, List[float]]) -> List[float]:
-    labels = list(series_map.keys())
-    n = len(series_map[labels[0]]) if labels else 0
-    out = [0.0] * n
-    for v in series_map.values():
-        out = [a + b for a, b in zip(out, v)]
-    return out
-
-
-def _to_percent(series_map: Dict[str, List[float]]) -> Dict[str, List[float]]:
-    tot = _total(series_map)
-    out: Dict[str, List[float]] = {}
-    for k, v in series_map.items():
-        out[k] = [(vi / ti * 100.0) if ti else 0.0 for vi, ti in zip(v, tot)]
-    return out
-
-
 def _filter_years(
     years: List[int],
     series_map: Dict[str, List[float]],
@@ -122,7 +89,7 @@ def _filter_years(
     return years_f, out
 
 
-def _stacked_bar(
+def _stacked_bar_iea_like(
     years: List[int],
     series_map: Dict[str, List[float]],
     title: str,
@@ -130,6 +97,7 @@ def _stacked_bar(
 ) -> go.Figure:
     fig = go.Figure()
 
+    # stacked bars
     for label, values in series_map.items():
         fig.add_trace(
             go.Bar(
@@ -139,19 +107,50 @@ def _stacked_bar(
             )
         )
 
-    fig.update_layout(
+    layout_kwargs = dict(
+        template="plotly_dark",
+        title=dict(text=title, x=0.0, xanchor="left"),
         barmode="stack",
-        title=title,
-        legend_title_text="Kullanım",
+        bargap=0.35,         # <<< daha tok görünüm
+        bargroupgap=0.05,
         hovermode="x unified",
-        margin=dict(l=10, r=10, t=50, b=10),
+        legend=dict(
+            title="Kullanım",
+            orientation="v",
+            x=1.02,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+        ),
+        margin=dict(l=40, r=160, t=60, b=40),
+        font=dict(size=13),
+        xaxis=dict(
+            title="",
+            type="category",
+            tickmode="array",
+            tickvals=years,
+            ticktext=[str(y) for y in years],
+            showgrid=False,
+        ),
+        yaxis=dict(
+            title="%" if percent else "GWh",
+            gridcolor="rgba(255,255,255,0.12)",
+            zeroline=False,
+        ),
     )
 
+    # %100 stacked için doğru yol: barnorm="percent"
     if percent:
-        fig.update_layout(yaxis=dict(title="%", ticksuffix="%", range=[0, 100]))
-    else:
-        fig.update_layout(yaxis=dict(title="GWh"))
+        layout_kwargs["barnorm"] = "percent"
+        layout_kwargs["yaxis"] = dict(
+            title="%",
+            range=[0, 100],
+            ticksuffix="%",
+            gridcolor="rgba(255,255,255,0.12)",
+            zeroline=False,
+        )
 
+    fig.update_layout(**layout_kwargs)
     return fig
 
 
@@ -175,11 +174,10 @@ if len(uploaded) > 3:
     st.warning("En fazla 3 dosya seçilebilir. İlk 3 dosya kullanılacak.")
     uploaded = uploaded[:3]
 
-# Dosyaları bytes olarak sabitle (aynı dosyayı 2 kez okumak için)
 files = [{"name": f.name, "bytes": f.getvalue()} for f in uploaded]
 
-# Önce tüm dosyalardan year aralığını bul
-all_years = []
+# read once to get year range + matrices
+all_years: List[int] = []
 pre_read = []
 for item in files:
     try:
@@ -194,7 +192,7 @@ if not all_years:
     st.error("FINAL_ENERGY yıl satırı bulunamadı (1. satır, C sütunundan başlamalı).")
     st.stop()
 
-# Sidebar: yıl aralığı slider
+# Sidebar year range slider (aynı mantık)
 st.sidebar.markdown("### Ayarlar")
 ymin, ymax = all_years[0], all_years[-1]
 y0, y1 = st.sidebar.slider(
@@ -205,10 +203,13 @@ y0, y1 = st.sidebar.slider(
     step=1,
 )
 
-# Layout: 1->2 cols, 2->2 cols, 3->3 cols
+# Layout
 n = len(files)
 n_cols = 3 if n == 3 else 2
 cols = st.columns(n_cols, gap="large")
+
+# Plotly config: üstteki ikon barını kapat (daha “sunum” gibi)
+PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
 
 for i, (fname, years, mat) in enumerate(pre_read):
     col = cols[i] if n_cols == 3 else cols[i % 2]
@@ -220,36 +221,37 @@ for i, (fname, years, mat) in enumerate(pre_read):
             st.error("Dosya okunamadı veya yıl satırı bulunamadı.")
             continue
 
-        # Household
+        # Household (abs & %)
         hh_abs = _build_household_series(mat)
-        hh_pct = _to_percent(hh_abs)
 
-        years_hh_abs, hh_abs_f = _filter_years(years, hh_abs, y0, y1)
-        years_hh_pct, hh_pct_f = _filter_years(years, hh_pct, y0, y1)
+        years_hh, hh_abs_f = _filter_years(years, hh_abs, y0, y1)
 
         st.plotly_chart(
-            _stacked_bar(years_hh_abs, hh_abs_f, "Konutlarda Elektrik Tüketimi (GWh) – Mutlak", percent=False),
+            _stacked_bar_iea_like(years_hh, hh_abs_f, "Konutlarda Elektrik Tüketimi (GWh) – Mutlak", percent=False),
             use_container_width=True,
-        )
-        st.plotly_chart(
-            _stacked_bar(years_hh_pct, hh_pct_f, "Konutlarda Elektrik Tüketimi (%) – Dağılım", percent=True),
-            use_container_width=True,
+            config=PLOTLY_CONFIG,
         )
 
-        # Services
+        st.plotly_chart(
+            _stacked_bar_iea_like(years_hh, hh_abs_f, "Konutlarda Elektrik Tüketimi (%) – Dağılım", percent=True),
+            use_container_width=True,
+            config=PLOTLY_CONFIG,
+        )
+
+        # Services (abs & %)
         sv_abs = _build_services_series(mat)
-        sv_pct = _to_percent(sv_abs)
-
-        years_sv_abs, sv_abs_f = _filter_years(years, sv_abs, y0, y1)
-        years_sv_pct, sv_pct_f = _filter_years(years, sv_pct, y0, y1)
+        years_sv, sv_abs_f = _filter_years(years, sv_abs, y0, y1)
 
         st.plotly_chart(
-            _stacked_bar(years_sv_abs, sv_abs_f, "Hizmet Sektörü Elektrik Tüketimi (GWh) – Mutlak", percent=False),
+            _stacked_bar_iea_like(years_sv, sv_abs_f, "Hizmet Sektörü Elektrik Tüketimi (GWh) – Mutlak", percent=False),
             use_container_width=True,
+            config=PLOTLY_CONFIG,
         )
+
         st.plotly_chart(
-            _stacked_bar(years_sv_pct, sv_pct_f, "Hizmet Sektörü Elektrik Tüketimi (%) – Dağılım", percent=True),
+            _stacked_bar_iea_like(years_sv, sv_abs_f, "Hizmet Sektörü Elektrik Tüketimi (%) – Dağılım", percent=True),
             use_container_width=True,
+            config=PLOTLY_CONFIG,
         )
 
 st.divider()
