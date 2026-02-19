@@ -87,7 +87,7 @@ def _read_rows_sum_from_final_energy(
     sheet_name: str = "FINAL_ENERGY",
     years_row_1based: int = 1,
     years_start_col_0based: int = 2,  # C column
-) -> tuple[list[int], np.ndarray]:
+) -> tuple[list[int], "np.ndarray"]:
     """Read specified Excel rows (1-based) from FINAL_ENERGY and sum them across years.
 
     Returns:
@@ -4251,7 +4251,13 @@ if "Elektrik" in selected_panels:
         }
 
         # TODO: Hizmetler için satır kombinasyonları kullanıcıdan gelecek.
-        SERVICES_MAPPING: dict[str, list[int] | int] = {}
+        SERVICES_MAPPING: dict[str, list[int] | int] = {
+            "Veri Merkezleri": 578,
+            "Soğutma": 577,
+            "Aydınlatma": 579,
+            "Alan Isıtma": [588, 591],
+            "Su Isıtma": [602, 604],
+        }
 
         colL, colR = st.columns(2)
         with colL:
@@ -4292,19 +4298,14 @@ if "Elektrik" in selected_panels:
                 st.info("Konut Demand Excel dosyasını yüklersen burada yüzde dağılım stacked grafiği oluşur.")
 
         with colR:
-            st.markdown("#### Hizmetler Sektörü Elektrik (GWh) – Yüzde Dağılım")
+            st.markdown("#### Hizmet Sektörü Elektrik Tüketimi (GWh) – Yüzde Dağılım")
             srv_files = st.file_uploader(
                 "Hizmetler Demand Excel(ler)i yükle (.xlsx)",
                 type=["xlsx", "xlsm", "xls"],
                 accept_multiple_files=True,
                 key="demand_srv_upload",
             )
-            if not SERVICES_MAPPING:
-                st.warning(
-                    "Hizmetler (Tertiary/Services) end-use satır kombinasyonları henüz tanımlı değil. "
-                    "Bana hizmetler için satır numaralarını (ör. Aydınlatma=..., HVAC=... gibi) verirsen bu grafiği de aynı formatta eklerim."
-                )
-            elif srv_files:
+            if srv_files:
                 srv_dfs = []
                 for f in srv_files:
                     try:
