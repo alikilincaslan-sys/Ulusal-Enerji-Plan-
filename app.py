@@ -4466,7 +4466,7 @@ if "Elektrik" in selected_panels:
             st.info("Demand dosyaları yüklendi ama okunabilir veri bulunamadı (Hizmet sektörü satırları).")
         st.divider()
 st.divider()
-    else:
+        else:
         st.info("Bu grafik için üstteki 'Ek Excel' yükleme alanından Demand_*.xlsx dosyası yükleyin.")
 
 # ============================================================
