@@ -1,4 +1,3 @@
-
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
