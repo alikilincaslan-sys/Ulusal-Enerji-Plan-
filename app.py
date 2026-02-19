@@ -2640,18 +2640,22 @@ def compute_demand_bundle(demand_xlsx_file, scenario: str, start_year: int, max_
     return {"demand_residential": res, "demand_services": srv}
 
 
+# --- Safety: ensure MAX_YEAR is defined ---
+try:
+    MAX_YEAR
+except NameError:
+    MAX_YEAR = 2050
+
 bundles = []
-# --- Safety: MAX_YEAR may be undefined in some deployments; use a safe local max_year
 for scn in selected_scenarios:
-    _max_year = int(globals().get('MAX_YEAR', 2050))
     f = scenario_to_file[scn]
-    bundles.append(compute_scenario_bundle(f, scn, start_year, _max_year, fill_years_enabled, fill_method, fill_logistic_k))
+    bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR, fill_years_enabled, fill_method, fill_logistic_k))
 
 
 demand_bundles = []
 for scn in selected_scenarios:
     df_demand_file = scenario_to_demand_file.get(scn)
-    demand_bundles.append(compute_demand_bundle(df_demand_file, scn, start_year, max_year))
+    demand_bundles.append(compute_demand_bundle(df_demand_file, scn, start_year, MAX_YEAR))
 
 def _concat(key: str):
 
@@ -4413,6 +4417,7 @@ def _plot_generation_bar_race(df, unit_label):
     )
 
     return fig
+
 
 # -----------------------------
 # Plotly panel (render)
