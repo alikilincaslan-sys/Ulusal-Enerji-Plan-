@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="Demand Analizi", layout="wide")
+st.set_page_config(page_title="Soğutma ve Veri Analizi", layout="wide")
 
 # ----------------------------
 # Helpers
