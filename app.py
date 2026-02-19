@@ -1,3 +1,4 @@
+
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
@@ -3301,6 +3302,51 @@ def _kpi_for_bundle(b):
     dep = b.get("dependency_ratio")
     co2 = b.get("co2")
 
+    cap_mix = b.get("cap_mix")
+
+    # Ortalama yıllık GES/RES kurulu güç artışı (GW/yıl) – seçili dönem (y0→y1)
+    solar_add_avg = np.nan
+    wind_add_avg = np.nan
+    years_span = (y1 - y0) if (y1 is not None and y0 is not None) else 0
+    try:
+        if cap_mix is not None and not cap_mix.empty and years_span and years_span > 0:
+            dcm = cap_mix.copy()
+            dcm["year"] = pd.to_numeric(dcm.get("year"), errors="coerce")
+            dcm["value"] = pd.to_numeric(dcm.get("value"), errors="coerce")
+            dcm = dcm.dropna(subset=["year", "value"])
+            dcm["year"] = dcm["year"].astype(int)
+
+            grp_col = "group" if "group" in dcm.columns else ("category" if "category" in dcm.columns else None)
+
+            def _val_for(grp_name: str, yy: int) -> float:
+                if grp_col is None:
+                    return np.nan
+                g = dcm[dcm["year"].eq(int(yy))]
+                if g.empty:
+                    return np.nan
+                s = g[grp_col].astype(str).str.strip()
+                # exact match first
+                m = s.str.lower().eq(str(grp_name).strip().lower())
+                if m.any():
+                    return float(pd.to_numeric(g.loc[m, "value"], errors="coerce").sum())
+                # then contains (fallback)
+                m2 = s.str.lower().str.contains(str(grp_name).strip().lower(), na=False)
+                if m2.any():
+                    return float(pd.to_numeric(g.loc[m2, "value"], errors="coerce").sum())
+                return np.nan
+
+            solar_0 = _val_for("Solar (GES)", y0)
+            solar_1 = _val_for("Solar (GES)", y1)
+            wind_0 = _val_for("Wind (RES)", y0)
+            wind_1 = _val_for("Wind (RES)", y1)
+
+            solar_add_avg = (solar_1 - solar_0) / float(years_span) if np.isfinite(solar_0) and np.isfinite(solar_1) else np.nan
+            wind_add_avg = (wind_1 - wind_0) / float(years_span) if np.isfinite(wind_0) and np.isfinite(wind_1) else np.nan
+    except Exception:
+        solar_add_avg = np.nan
+        wind_add_avg = np.nan
+
+
     # Values (end)
     gdp_1 = _year_value(gdp, y1) if y1 else np.nan
     gdp_0 = _year_value(gdp, y0) if y1 else np.nan
@@ -3364,6 +3410,8 @@ def _kpi_for_bundle(b):
         "supply_1": supply_1,
         "cap_0": cap_0,
         "cap_1": cap_1,
+        "solar_add_avg": solar_add_avg,
+        "wind_add_avg": wind_add_avg,
         "ye_total_0": ye_total_0,
         "ye_total_1": ye_total_1,
         "ye_int_0": ye_int_0,
@@ -3405,54 +3453,39 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 3) Toplam arz
         supply_1 = kpi.get("supply_1", np.nan)
         supply_0 = kpi.get("supply_0", np.nan)
-        
         if _energy_unit_is_ktoe():
             supply_1 = supply_1 * float(GWH_TO_KTOE) if np.isfinite(supply_1) else supply_1
             supply_0 = supply_0 * float(GWH_TO_KTOE) if np.isfinite(supply_0) else supply_0
 
-        # CAGR hesapla
-        years_span = kpi.get("y1", 0) - kpi.get("y0", 0)
-        supply_cagr = _cagr(supply_0, supply_1, years_span)
-
         st.metric(
             f"Toplam Arz ({_energy_unit_label()}, {yr})",
             _fmt_range(supply_0, supply_1, ",.0f"),
-            delta=f"{supply_cagr*100:.1f}% CAGR" if np.isfinite(supply_cagr) else "—",
+            delta=_metric_delta(supply_0, supply_1, kind="pct"),
             delta_color="normal",
         )
 
         # 4) Elektrik kurulu güç
-        cap_0 = kpi.get("cap_0", np.nan)
-        cap_1 = kpi.get("cap_1", np.nan)
-
-        years_span = kpi.get("y1", 0) - kpi.get("y0", 0)
-        cap_cagr = _cagr(cap_0, cap_1, years_span)
-
         st.metric(
             f"Kurulu Güç (GW, {yr})",
-            _fmt_range(cap_0, cap_1, ",.0f"),
-            delta=f"{cap_cagr*100:.1f}% CAGR" if np.isfinite(cap_cagr) else "—",
+            _fmt_range(kpi.get("cap_0", np.nan), kpi.get("cap_1", np.nan), ",.0f"),
+            delta=_metric_delta(kpi.get("cap_0", np.nan), kpi.get("cap_1", np.nan), kind="pct"),
             delta_color="normal",
-        )            
-
-        # 4b) Yıllık GES / RES Kurulu Güç Artışı (Ort.)
-        years_span = kpi.get("y1", 0) - kpi.get("y0", 0)
-
-        # Başlangıç ve bitiş değerleri
-        ges_0 = kpi.get("solar_cap_0", np.nan)
-        ges_1 = kpi.get("solar_cap_1", np.nan)
-
-        res_0 = kpi.get("wind_cap_0", np.nan)
-        res_1 = kpi.get("wind_cap_1", np.nan)
-
-        ges_avg = (ges_1 - ges_0) / years_span if years_span > 0 and np.isfinite(ges_0) and np.isfinite(ges_1) else np.nan
-        res_avg = (res_1 - res_0) / years_span if years_span > 0 and np.isfinite(res_0) and np.isfinite(res_1) else np.nan
-
-        st.metric(
-            "Yıllık GES/RES KG artışı (Ort.)",
-            f"{ges_avg:,.1f} GW / {res_avg:,.1f} GW" if np.isfinite(ges_avg) and np.isfinite(res_avg) else "—",
         )
-        
+
+        # 4b) Ortalama yıllık GES/RES kurulu güç artışı
+        solar_avg = kpi.get("solar_add_avg", np.nan)
+        wind_avg = kpi.get("wind_add_avg", np.nan)
+        if np.isfinite(solar_avg) or np.isfinite(wind_avg):
+            st.metric(
+                "Yıllık GES/RES KG artışı (Ort.)",
+                f"{solar_avg:.0f} GW / {wind_avg:.0f} GW" if (np.isfinite(solar_avg) and np.isfinite(wind_avg)) else (
+                    f"{solar_avg:.0f} GW / —" if np.isfinite(solar_avg) else f"— / {wind_avg:.0f} GW"
+                ),
+            )
+        else:
+            st.metric("Yıllık GES/RES KG artışı (Ort.)", "—")
+
+
         # 5) YE Payı
         st.metric(
             f"YE Payı (%, {yr})",
