@@ -1510,6 +1510,93 @@ def _gen_is_excluded(item: str) -> bool:
     return False
 
 
+def read_household_electricity_enduse_stack(xlsx_file) -> pd.DataFrame:
+    """FINAL_ENERGY sheet: Konutlarda elektrik tüketimi (GWh) – end-use stacked.
+
+    Excel rules (fixed for Demand excel family):
+    - Sheet: FINAL_ENERGY
+    - Years row: 1 (Excel 1-indexed), starts from column C
+    - Values: fixed Excel rows (1-indexed):
+        Cooling   = 234
+        Appliances (Ev Aletleri) = 235 + 253 + 241
+        Cooking   = 236
+        Space heating (Alan Isıtma) = 245 + 248
+        Water heating (Su Isıtma) = 260 + 262
+    Output: year, category, value, series, sheet
+    """
+    SHEET = "FINAL_ENERGY"
+    YEARS_ROW_1IDX = 1
+    START_COL_1IDX = 3  # C
+
+    # category -> contributing rows (Excel 1-indexed)
+    CAT_ROWS = {
+        "Soğutma": [234],
+        "Ev Aletleri": [235, 253, 241],
+        "Pişirme": [236],
+        "Alan Isıtma": [245, 248],
+        "Su Isıtma": [260, 262],
+    }
+
+    try:
+        raw = pd.read_excel(xlsx_file, sheet_name=SHEET, header=None)
+    except Exception:
+        return pd.DataFrame(columns=["year", "category", "value", "series", "sheet"])
+
+    yr_r0 = YEARS_ROW_1IDX - 1
+    c0 = START_COL_1IDX - 1
+    if raw is None or raw.empty or yr_r0 < 0 or yr_r0 >= len(raw) or c0 < 0 or c0 >= raw.shape[1]:
+        return pd.DataFrame(columns=["year", "category", "value", "series", "sheet"])
+
+    # Read years horizontally from row 1, col C onward; stop after 3 consecutive non-years
+    years = []
+    year_col_idx = []
+    blank_streak = 0
+    for j in range(c0, raw.shape[1]):
+        y = _as_int_year(raw.iloc[yr_r0, j])
+        if y is None or int(y) > MAX_YEAR:
+            blank_streak += 1
+            if blank_streak >= 3:
+                break
+            continue
+        blank_streak = 0
+        years.append(int(y))
+        year_col_idx.append(int(j))
+
+    if not years:
+        return pd.DataFrame(columns=["year", "category", "value", "series", "sheet"])
+
+    def _row_vals(row_1idx: int):
+        r0 = row_1idx - 1
+        if r0 < 0 or r0 >= len(raw):
+            return [np.nan] * len(year_col_idx)
+        vals = []
+        for j in year_col_idx:
+            v = pd.to_numeric(raw.iloc[r0, j], errors="coerce")
+            vals.append(v)
+        return vals
+
+    recs = []
+    for cat, rows in CAT_ROWS.items():
+        mats = [_row_vals(r) for r in rows]
+        # sum across contributing rows, treat NaN as 0 but keep all-NaN as NaN
+        for k, y in enumerate(years):
+            arr = [m[k] for m in mats]
+            # if all nan -> skip
+            if all(pd.isna(v) for v in arr):
+                continue
+            s = float(np.nansum(arr))
+            recs.append({"year": int(y), "category": str(cat), "value": s})
+
+    df = pd.DataFrame(recs)
+    if df.empty:
+        return pd.DataFrame(columns=["year", "category", "value", "series", "sheet"])
+
+    df = df.sort_values(["year", "category"])
+    df["series"] = "Konutlarda Elektrik Tüketimi"
+    df["sheet"] = SHEET
+    return df
+
+
 def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
     """Gross generation mix (GWh) – Total Storage HARİÇ."""
     if gross_gen_df is None or gross_gen_df.empty:
@@ -2278,103 +2365,203 @@ render_title_with_logo("Türkiye Ulusal Enerji Planı Modeli Arayüzü", logo_fi
 st.subheader("Senaryo dosyaları")
 st.caption("Excel (.xlsx) • Çoklu senaryo • Maks. 12 dosya")
 
-
 uploaded_files = st.file_uploader(
-    "Excel dosyaları (FinalReport + isteğe bağlı Demand)",
+    "Excel dosyaları",
     type=["xlsx"],
     accept_multiple_files=True,
-    help=(
-        "Toplu yükleme: Her senaryo için 1 adet FinalReport dosyası yükleyin. "
-        "Aynı senaryo için Demand dosyası da yükleyebilirsiniz (opsiyonel). "
-        "Uygulama dosya adından senaryo adını otomatik eşleştirir."
-    ),
+    help="Bir dosya = bir senaryo. Dosya adları senaryo adı olarak kullanılır.",
     label_visibility="collapsed",
 )
 
 st.divider()
 
-def _scenario_key_from_filename(filename: str) -> str | None:
-    """Extract scenario key from filename according to agreed rules.
+with st.sidebar:
+    st.header("Paneller")
 
-    - FinalReport_<SCENARIO>_...  -> SCENARIO (trailing underscores trimmed)
-    - Demand_<SCENARIO>_tri...    -> text between 'Demand_' and '_tri' (case-insensitive)
-    """
-    try:
-        stem = Path(filename).stem
-    except Exception:
-        stem = str(filename)
-
-    s = str(stem).strip()
-
-    # Normalize prefix casing only for detection; keep original scenario casing as much as possible
-    low = s.lower()
-
-    if low.startswith("demand_"):
-        rest = s[len("Demand_") :]
-        m = re.search(r"_tri", rest, flags=re.IGNORECASE)
-        if m:
-            rest = rest[: m.start()]
-        rest = rest.strip().strip("_")
-        return rest or None
-
-    if low.startswith("finalreport_"):
-        rest = s[len("FinalReport_") :]
-        # FinalReport tarafında genelde 'trial' vb. yok; varsa kullanıcıya uyarı verelim ama anahtarı tüm rest alalım
-        rest = rest.strip().strip("_")
-        return rest or None
-
-    return None
-
-
-# ---- Split uploads into FinalReport and Demand sets, then match by scenario key ----
-final_files: dict[str, any] = {}
-demand_files: dict[str, any] = {}
-unknown_files: list[any] = []
-
-if uploaded_files:
-    for uf in uploaded_files:
-        fname = getattr(uf, "name", "")
-        key = _scenario_key_from_filename(fname)
-
-        if key is None:
-            unknown_files.append(uf)
-            continue
-
-        if str(fname).lower().startswith("finalreport_"):
-            if key in final_files:
-                # Keep first, warn about duplicates
-                st.warning(f"⚠️ Aynı senaryo için birden fazla FinalReport yüklendi: **{key}**. İlk dosya kullanılacak.")
-            else:
-                final_files[key] = uf
-        elif str(fname).lower().startswith("demand_"):
-            if key in demand_files:
-                st.warning(f"⚠️ Aynı senaryo için birden fazla Demand yüklendi: **{key}**. İlk dosya kullanılacak.")
-            else:
-                demand_files[key] = uf
-        else:
-            unknown_files.append(uf)
-
-# Unknown naming warnings (non-blocking)
-if unknown_files:
-    st.warning(
-        "⚠️ Bazı dosyaların adı 'FinalReport_' veya 'Demand_' ile başlamadığı için otomatik eşleştirmeye alınmadı. "
-        "Bu dosyaları yeniden adlandırın veya yüklemeyin."
+    # Üst bilgi kartları (her zaman en üstte yer alır; panellerden bağımsız)
+    compact_top_kpis = st.checkbox(
+        "Üst bilgi kartlarını göster",
+        value=True,
+        help="Nüfus/GSYH/Kişi başına elektrik/Karbon fiyatı gibi temel göstergeleri sayfanın en üstünde küçük kartlar olarak gösterir. Panel seçimlerinden bağımsızdır.",
     )
 
-# Unmatched Demand warnings (non-blocking)
-unmatched_demand = sorted([k for k in demand_files.keys() if k not in final_files])
-if unmatched_demand:
-    st.warning(
-        "⚠️ Aşağıdaki Demand dosyaları için eşleşen FinalReport bulunamadı (Demand yüklemesi opsiyonel, ama eşleşme yoksa kullanılmaz): "
-        + ", ".join([f"**{k}**" for k in unmatched_demand])
+    show_assumptions = st.checkbox("Senaryo Varsayımları", value=False)
+    show_indicators = st.checkbox("Sistem Göstergeleri", value=False)
+    show_electric = st.checkbox("Elektrik", value=True)
+    show_energy = st.checkbox("Enerji", value=True)
+    show_emissions = st.checkbox("Sera Gazı Emisyonları", value=True)
+
+    selected_panels = []
+    if show_assumptions:
+        selected_panels.append("Senaryo Varsayımları")
+    if show_indicators:
+        selected_panels.append("Sistem Göstergeleri")
+    if show_electric:
+        selected_panels.append("Elektrik")
+    if show_energy:
+        selected_panels.append("Enerji")
+    if show_emissions:
+        selected_panels.append("Sera Gazı Emisyonları")
+    st.divider()
+    st.header("Ayarlar")
+
+    # Year range slider (replaces start_year + max_year)
+    year_min_default = 2018
+    year_max_default = 2050
+    YEAR_OPTIONS = [2018, 2020, 2025, 2030, 2035, 2040, 2045, 2050]
+
+    # Preset buttons will drive the slider via session_state (no changes to calculations/plots)
+    if "year_range" not in st.session_state:
+        st.session_state["year_range"] = (2025, 2050)
+
+    year_range = st.select_slider(
+        "Senaryo yıl aralığı",
+        options=YEAR_OPTIONS,
+        value=st.session_state["year_range"],
+        key="year_range",
+        help="Tüm grafikler bu yıl aralığına göre filtrelenir.",
     )
 
-if not final_files:
-    st.info("Başlamak için en az 1 **FinalReport_...xlsx** dosyası yükleyin. (Demand opsiyonel)")
+
+    # --- UI polish: smaller, stacked preset buttons (visual only) ---
+    st.markdown(
+        """
+        <style>
+        /* Make sidebar preset buttons compact */
+        section[data-testid="stSidebar"] button[kind="secondary"] {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.78rem;
+            line-height: 1.2;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption("Hızlı seçim")
+
+    # Preset buttons (safe via callbacks)
+    def _preset_netzero():
+        st.session_state["year_range"] = (2025, 2050)
+
+    def _preset_tuep():
+        st.session_state["year_range"] = (2025, 2035)
+
+    st.button("Net Zero (2025–2050)", use_container_width=True, on_click=_preset_netzero)
+    st.button("TUEP (2025–2035)", use_container_width=True, on_click=_preset_tuep)
+
+    start_year, max_year = year_range
+
+
+    # -----------------------------
+    # Ara yılları doldurma (opsiyonel)
+    # -----------------------------
+    fill_years_enabled = st.checkbox(
+        "Ara yılları doldur (tahmini)",
+        value=False,
+        help="Model çıktıları 5 yıllık zaman adımlarındadır. Okunabilirlik için ara yıllar lineer interpolasyonla tahmini doldurulur.",
+    )
+    fill_method = st.selectbox(
+        "Doldurma yöntemi",
+        options=["Lineer interpolasyon", "CAGR (üstel büyüme)", "Logistic (S-curve)"],
+        index=0,
+        disabled=not fill_years_enabled,
+    )
+
+    # Logistic eğrisi şiddeti (k)
+    logistic_intensity = st.selectbox(
+        "S-eğrisi şiddeti (k)",
+        options=["Yumuşak (k=4)", "Orta (k=8)", "Sert (k=12)"],
+        index=1,
+        disabled=(not fill_years_enabled) or (fill_method != "Logistic (S-curve)"),
+        help="Logistic doldurmada eğrinin ne kadar hızlı ivmeleneceğini belirler. Orta (k=8) çoğu seri için dengelidir.",
+    )
+
+    LOGISTIC_K_MAP = {"Yumuşak (k=4)": 4.0, "Orta (k=8)": 8.0, "Sert (k=12)": 12.0}
+    fill_logistic_k = float(LOGISTIC_K_MAP.get(logistic_intensity, 8.0))
+    MAX_YEAR = int(max_year)
+
+    st.divider()
+    st.header("Birim")
+    energy_unit = st.select_slider(
+        "Enerji birimi (GWh → bin TEP)",
+        options=["GWh", "bin TEP (ktoe)"],
+        value="GWh",
+        help="Elektrik üretimi/tüketimi ve enerji talebi grafiklerinde birimi değiştirir. Model verisi GWh'dir.",
+    )
+
+    st.divider()
+    st.header("Karşılaştırma")
+    compare_mode = st.radio(
+        label="",
+        options=[
+            "Küçük paneller (Ayrı Grafikler)",
+            "Yan yana sütun — aynı yılda kıyas",
+        ],
+        index=0,
+        key="compare_mode",
+        disabled=st.session_state.get("diff_mode_enabled", False),
+        help="Birden fazla senaryoyu farklı görünümlerle kıyaslayın. Okunabilirlik için çoğu durumda 'Küçük paneller' önerilir.",
+    )
+
+    stacked_value_mode = st.select_slider(
+        "Stacked gösterim",
+        options=["Mutlak", "Pay (%)"],
+        value="Mutlak",
+        help="Stacked grafiklerde mutlak değer yerine yıl içi pay (%) göstermek için Pay (%) seçin.",
+    )
+
+
+
+
+if not uploaded_files:
+    st.info("Başlamak için en az 1 Excel dosyası yükleyin.")
     st.stop()
 
-# Scenario options are driven by FinalReport files (Demand is optional per scenario)
-scenario_names_unique = sorted(final_files.keys())
+if len(uploaded_files) > 12:
+    st.warning("En fazla 12 dosya yükleyebilirsiniz. İlk 12 dosya alınacak.")
+    uploaded_files = uploaded_files[:12]
+
+
+def _derive_scenario_name(uploaded) -> str:
+    """Derive scenario label from uploaded Excel filename.
+
+    Rules:
+    - If name starts with 'FinalReport_' or 'Demand_', drop that prefix.
+    - If name contains '_tria' suffix (e.g. _tria03), drop everything from '_tria' onward.
+    - Keep any 'b_' prefix that may appear in the scenario name (do NOT strip it).
+    """
+    name = getattr(uploaded, "name", "Scenario")
+    stem = Path(name).stem  # filename without extension
+
+    low = stem.lower()
+    if low.startswith("finalreport_"):
+        stem = stem[len("FinalReport_") :]
+    elif low.startswith("demand_"):
+        stem = stem[len("Demand_") :]
+
+    # remove trailing _triaXX (case-insensitive) if present
+    m = re.search(r"(?i)(_tria\d*)", stem)
+    if m:
+        stem = stem[: m.start()]
+
+    stem = stem.strip("_- ").strip()
+    return stem or "Scenario"
+
+
+scenario_names_all = [_derive_scenario_name(f) for f in uploaded_files]
+
+seen = {}
+scenario_names_unique = []
+for s in scenario_names_all:
+    if s not in seen:
+        seen[s] = 1
+        scenario_names_unique.append(s)
+    else:
+        seen[s] += 1
+        scenario_names_unique.append(f"{s} ({seen[s]})")
+
+scenario_to_file = dict(zip(scenario_names_unique, uploaded_files))
+
 default_n = 3 if len(scenario_names_unique) >= 3 else len(scenario_names_unique)
 default_selected = scenario_names_unique[:default_n]
 
@@ -2387,8 +2574,7 @@ selected_scenarios = st.multiselect(
 with st.sidebar:
     st.markdown("**Karşılaştırılan senaryolar (tam ad):**")
     for i, scn in enumerate(selected_scenarios, 1):
-        has_d = "✅" if scn in demand_files else "—"
-        st.markdown(f"{i}. {scn}  \\  Demand: {has_d}")
+        st.markdown(f"{i}. {scn}")
 
 if not selected_scenarios:
     st.info("En az 1 senaryo seçin.")
@@ -2398,8 +2584,29 @@ if len(selected_scenarios) >= 4:
     st.warning("4+ senaryoda okunabilirlik için en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
 
-scenario_to_file = {scn: final_files[scn] for scn in selected_scenarios if scn in final_files}
-scenario_to_demand_file = {scn: demand_files.get(scn) for scn in selected_scenarios}
+if len(selected_scenarios) == 2:
+    def _on_diff_toggle():
+        if st.session_state.get("diff_mode_enabled", False):
+            st.session_state["compare_mode"] = "Yan yana sütun — aynı yılda kıyas"
+
+    with st.sidebar:
+        st.divider()
+        st.caption("ℹ️ **2 Senaryo Fark Modu** aktifken görünüm otomatik **Yan yana sütun** moduna alınır.")
+        diff_mode_enabled = st.checkbox(
+            "Farkı göster (A - B)",
+            value=False,
+            key="diff_mode_enabled",
+            on_change=_on_diff_toggle,
+            help="Sadece 2 senaryo seçiliyken aktif olur. A - B farkını tek seri olarak çizer.",
+        )
+        diff_scn_a = st.selectbox("İlave önlem/politika Senaryoları", options=selected_scenarios, index=0)
+        diff_scn_b = st.selectbox("Referans senaryo ", options=selected_scenarios, index=1)
+        if diff_scn_a == diff_scn_b:
+            diff_scn_b = selected_scenarios[1] if selected_scenarios[0] == diff_scn_a else selected_scenarios[0]
+else:
+    diff_mode_enabled = False
+    diff_scn_a = None
+    diff_scn_b = None
 
 
 def _ncols_for_selected(n: int) -> int:
@@ -2494,6 +2701,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         cap_mix = pd.concat([cap_mix, extra_cap], ignore_index=True) if cap_mix is not None else extra_cap
 
     electricity_by_sector = _filter_years(read_electricity_consumption_by_sector(xlsx_file), start_year, max_year)
+    hh_el_enduse = _filter_years(read_household_electricity_enduse_stack(xlsx_file), start_year, max_year)
 
     per_capita = pd.DataFrame(columns=["year", "value"])
     if (not total_supply.empty) and (not pop.empty):
@@ -2541,6 +2749,7 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "cap_total": _add_scn_filled(cap_total),
         "cap_mix": _add_scn_filled(cap_mix),
         "electricity_by_sector": _add_scn_filled(electricity_by_sector),
+        "hh_el_enduse": _add_scn_filled(hh_el_enduse),
         "primary_energy_source": _add_scn_filled(primary_energy_source),
         "final_energy_source": _add_scn_filled(final_energy_source),
         "final_energy_sector": _add_scn_filled(final_energy_sector),
@@ -2554,120 +2763,14 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
     return bundle
 
 
-
-# -----------------------------
-# Demand (ek Excel) – FINAL_ENERGY elektrik tüketimi stacked grafik okuma
-# -----------------------------
-DEMAND_SHEET = "FINAL_ENERGY"
-DEMAND_YEARS_ROW_1IDX = 1
-DEMAND_COL_START_1IDX = 3  # C sütunu
-
-# Residential (Konutlar) – Elektrik kullanım kırılımı
-DEMAND_RESIDENTIAL_ROWS = {
-    "Ev Aletleri": [235, 253, 241],
-    "Alan Isıtma": [245, 248],
-    "Su Isıtma": [260, 262],
-    "Pişirme": [236],
-    "Soğutma": [234],
-}
-
-# Services (Hizmetler) – Elektrik kullanım kırılımı
-DEMAND_SERVICES_ROWS = {
-    "Veri Merkezleri": [578],
-    "Soğutma": [577],
-    "Aydınlatma": [579],
-    "Alan Isıtma": [588, 591],
-    "Su Isıtma": [602, 604],
-}
-
-
-@st.cache_data(show_spinner=False)
-def _read_demand_stacked(xlsx_file, scenario: str, rows_map: dict[str, list[int]], start_year: int, max_year: int) -> pd.DataFrame:
-    """Read Demand FINAL_ENERGY electricity-use rows and return long df: scenario/year/category/value."""
-    if xlsx_file is None:
-        return pd.DataFrame(columns=["scenario", "year", "category", "value"])
-
-    try:
-        df = pd.read_excel(xlsx_file, sheet_name=DEMAND_SHEET, header=None, engine="openpyxl")
-    except Exception:
-        return pd.DataFrame(columns=["scenario", "year", "category", "value"])
-
-    # Years
-    years = pd.to_numeric(df.iloc[DEMAND_YEARS_ROW_1IDX - 1, DEMAND_COL_START_1IDX - 1 :], errors="coerce")
-    years = years.dropna()
-    if years.empty:
-        return pd.DataFrame(columns=["scenario", "year", "category", "value"])
-
-    years = years.astype(int).tolist()
-    # Apply range
-    years = [y for y in years if y >= start_year and y <= max_year]
-    if not years:
-        return pd.DataFrame(columns=["scenario", "year", "category", "value"])
-
-    # Determine column slice length by original years count in sheet
-    # (we re-slice based on the full years and then filter)
-    full_years = pd.to_numeric(df.iloc[DEMAND_YEARS_ROW_1IDX - 1, DEMAND_COL_START_1IDX - 1 :], errors="coerce").dropna().astype(int).tolist()
-    year_to_col_idx = {y: i for i, y in enumerate(full_years)}
-    sel_cols = [DEMAND_COL_START_1IDX - 1 + year_to_col_idx[y] for y in years]
-
-    out_rows = []
-    for cat, row_list in rows_map.items():
-        # Sum across multiple rows if needed
-        acc = None
-        for r1 in row_list:
-            if r1 - 1 >= len(df.index):
-                continue
-            vals = pd.to_numeric(df.iloc[r1 - 1, sel_cols], errors="coerce").fillna(0.0).to_numpy(dtype=float)
-            acc = vals if acc is None else (acc + vals)
-        if acc is None:
-            continue
-        for y, v in zip(years, acc.tolist()):
-            out_rows.append({"scenario": scenario, "year": int(y), "category": str(cat), "value": float(v)})
-
-    return pd.DataFrame(out_rows)
-
-
-def compute_demand_bundle(demand_xlsx_file, scenario: str, start_year: int, max_year: int) -> dict:
-    """Compute demand-side electricity stacked dfs (optional per scenario)."""
-    if demand_xlsx_file is None:
-        return {
-            "demand_residential": pd.DataFrame(columns=["scenario", "year", "category", "value"]),
-            "demand_services": pd.DataFrame(columns=["scenario", "year", "category", "value"]),
-        }
-
-    res = _read_demand_stacked(demand_xlsx_file, scenario, DEMAND_RESIDENTIAL_ROWS, start_year, max_year)
-    srv = _read_demand_stacked(demand_xlsx_file, scenario, DEMAND_SERVICES_ROWS, start_year, max_year)
-    return {"demand_residential": res, "demand_services": srv}
-
-
-# --- Safety: ensure MAX_YEAR is defined ---
-try:
-    MAX_YEAR
-except NameError:
-    MAX_YEAR = 2050
-
 bundles = []
 for scn in selected_scenarios:
     f = scenario_to_file[scn]
     bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR, fill_years_enabled, fill_method, fill_logistic_k))
 
 
-demand_bundles = []
-for scn in selected_scenarios:
-    df_demand_file = scenario_to_demand_file.get(scn)
-    demand_bundles.append(compute_demand_bundle(df_demand_file, scn, start_year, MAX_YEAR))
-
 def _concat(key: str):
-
     dfs = [b.get(key) for b in bundles if b.get(key) is not None and not b.get(key).empty]
-    if not dfs:
-        return pd.DataFrame()
-
-    return pd.concat(dfs, ignore_index=True)
-
-
-def _concat_demand(key: str):
-    dfs = [b.get(key) for b in demand_bundles if b.get(key) is not None and not b.get(key).empty]
     if not dfs:
         return pd.DataFrame()
     return pd.concat(dfs, ignore_index=True)
@@ -2681,10 +2784,9 @@ df_cp = _concat("carbon_price")
 df_supply = _concat("total_supply")
 df_genmix = _concat("gen_mix")
 df_capmix = _concat("cap_mix")
-df_demand_res = _concat_demand("demand_residential")
-df_demand_srv = _concat_demand("demand_services")
 df_primary = _concat("primary_energy_source")
 df_sector_el = _concat("electricity_by_sector")
+df_hh_el_enduse = _concat("hh_el_enduse")
 df_final = _concat("final_energy_source")
 df_final_sector = _concat("final_energy_sector")
 df_electrification = _concat("electrification_ratio")
@@ -2762,6 +2864,7 @@ def _build_export_workbook() -> bytes:
     frames["total_supply"] = _normalize_for_export(_maybe_energy(df_supply))
     frames["gen_mix"] = _normalize_for_export(_maybe_energy(df_genmix))
     frames["electricity_by_sector"] = _normalize_for_export(_maybe_energy(df_sector_el))
+    frames["hh_el_enduse"] = _normalize_for_export(_maybe_energy(df_hh_el_enduse))
 
     # Capacity & storage / ptx (GW; no energy conversion)
     frames["capacity_mix"] = _normalize_for_export(df_capmix)
@@ -4155,6 +4258,29 @@ if "Elektrik" in selected_panels:
 
     st.divider()
 
+    # --- NEW: Demand Excel (FINAL_ENERGY) – Konutlarda Elektrik Tüketimi (End-use) ---
+    if df_hh_el_enduse is not None and not df_hh_el_enduse.empty:
+        _render_stacked(
+            _convert_energy_df(df_hh_el_enduse),
+            title=f"Konutlarda Elektrik Tüketimi (End-Use) ({_energy_unit_label()})",
+            x_field="year",
+            stack_field="category",
+            y_title=_energy_unit_label(),
+            category_title="Kullanım",
+            value_format=_energy_value_format(),
+            order=["Ev Aletleri", "Alan Isıtma", "Su Isıtma", "Pişirme", "Soğutma"],
+            show_legend=True,
+        )
+
+        _render_ai_commentary_custom(
+            _convert_energy_df(df_hh_el_enduse),
+            title="Konutlarda Elektrik Tüketimi (End-Use)",
+            fn=_ai_commentary_stacked,
+            unit_label=_energy_unit_label(),
+        )
+
+    st.divider()
+
     if stacked_value_mode != "Pay (%)":
         st.markdown("### Yakıt/Teknoloji Bazlı Enerji Dönüşümü (Δ)")
         st.caption(
@@ -4212,38 +4338,6 @@ if "Elektrik" in selected_panels:
 
 
 # ENERGY PANEL
-
-st.divider()
-st.markdown("### Talep Tarafı (Demand) – Elektrik Tüketimi")
-
-if df_demand_res.empty and df_demand_srv.empty:
-    st.caption("Demand dosyası yüklenen senaryo yok (opsiyonel).")
-else:
-    order_res = ["Ev Aletleri", "Alan Isıtma", "Su Isıtma", "Pişirme", "Soğutma"]
-    _render_stacked(
-        _convert_energy_df(df_demand_res),
-        title=f"Konutlarda Elektrik Tüketimi ({_energy_unit_label()})",
-        x_field="year",
-        stack_field="category",
-        y_title=_energy_unit_label(),
-        category_title="Kullanım",
-        value_format=_energy_value_format(),
-        order=order_res,
-    )
-
-    order_srv = ["Veri Merkezleri", "Soğutma", "Aydınlatma", "Alan Isıtma", "Su Isıtma"]
-    _render_stacked(
-        _convert_energy_df(df_demand_srv),
-        title=f"Hizmet Sektörü Elektrik Tüketimi ({_energy_unit_label()})",
-        x_field="year",
-        stack_field="category",
-        y_title=_energy_unit_label(),
-        category_title="Kullanım",
-        value_format=_energy_value_format(),
-        order=order_srv,
-    )
-
-
 if "Enerji" in selected_panels:
     st.markdown("## Enerji")
 
