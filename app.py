@@ -1,4 +1,5 @@
-
+import numpy as np
+﻿
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
