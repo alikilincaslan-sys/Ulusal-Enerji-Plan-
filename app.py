@@ -53,6 +53,91 @@ SECTOR_COLOR_MAP = {
 }
 
 
+# ============================
+# Demand Excel (Standalone) helpers
+# ============================
+
+def _scenario_name_from_filename(filename: str) -> str:
+    """Extract scenario name from Demand_/FinalReport_ style filenames.
+
+    Rules (as agreed):
+    - Scenario name is the substring AFTER prefix (Demand_ or FinalReport_) and BEFORE '_tria'.
+    - If 'b_' exists, it is kept (NOT removed).
+    """
+    if not filename:
+        return "(Unknown)"
+    base = filename
+    # strip extension
+    for ext in [".xlsx", ".xlsm", ".xls", ".csv"]:
+        if base.lower().endswith(ext):
+            base = base[: -len(ext)]
+            break
+    for prefix in ("Demand_", "FinalReport_"):
+        if base.startswith(prefix):
+            base = base[len(prefix) :]
+            break
+    if "_tria" in base:
+        base = base.split("_tria", 1)[0]
+    return base.strip() or "(Unknown)"
+
+
+def _read_rows_sum_from_final_energy(
+    file_like,
+    row_numbers_1based: list[int],
+    sheet_name: str = "FINAL_ENERGY",
+    years_row_1based: int = 1,
+    years_start_col_0based: int = 2,  # C column
+) -> tuple[list[int], np.ndarray]:
+    """Read specified Excel rows (1-based) from FINAL_ENERGY and sum them across years.
+
+    Returns:
+        years: list[int]
+        values: np.ndarray shape (n_years,)
+    """
+    raw = pd.read_excel(file_like, sheet_name=sheet_name, header=None)
+
+    # Years
+    years_series = raw.iloc[years_row_1based - 1, years_start_col_0based:]
+    years = pd.to_numeric(years_series, errors="coerce").dropna().astype(int).tolist()
+    n_years = len(years)
+    if n_years == 0:
+        raise ValueError(f"{sheet_name}: Years not found in row {years_row_1based} from column C.")
+
+    # Values (sum of rows)
+    acc = np.zeros(n_years, dtype=float)
+    for r in row_numbers_1based:
+        vals = raw.iloc[r - 1, years_start_col_0based : years_start_col_0based + n_years]
+        vals = pd.to_numeric(vals, errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        acc += vals
+    return years, acc
+
+
+def _build_enduse_df_from_demand_excel(file_like, mapping: dict[str, list[int] | int]) -> pd.DataFrame:
+    """Build tidy df for stacked end-use charts from a Demand Excel file."""
+    rows = []
+    years_ref = None
+    for cat, row_spec in mapping.items():
+        row_list = row_spec if isinstance(row_spec, list) else [int(row_spec)]
+        years, vals = _read_rows_sum_from_final_energy(file_like, [int(x) for x in row_list])
+        if years_ref is None:
+            years_ref = years
+        elif years != years_ref:
+            raise ValueError("Demand Excel: Year columns mismatch across categories.")
+        for y, v in zip(years, vals):
+            rows.append({"year": int(y), "category": str(cat), "value": float(v)})
+    return pd.DataFrame(rows)
+
+
+def _to_percent_share(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert stacked values to per-year percent shares."""
+    out = df.copy()
+    totals = out.groupby("year", as_index=False)["value"].sum().rename(columns={"value": "total"})
+    out = out.merge(totals, on="year", how="left")
+    out["value"] = np.where(out["total"] > 0, out["value"] / out["total"] * 100.0, 0.0)
+    out = out.drop(columns=["total"])
+    return out
+
+
 STORAGE_PTX_COLOR_MAP = {
     # Anlam odaklı: Depolama=yeşil, PTX=mavi (pastel ama ayrışan)
     "Total Storage": "#6CCF8A",
@@ -1510,93 +1595,6 @@ def _gen_is_excluded(item: str) -> bool:
     return False
 
 
-def read_household_electricity_enduse_stack(xlsx_file) -> pd.DataFrame:
-    """FINAL_ENERGY sheet: Konutlarda elektrik tüketimi (GWh) – end-use stacked.
-
-    Excel rules (fixed for Demand excel family):
-    - Sheet: FINAL_ENERGY
-    - Years row: 1 (Excel 1-indexed), starts from column C
-    - Values: fixed Excel rows (1-indexed):
-        Cooling   = 234
-        Appliances (Ev Aletleri) = 235 + 253 + 241
-        Cooking   = 236
-        Space heating (Alan Isıtma) = 245 + 248
-        Water heating (Su Isıtma) = 260 + 262
-    Output: year, category, value, series, sheet
-    """
-    SHEET = "FINAL_ENERGY"
-    YEARS_ROW_1IDX = 1
-    START_COL_1IDX = 3  # C
-
-    # category -> contributing rows (Excel 1-indexed)
-    CAT_ROWS = {
-        "Soğutma": [234],
-        "Ev Aletleri": [235, 253, 241],
-        "Pişirme": [236],
-        "Alan Isıtma": [245, 248],
-        "Su Isıtma": [260, 262],
-    }
-
-    try:
-        raw = pd.read_excel(xlsx_file, sheet_name=SHEET, header=None)
-    except Exception:
-        return pd.DataFrame(columns=["year", "category", "value", "series", "sheet"])
-
-    yr_r0 = YEARS_ROW_1IDX - 1
-    c0 = START_COL_1IDX - 1
-    if raw is None or raw.empty or yr_r0 < 0 or yr_r0 >= len(raw) or c0 < 0 or c0 >= raw.shape[1]:
-        return pd.DataFrame(columns=["year", "category", "value", "series", "sheet"])
-
-    # Read years horizontally from row 1, col C onward; stop after 3 consecutive non-years
-    years = []
-    year_col_idx = []
-    blank_streak = 0
-    for j in range(c0, raw.shape[1]):
-        y = _as_int_year(raw.iloc[yr_r0, j])
-        if y is None or int(y) > MAX_YEAR:
-            blank_streak += 1
-            if blank_streak >= 3:
-                break
-            continue
-        blank_streak = 0
-        years.append(int(y))
-        year_col_idx.append(int(j))
-
-    if not years:
-        return pd.DataFrame(columns=["year", "category", "value", "series", "sheet"])
-
-    def _row_vals(row_1idx: int):
-        r0 = row_1idx - 1
-        if r0 < 0 or r0 >= len(raw):
-            return [np.nan] * len(year_col_idx)
-        vals = []
-        for j in year_col_idx:
-            v = pd.to_numeric(raw.iloc[r0, j], errors="coerce")
-            vals.append(v)
-        return vals
-
-    recs = []
-    for cat, rows in CAT_ROWS.items():
-        mats = [_row_vals(r) for r in rows]
-        # sum across contributing rows, treat NaN as 0 but keep all-NaN as NaN
-        for k, y in enumerate(years):
-            arr = [m[k] for m in mats]
-            # if all nan -> skip
-            if all(pd.isna(v) for v in arr):
-                continue
-            s = float(np.nansum(arr))
-            recs.append({"year": int(y), "category": str(cat), "value": s})
-
-    df = pd.DataFrame(recs)
-    if df.empty:
-        return pd.DataFrame(columns=["year", "category", "value", "series", "sheet"])
-
-    df = df.sort_values(["year", "category"])
-    df["series"] = "Konutlarda Elektrik Tüketimi"
-    df["sheet"] = SHEET
-    return df
-
-
 def generation_mix_from_block(gross_gen_df: pd.DataFrame) -> pd.DataFrame:
     """Gross generation mix (GWh) – Total Storage HARİÇ."""
     if gross_gen_df is None or gross_gen_df.empty:
@@ -2523,28 +2521,10 @@ if len(uploaded_files) > 12:
 
 
 def _derive_scenario_name(uploaded) -> str:
-    """Derive scenario label from uploaded Excel filename.
-
-    Rules:
-    - If name starts with 'FinalReport_' or 'Demand_', drop that prefix.
-    - If name contains '_tria' suffix (e.g. _tria03), drop everything from '_tria' onward.
-    - Keep any 'b_' prefix that may appear in the scenario name (do NOT strip it).
-    """
     name = getattr(uploaded, "name", "Scenario")
-    stem = Path(name).stem  # filename without extension
-
-    low = stem.lower()
-    if low.startswith("finalreport_"):
+    stem = Path(name).stem
+    if stem.lower().startswith("finalreport_"):
         stem = stem[len("FinalReport_") :]
-    elif low.startswith("demand_"):
-        stem = stem[len("Demand_") :]
-
-    # remove trailing _triaXX (case-insensitive) if present
-    m = re.search(r"(?i)(_tria\d*)", stem)
-    if m:
-        stem = stem[: m.start()]
-
-    stem = stem.strip("_- ").strip()
     return stem or "Scenario"
 
 
@@ -2701,7 +2681,6 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         cap_mix = pd.concat([cap_mix, extra_cap], ignore_index=True) if cap_mix is not None else extra_cap
 
     electricity_by_sector = _filter_years(read_electricity_consumption_by_sector(xlsx_file), start_year, max_year)
-    hh_el_enduse = _filter_years(read_household_electricity_enduse_stack(xlsx_file), start_year, max_year)
 
     per_capita = pd.DataFrame(columns=["year", "value"])
     if (not total_supply.empty) and (not pop.empty):
@@ -2749,7 +2728,6 @@ def compute_scenario_bundle(xlsx_file, scenario: str, start_year: int, max_year:
         "cap_total": _add_scn_filled(cap_total),
         "cap_mix": _add_scn_filled(cap_mix),
         "electricity_by_sector": _add_scn_filled(electricity_by_sector),
-        "hh_el_enduse": _add_scn_filled(hh_el_enduse),
         "primary_energy_source": _add_scn_filled(primary_energy_source),
         "final_energy_source": _add_scn_filled(final_energy_source),
         "final_energy_sector": _add_scn_filled(final_energy_sector),
@@ -2786,7 +2764,6 @@ df_genmix = _concat("gen_mix")
 df_capmix = _concat("cap_mix")
 df_primary = _concat("primary_energy_source")
 df_sector_el = _concat("electricity_by_sector")
-df_hh_el_enduse = _concat("hh_el_enduse")
 df_final = _concat("final_energy_source")
 df_final_sector = _concat("final_energy_sector")
 df_electrification = _concat("electrification_ratio")
@@ -2864,7 +2841,6 @@ def _build_export_workbook() -> bytes:
     frames["total_supply"] = _normalize_for_export(_maybe_energy(df_supply))
     frames["gen_mix"] = _normalize_for_export(_maybe_energy(df_genmix))
     frames["electricity_by_sector"] = _normalize_for_export(_maybe_energy(df_sector_el))
-    frames["hh_el_enduse"] = _normalize_for_export(_maybe_energy(df_hh_el_enduse))
 
     # Capacity & storage / ptx (GW; no energy conversion)
     frames["capacity_mix"] = _normalize_for_export(df_capmix)
@@ -4256,28 +4232,106 @@ if "Elektrik" in selected_panels:
         show_legend=True,
     )
 
-    st.divider()
-
-    # --- NEW: Demand Excel (FINAL_ENERGY) – Konutlarda Elektrik Tüketimi (End-use) ---
-    if df_hh_el_enduse is not None and not df_hh_el_enduse.empty:
-        _render_stacked(
-            _convert_energy_df(df_hh_el_enduse),
-            title=f"Konutlarda Elektrik Tüketimi (End-Use) ({_energy_unit_label()})",
-            x_field="year",
-            stack_field="category",
-            y_title=_energy_unit_label(),
-            category_title="Kullanım",
-            value_format=_energy_value_format(),
-            order=["Ev Aletleri", "Alan Isıtma", "Su Isıtma", "Pişirme", "Soğutma"],
-            show_legend=True,
+    # ----------------------------
+    # Demand Excel (Standalone) – End-use dağılımı
+    # (Ana senaryo/slider ile birleştirilmez; sadece yüklü dosyadan okur.)
+    # ----------------------------
+    with st.expander("Demand Excel: Konut/Hizmetler Elektrik (GWh) – Yüzde Dağılım", expanded=False):
+        st.caption(
+            "Bu bölüm ayrı Demand Excel dosyalarından okunur (FINAL_ENERGY, yıllar C1'den). "
+            "Ana model senaryoları/slider ile bağlanmaz."
         )
 
-        _render_ai_commentary_custom(
-            _convert_energy_df(df_hh_el_enduse),
-            title="Konutlarda Elektrik Tüketimi (End-Use)",
-            fn=_ai_commentary_stacked,
-            unit_label=_energy_unit_label(),
-        )
+        HH_MAPPING = {
+            "Ev Aletleri": [235, 253, 241],
+            "Alan Isıtma": [245, 248],
+            "Su Isıtma": [260, 262],
+            "Pişirme": 236,
+            "Soğutma": 234,
+        }
+
+        # TODO: Hizmetler için satır kombinasyonları kullanıcıdan gelecek.
+        SERVICES_MAPPING: dict[str, list[int] | int] = {}
+
+        colL, colR = st.columns(2)
+        with colL:
+            st.markdown("#### Konutlarda Elektrik Tüketimi (GWh) – Yüzde Dağılım")
+            hh_files = st.file_uploader(
+                "Konut Demand Excel(ler)i yükle (.xlsx)",
+                type=["xlsx", "xlsm", "xls"],
+                accept_multiple_files=True,
+                key="demand_hh_upload",
+            )
+            if hh_files:
+                hh_dfs = []
+                for f in hh_files:
+                    try:
+                        scn = _scenario_name_from_filename(getattr(f, "name", ""))
+                        df_hh = _build_enduse_df_from_demand_excel(f, HH_MAPPING)
+                        df_hh["scenario"] = scn
+                        hh_dfs.append(df_hh)
+                    except Exception as e:
+                        st.error(f"{getattr(f, 'name', 'dosya')}: okunamadı — {e}")
+                if hh_dfs:
+                    df_hh_all = pd.concat(hh_dfs, ignore_index=True)
+                    scn_opts = sorted(df_hh_all["scenario"].unique().tolist())
+                    scn_sel = st.selectbox("Konut senaryosu", options=scn_opts, index=0, key="hh_scn_sel")
+                    df_hh_plot = df_hh_all[df_hh_all["scenario"] == scn_sel].copy()
+                    df_hh_plot = _to_percent_share(df_hh_plot)
+                    _render_stacked(
+                        df_hh_plot,
+                        title=f"Konutlarda Elektrik Tüketimi – End-Use Dağılımı (%) — {scn_sel}",
+                        x_field="year",
+                        stack_field="category",
+                        y_title="Pay (%)",
+                        category_title="Kullanım",
+                        value_format=",.1f",
+                        show_legend=True,
+                    )
+            else:
+                st.info("Konut Demand Excel dosyasını yüklersen burada yüzde dağılım stacked grafiği oluşur.")
+
+        with colR:
+            st.markdown("#### Hizmetler Sektörü Elektrik (GWh) – Yüzde Dağılım")
+            srv_files = st.file_uploader(
+                "Hizmetler Demand Excel(ler)i yükle (.xlsx)",
+                type=["xlsx", "xlsm", "xls"],
+                accept_multiple_files=True,
+                key="demand_srv_upload",
+            )
+            if not SERVICES_MAPPING:
+                st.warning(
+                    "Hizmetler (Tertiary/Services) end-use satır kombinasyonları henüz tanımlı değil. "
+                    "Bana hizmetler için satır numaralarını (ör. Aydınlatma=..., HVAC=... gibi) verirsen bu grafiği de aynı formatta eklerim."
+                )
+            elif srv_files:
+                srv_dfs = []
+                for f in srv_files:
+                    try:
+                        scn = _scenario_name_from_filename(getattr(f, "name", ""))
+                        df_srv = _build_enduse_df_from_demand_excel(f, SERVICES_MAPPING)
+                        df_srv["scenario"] = scn
+                        srv_dfs.append(df_srv)
+                    except Exception as e:
+                        st.error(f"{getattr(f, 'name', 'dosya')}: okunamadı — {e}")
+                if srv_dfs:
+                    df_srv_all = pd.concat(srv_dfs, ignore_index=True)
+                    scn_opts = sorted(df_srv_all["scenario"].unique().tolist())
+                    scn_sel = st.selectbox("Hizmetler senaryosu", options=scn_opts, index=0, key="srv_scn_sel")
+                    df_srv_plot = df_srv_all[df_srv_all["scenario"] == scn_sel].copy()
+                    df_srv_plot = _to_percent_share(df_srv_plot)
+                    _render_stacked(
+                        df_srv_plot,
+                        title=f"Hizmetler Elektrik – End-Use Dağılımı (%) — {scn_sel}",
+                        x_field="year",
+                        stack_field="category",
+                        y_title="Pay (%)",
+                        category_title="Kullanım",
+                        value_format=",.1f",
+                        show_legend=True,
+                    )
+            else:
+                st.info("Hizmetler Demand Excel dosyasını yüklersen burada yüzde dağılım stacked grafiği oluşur.")
 
     st.divider()
 
