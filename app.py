@@ -3435,6 +3435,24 @@ for i, kpi in enumerate(kpis[:ncols]):
             delta_color="normal",
         )            
 
+        # 4b) Yıllık GES / RES Kurulu Güç Artışı (Ort.)
+        years_span = kpi.get("y1", 0) - kpi.get("y0", 0)
+
+        # Başlangıç ve bitiş değerleri
+        ges_0 = kpi.get("solar_cap_0", np.nan)
+        ges_1 = kpi.get("solar_cap_1", np.nan)
+
+        res_0 = kpi.get("wind_cap_0", np.nan)
+        res_1 = kpi.get("wind_cap_1", np.nan)
+
+        ges_avg = (ges_1 - ges_0) / years_span if years_span > 0 and np.isfinite(ges_0) and np.isfinite(ges_1) else np.nan
+        res_avg = (res_1 - res_0) / years_span if years_span > 0 and np.isfinite(res_0) and np.isfinite(res_1) else np.nan
+
+        st.metric(
+            "Yıllık GES/RES KG artışı (Ort.)",
+            f"{ges_avg:,.1f} GW / {res_avg:,.1f} GW" if np.isfinite(ges_avg) and np.isfinite(res_avg) else "—",
+        )
+        
         # 5) YE Payı
         st.metric(
             f"YE Payı (%, {yr})",
