@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="Soğutma ve Veri Analizi", layout="wide")
+st.set_page_config(page_title="Soğutma ve Veri Merkezleri Analizi", layout="wide")
 
 # ----------------------------
 # Helpers
@@ -34,6 +34,7 @@ def _scenario_from_filename(name: str) -> str:
 
     return base.strip() or name
 
+
 def _read_final_energy_matrix(file) -> Tuple[List[int], pd.DataFrame]:
     """
     Reads sheet FINAL_ENERGY without headers.
@@ -43,39 +44,47 @@ def _read_final_energy_matrix(file) -> Tuple[List[int], pd.DataFrame]:
       mat: DataFrame of numeric values (same shape as original) for convenience.
     """
     df = pd.read_excel(file, sheet_name="FINAL_ENERGY", header=None, engine=None)
+
     # Years: Excel row 1 -> df.iloc[0], start at col C -> index 2
     years_raw = df.iloc[0, 2:].tolist()
-    years = []
+    years: List[int] = []
     for y in years_raw:
         if pd.isna(y):
             continue
         try:
             years.append(int(float(y)))
         except Exception:
-            # if year is like "2020 " or similar
             s = str(y).strip()
             if s.isdigit():
                 years.append(int(s))
             else:
                 break  # stop at first non-year token
+
     # Keep only the year columns we detected
     n_years = len(years)
+
     # Numeric matrix for year columns
-    mat = df.iloc[:, 2:2+n_years].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    mat = (
+        df.iloc[:, 2 : 2 + n_years]
+        .apply(pd.to_numeric, errors="coerce")
+        .fillna(0.0)
+    )
     return years, mat
+
 
 def _rows_sum(mat: pd.DataFrame, excel_rows_1idx: List[int]) -> List[float]:
     """
     Sum specified Excel row numbers (1-indexed) across year columns.
     """
-    # convert to 0-index for pandas iloc
-    idxs = [r-1 for r in excel_rows_1idx]
-    # guard against out-of-range
-    idxs = [i for i in idxs if 0 <= i < len(mat)]
+    idxs = [r - 1 for r in excel_rows_1idx]  # convert to 0-index for pandas iloc
+    idxs = [i for i in idxs if 0 <= i < len(mat)]  # guard against out-of-range
+
     if not idxs:
         return [0.0] * mat.shape[1]
+
     series = mat.iloc[idxs, :].sum(axis=0)
     return series.tolist()
+
 
 def _stacked_area(
     years: List[int],
@@ -84,6 +93,7 @@ def _stacked_area(
     percent: bool = False,
 ) -> go.Figure:
     fig = go.Figure()
+
     # consistent order as provided
     for label, values in series_map.items():
         fig.add_trace(
@@ -95,13 +105,12 @@ def _stacked_area(
                 stackgroup="one",
             )
         )
+
     if percent:
-        fig.update_layout(
-            yaxis=dict(title="%", ticksuffix="%", range=[0, 100]),
-        )
-        # Normalize to percent (Plotly does this with groupnorm)
+        # Plotly groupnorm percent
         for tr in fig.data:
             tr.update(groupnorm="percent")
+        fig.update_layout(yaxis=dict(title="%", ticksuffix="%", range=[0, 100]))
     else:
         fig.update_layout(yaxis=dict(title="GWh"))
 
@@ -113,7 +122,9 @@ def _stacked_area(
     )
     return fig
 
+
 def _build_household_series(years: List[int], mat: pd.DataFrame) -> Dict[str, List[float]]:
+    # Konut
     return {
         "Ev Aletleri": _rows_sum(mat, [235, 253, 241]),
         "Alan Isıtma": _rows_sum(mat, [245, 248]),
@@ -122,7 +133,9 @@ def _build_household_series(years: List[int], mat: pd.DataFrame) -> Dict[str, Li
         "Soğutma": _rows_sum(mat, [234]),
     }
 
+
 def _build_services_series(years: List[int], mat: pd.DataFrame) -> Dict[str, List[float]]:
+    # Hizmet
     return {
         "Veri Merkezleri": _rows_sum(mat, [578]),
         "Soğutma": _rows_sum(mat, [577]),
@@ -130,6 +143,7 @@ def _build_services_series(years: List[int], mat: pd.DataFrame) -> Dict[str, Lis
         "Alan Isıtma": _rows_sum(mat, [588, 591]),
         "Su Isıtma": _rows_sum(mat, [602, 604]),
     }
+
 
 def _total(series_map: Dict[str, List[float]]) -> List[float]:
     labels = list(series_map.keys())
@@ -139,17 +153,19 @@ def _total(series_map: Dict[str, List[float]]) -> List[float]:
         out = [a + b for a, b in zip(out, v)]
     return out
 
+
 def _to_percent(series_map: Dict[str, List[float]]) -> Dict[str, List[float]]:
     tot = _total(series_map)
-    out = {}
+    out: Dict[str, List[float]] = {}
     for k, v in series_map.items():
         out[k] = [(vi / ti * 100.0) if ti else 0.0 for vi, ti in zip(v, tot)]
     return out
 
+
 # ----------------------------
 # UI
 # ----------------------------
-st.title("Demand Analizi")
+st.title("Soğutma ve Veri Merkezleri Analizi")
 st.caption("Demand Excel dosyalarını (1–3 senaryo) yükle. Grafikler FINAL_ENERGY sekmesinden okunur.")
 
 uploaded = st.file_uploader(
@@ -214,4 +230,6 @@ for i, file in enumerate(uploaded):
         )
 
 st.divider()
-st.caption("Not: Senaryo adı dosya isminden `Demand_..._tria..` veya `FinalReport_..._tria..` kuralıyla çıkarılır; `b_` korunur.")
+st.caption(
+    "Not: Senaryo adı dosya isminden `Demand_..._tria..` veya `FinalReport_..._tria..` kuralıyla çıkarılır; `b_` korunur."
+)
