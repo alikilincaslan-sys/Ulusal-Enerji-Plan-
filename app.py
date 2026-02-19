@@ -1,4 +1,3 @@
-
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
@@ -3406,24 +3405,35 @@ for i, kpi in enumerate(kpis[:ncols]):
         # 3) Toplam arz
         supply_1 = kpi.get("supply_1", np.nan)
         supply_0 = kpi.get("supply_0", np.nan)
+        
         if _energy_unit_is_ktoe():
             supply_1 = supply_1 * float(GWH_TO_KTOE) if np.isfinite(supply_1) else supply_1
             supply_0 = supply_0 * float(GWH_TO_KTOE) if np.isfinite(supply_0) else supply_0
 
+        # CAGR hesapla
+        years_span = kpi.get("y1", 0) - kpi.get("y0", 0)
+        supply_cagr = _cagr(supply_0, supply_1, years_span)
+
         st.metric(
             f"Toplam Arz ({_energy_unit_label()}, {yr})",
             _fmt_range(supply_0, supply_1, ",.0f"),
-            delta=_metric_delta(supply_0, supply_1, kind="pct"),
+            delta=f"{supply_cagr*100:.1f}% CAGR" if np.isfinite(supply_cagr) else "—",
             delta_color="normal",
         )
 
         # 4) Elektrik kurulu güç
+        cap_0 = kpi.get("cap_0", np.nan)
+        cap_1 = kpi.get("cap_1", np.nan)
+
+        years_span = kpi.get("y1", 0) - kpi.get("y0", 0)
+        cap_cagr = _cagr(cap_0, cap_1, years_span)
+
         st.metric(
             f"Kurulu Güç (GW, {yr})",
-            _fmt_range(kpi.get("cap_0", np.nan), kpi.get("cap_1", np.nan), ",.0f"),
-            delta=_metric_delta(kpi.get("cap_0", np.nan), kpi.get("cap_1", np.nan), kind="pct"),
+            _fmt_range(cap_0, cap_1, ",.0f"),
+            delta=f"{cap_cagr*100:.1f}% CAGR" if np.isfinite(cap_cagr) else "—",
             delta_color="normal",
-        )
+        )            
 
         # 5) YE Payı
         st.metric(
