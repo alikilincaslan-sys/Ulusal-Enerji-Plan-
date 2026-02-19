@@ -1,3 +1,4 @@
+
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
@@ -2640,15 +2641,17 @@ def compute_demand_bundle(demand_xlsx_file, scenario: str, start_year: int, max_
 
 
 bundles = []
+# --- Safety: MAX_YEAR may be undefined in some deployments; use a safe local max_year
+max_year = globals().get('MAX_YEAR', 2050)
 for scn in selected_scenarios:
     f = scenario_to_file[scn]
-    bundles.append(compute_scenario_bundle(f, scn, start_year, MAX_YEAR, fill_years_enabled, fill_method, fill_logistic_k))
+    bundles.append(compute_scenario_bundle(f, scn, start_year, max_year, fill_years_enabled, fill_method, fill_logistic_k))
 
 
 demand_bundles = []
 for scn in selected_scenarios:
     df_demand_file = scenario_to_demand_file.get(scn)
-    demand_bundles.append(compute_demand_bundle(df_demand_file, scn, start_year, MAX_YEAR))
+    demand_bundles.append(compute_demand_bundle(df_demand_file, scn, start_year, max_year))
 
 def _concat(key: str):
 
