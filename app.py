@@ -4217,120 +4217,113 @@ if "Elektrik" in selected_panels:
 
         # --- Ek Excel (Demand_*): Konutlarda Elektrik Tüketimi (GWh) ---
     # Not: Dosyalar üstte (ana yüklemenin hemen altında) yüklenir: st.session_state["demand_files_res_elec"].
+    
+    # --- Ek Excel (Demand_*): Konutlarda + Hizmet Sektörü Elektrik Tüketimi (GWh) ---
     st.markdown("### Ek Excel: Konutlarda Elektrik Tüketimi (GWh)")
     st.caption("Dosya adı kuralı: Demand_SenaryoA.xlsx → senaryo adı: SenaryoA. Birden çok dosya yükleyebilirsiniz (senaryolar karşılaştırılır).")
 
     demand_files_local = st.session_state.get("demand_files_res_elec", []) or []
 
     def _scenario_from_demand_filename(name: str) -> str:
-        stem = Path(name).stem
-        # Demand_... / Demand-... / demand... prefix
-        stem2 = re.sub(r"^demand[_-]?", "", stem, flags=re.IGNORECASE)
-        return stem2 or stem
-
-    def _read_residential_electricity_from_demand_excel(file_obj):
-        """FINAL_ENERGY sekmesinden konut elektrik tüketimini (GWh) çeker.
-        Varsayımlar (bu excel seti için sabit):
-        - Yıllar: 1. satırdan, C sütunundan itibaren
-        - Satır numaraları (Excel 1-indexed):
-            Soğutma: 234
-            Ev Aletleri: 235 + 253 + 241
-            Pişirme: 236
-            Alan Isıtma: 245 + 248
-            Su Isıtma: 260 + 262
-        """
         try:
-            file_obj.seek(0)
+            n = str(name)
         except Exception:
-            pass
+            return "Demand"
+        n0 = n.rsplit(".", 1)[0]
+        if n0.lower().startswith("demand_"):
+            return n0[len("Demand_"):]
+        if n0.lower().startswith("demand"):
+            return n0[len("Demand"):].lstrip("_- ")
+        return n0
 
+    def _read_row_values_from_final_energy(file_obj, row_1idx: int, year_row_1idx: int = 1, year_start_col_1idx: int = 3):
+        """FINAL_ENERGY sekmesinden tek bir satırın yıl serisini okur."""
         try:
+            try:
+                file_obj.seek(0)
+            except Exception:
+                pass
             raw = pd.read_excel(file_obj, sheet_name="FINAL_ENERGY", header=None, engine="openpyxl")
         except Exception:
-            return None
-
-        col0 = 2  # C sütunu (0-indexed)
-
-        # Years: be more tolerant (allow blanks); stop after we saw years and then 5 consecutive non-years.
-        years = []
-        non_year_streak = 0
-        for v in raw.iloc[0, col0:].tolist():
-            y = _as_int_year(v)
-            if y is not None:
-                years.append(int(y))
-                non_year_streak = 0
-            else:
-                if years:
-                    non_year_streak += 1
-                    if non_year_streak >= 5:
-                        break
-                # if we haven't found any year yet, keep scanning
+            return [], []
+        rY = year_row_1idx - 1
+        rV = row_1idx - 1
+        c0 = year_start_col_1idx - 1
+        if raw is None or raw.empty or rY >= len(raw) or rV >= len(raw):
+            return [], []
+        years, vals = [], []
+        for j in range(c0, raw.shape[1]):
+            y = raw.iat[rY, j]
+            v = raw.iat[rV, j]
+            try:
+                yi = int(float(y))
+            except Exception:
                 continue
+            if yi < 1900 or yi > 2100:
+                continue
+            years.append(yi)
+            try:
+                vv = float(v)
+            except Exception:
+                vv = np.nan
+            vals.append(vv)
+        return years, vals
 
-        if not years:
-            return None
-
-        n = len(years)
-
-        def _row_values_sum(rows_1idx):
-            s = np.zeros(n, dtype=float)
-            ok = False
-            for r1 in rows_1idx:
-                r0 = int(r1) - 1
-                if 0 <= r0 < len(raw):
-                    vals = pd.to_numeric(raw.iloc[r0, col0:col0 + n], errors="coerce").to_numpy(dtype=float)
-                    vals = np.nan_to_num(vals, nan=0.0, posinf=0.0, neginf=0.0)
-                    s += vals
-                    ok = True
-            return s if ok else None
-
-        series_map = {
-            "Soğutma": _row_values_sum([234]),
-            "Pişirme": _row_values_sum([236]),
-            "Su Isıtma": _row_values_sum([260, 262]),
-            "Alan Isıtma": _row_values_sum([245, 248]),
-            "Ev Aletleri": _row_values_sum([235, 253, 241]),
-        }
-
+    def _build_series_df_from_rules(file_obj, rules):
+        """Kurallara göre kategorileri satır toplamlarıyla oluştur (GWh)."""
         rows = []
-        for cat, arr in series_map.items():
-            if arr is None:
-                continue
-            for i, y in enumerate(years):
-                # Respect global year cap (MAX_YEAR)
-                if int(y) > int(MAX_YEAR):
+        for cat, row_ids in rules:
+            sum_vals = None
+            years = None
+            for rid in row_ids:
+                y, v = _read_row_values_from_final_energy(file_obj, rid, year_row_1idx=1, year_start_col_1idx=3)
+                if not y:
                     continue
-                rows.append({"year": int(y), "category": cat, "value": float(arr[i])})
-
+                years = y
+                arr = np.array(v, dtype=float)
+                if sum_vals is None:
+                    sum_vals = np.zeros_like(arr)
+                sum_vals = sum_vals + np.nan_to_num(arr, nan=0.0)
+            if years is None or sum_vals is None:
+                continue
+            for i, yy in enumerate(years):
+                if int(yy) > int(MAX_YEAR):
+                    continue
+                rows.append({"year": int(yy), "category": cat, "value": float(sum_vals[i])})
         if not rows:
             return None
         return pd.DataFrame(rows)
 
+    # --- 1) Konutlar (Residential) kuralları ---
+    RULES_RES = [
+        ("Ev Aletleri", [235, 253, 241]),
+        ("Alan Isıtma", [245, 248]),
+        ("Su Isıtma", [260, 262]),
+        ("Pişirme", [236]),
+        ("Soğutma", [234]),
+    ]
+
     if demand_files_local:
         df_list = []
-        for f in demand_files_local:
-            scn = _scenario_from_demand_filename(getattr(f, "name", "Demand"))
-            dfi = _read_residential_electricity_from_demand_excel(f)
+        for _f in demand_files_local:
+            scn = _scenario_from_demand_filename(getattr(_f, "name", "Demand"))
+            dfi = _build_series_df_from_rules(_f, RULES_RES)
             if dfi is None or dfi.empty:
-                st.warning(f"'{getattr(f, 'name', 'dosya')}' okunamadı (FINAL_ENERGY / yıl satırı / satır indeksleri kontrol edin).")
+                st.warning(f"'{getattr(_f, 'name', 'dosya')}' okunamadı (FINAL_ENERGY / yıl satırı / satır indeksleri kontrol edin).")
                 continue
             dfi["scenario"] = scn
             df_list.append(dfi)
 
         if df_list:
             df_res_elec = pd.concat(df_list, ignore_index=True)
-
-            # Eğer Demand senaryo adları ana senaryolarla aynıysa, seçili senaryolara göre filtrele.
             try:
-                inter = set(df_res_elec.get("scenario", []).unique()).intersection(set(selected_scenarios))
+                inter = set(df_res_elec["scenario"].unique()).intersection(set(selected_scenarios))
                 if inter:
                     df_res_elec = df_res_elec[df_res_elec["scenario"].isin(list(inter))].copy()
             except Exception:
                 pass
 
             order_res = ["Soğutma", "Pişirme", "Su Isıtma", "Alan Isıtma", "Ev Aletleri"]
-
-            # Ana stacked grafiklerle aynı davranış: compare_mode + Pay(%) + diff (uygunsa)
             _render_stacked(
                 df_res_elec,
                 title="Konutlarda Elektrik Tüketimi (GWh)",
@@ -4344,112 +4337,45 @@ if "Elektrik" in selected_panels:
                 show_legend=True,
             )
         else:
-            st.info("Demand dosyaları yüklendi ama okunabilir veri bulunamadı. Satır numaraları/sheet adı kontrol edin.")
-        
-    # --- Ek Excel (Demand_*): Hizmet Sektörü Elektrik Tüketimi (GWh) ---
+            st.info("Demand dosyaları yüklendi ama okunabilir veri bulunamadı (Konut satırları). Satır numaraları/sheet adı kontrol edin.")
+    else:
+        st.info("Bu grafikler için üstteki yükleme alanından Demand_*.xlsx dosyası yükleyin.")
+
+    st.divider()
+
+    # --- 2) Hizmet sektörü kuralları ---
     st.markdown("### Ek Excel: Hizmet Sektörü Elektrik Tüketimi (GWh)")
     st.caption("Aynı Demand_*.xlsx dosyaları kullanılır (FINAL_ENERGY). Satırlar (Excel 1-indexed) sabit kurallardır: Veri Merkezleri=578, Soğutma=577, Aydınlatma=579, Alan Isıtma=588+591, Su Isıtma=602+604.")
 
-    def _read_services_electricity_from_demand_excel(file_obj):
-        """FINAL_ENERGY sekmesinden hizmet sektörü elektrik tüketimini (GWh) çeker.
-        Varsayımlar (bu excel seti için sabit):
-        - Yıllar: 1. satırdan, C sütunundan itibaren
-        - Satır numaraları (Excel 1-indexed):
-            Soğutma: 577
-            Veri Merkezleri: 578
-            Aydınlatma: 579
-            Alan Isıtma: 588 + 591
-            Su Isıtma: 602 + 604
-        """
-        try:
-            file_obj.seek(0)
-        except Exception:
-            pass
-
-        try:
-            raw = pd.read_excel(file_obj, sheet_name="FINAL_ENERGY", header=None, engine="openpyxl")
-        except Exception:
-            return None
-
-        col0 = 2  # C sütunu (0-indexed)
-
-        # Years: tolerant scan
-        years = []
-        non_year_streak = 0
-        for v in raw.iloc[0, col0:].tolist():
-            y = _as_int_year(v)
-            if y is not None:
-                years.append(int(y))
-                non_year_streak = 0
-            else:
-                if years:
-                    non_year_streak += 1
-                    if non_year_streak >= 5:
-                        break
-                continue
-
-        if not years:
-            return None
-
-        n = len(years)
-
-        def _row_values_sum(rows_1idx):
-            s = np.zeros(n, dtype=float)
-            ok = False
-            for r1 in rows_1idx:
-                r0 = int(r1) - 1
-                if 0 <= r0 < len(raw):
-                    vals = pd.to_numeric(raw.iloc[r0, col0:col0 + n], errors="coerce").to_numpy(dtype=float)
-                    vals = np.nan_to_num(vals, nan=0.0, posinf=0.0, neginf=0.0)
-                    s += vals
-                    ok = True
-            return s if ok else None
-
-        series_map = {
-            "Soğutma": _row_values_sum([577]),
-            "Veri Merkezleri": _row_values_sum([578]),
-            "Aydınlatma": _row_values_sum([579]),
-            "Alan Isıtma": _row_values_sum([588, 591]),
-            "Su Isıtma": _row_values_sum([602, 604]),
-        }
-
-        rows = []
-        for cat, arr in series_map.items():
-            if arr is None:
-                continue
-            for i, y in enumerate(years):
-                if int(y) > int(MAX_YEAR):
-                    continue
-                rows.append({"year": int(y), "category": cat, "value": float(arr[i])})
-
-        if not rows:
-            return None
-        return pd.DataFrame(rows)
+    RULES_SRV = [
+        ("Soğutma", [577]),
+        ("Veri Merkezleri", [578]),
+        ("Aydınlatma", [579]),
+        ("Alan Isıtma", [588, 591]),
+        ("Su Isıtma", [602, 604]),
+    ]
 
     if demand_files_local:
         df_list2 = []
-        for f in demand_files_local:
-            scn = _scenario_from_demand_filename(getattr(f, "name", "Demand"))
-            dfi2 = _read_services_electricity_from_demand_excel(f)
+        for _f in demand_files_local:
+            scn = _scenario_from_demand_filename(getattr(_f, "name", "Demand"))
+            dfi2 = _build_series_df_from_rules(_f, RULES_SRV)
             if dfi2 is None or dfi2.empty:
-                st.warning(f"'{getattr(f, 'name', 'dosya')}' okunamadı (FINAL_ENERGY / yıl satırı / satır indeksleri kontrol edin).")
+                st.warning(f"'{getattr(_f, 'name', 'dosya')}' okunamadı (Hizmet satırları).")
                 continue
             dfi2["scenario"] = scn
             df_list2.append(dfi2)
 
         if df_list2:
             df_srv_elec = pd.concat(df_list2, ignore_index=True)
-
-            # Eğer Demand senaryo adları ana senaryolarla aynıysa, seçili senaryolara göre filtrele.
             try:
-                inter = set(df_srv_elec.get("scenario", []).unique()).intersection(set(selected_scenarios))
-                if inter:
-                    df_srv_elec = df_srv_elec[df_srv_elec["scenario"].isin(list(inter))].copy()
+                inter2 = set(df_srv_elec["scenario"].unique()).intersection(set(selected_scenarios))
+                if inter2:
+                    df_srv_elec = df_srv_elec[df_srv_elec["scenario"].isin(list(inter2))].copy()
             except Exception:
                 pass
 
-            order_srv = ["Veri Merkezleri", "Soğutma", "Aydınlatma", "Alan Isıtma", "Su Isıtma"]
-
+            order_srv = ["Soğutma", "Aydınlatma", "Veri Merkezleri", "Su Isıtma", "Alan Isıtma"]
             _render_stacked(
                 df_srv_elec,
                 title="Hizmet Sektörü Elektrik Tüketimi (GWh)",
@@ -4463,14 +4389,11 @@ if "Elektrik" in selected_panels:
                 show_legend=True,
             )
         else:
-            st.info("Demand dosyaları yüklendi ama okunabilir veri bulunamadı (Hizmet sektörü satırları).")
-        st.divider()
+            st.info("Demand dosyaları yüklendi ama okunabilir veri bulunamadı (Hizmet satırları). Satır numaraları/sheet adı kontrol edin.")
     else:
-        st.info("Bu grafik için üstteki 'Ek Excel' yükleme alanından Demand_*.xlsx dosyası yükleyin.")
+        st.info("Hizmet sektörü grafiği için üstteki yükleme alanından Demand_*.xlsx dosyası yükleyin.")
 
-# ============================================================
-# Plotly Bar Chart Race – Elektrik Üretimi (Kaynaklara Göre)
-# Canva-benzeri zamanla akan grafik
+    st.divider()
 # ============================================================
 
 import plotly.express as px
