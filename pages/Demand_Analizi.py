@@ -97,7 +97,6 @@ def _stacked_bar_iea_like(
 ) -> go.Figure:
     fig = go.Figure()
 
-    # stacked bars
     for label, values in series_map.items():
         fig.add_trace(go.Bar(x=years, y=values, name=label))
 
@@ -134,40 +133,31 @@ def _stacked_bar_iea_like(
     )
 
     if percent:
-        # %100 stacked
         layout_kwargs["barnorm"] = "percent"
         layout_kwargs["yaxis"] = dict(
             title="%",
             range=[0, 100],
             ticksuffix="%",
-            tickformat=".0f",  # <<< ondalık yok
+            tickformat=".0f",
             gridcolor="rgba(255,255,255,0.12)",
             zeroline=False,
         )
         fig.update_layout(**layout_kwargs)
-
-        # Hover: yüzdeyi tam sayı göster
         for tr in fig.data:
             tr.update(
-                hovertemplate="%{x}<br>"
-                              f"{tr.name}: "
-                              "%{y:.0f}%<extra></extra>"
+                hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:.0f}%<extra></extra>"
             )
     else:
-        # Mutlak GWh: tam sayı + binlik ayırıcı, k yok
         layout_kwargs["yaxis"] = dict(
             title="GWh",
-            tickformat=",.0f",  # <<< 12,345 gibi
+            tickformat=",.0f",
             gridcolor="rgba(255,255,255,0.12)",
             zeroline=False,
         )
         fig.update_layout(**layout_kwargs)
-
         for tr in fig.data:
             tr.update(
-                hovertemplate="%{x}<br>"
-                              f"{tr.name}: "
-                              "%{y:,.0f} GWh<extra></extra>"
+                hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:,.0f} GWh<extra></extra>"
             )
 
     return fig
@@ -179,21 +169,42 @@ def _stacked_bar_iea_like(
 st.title("Soğutma ve Veri Merkezleri Analizi")
 st.caption("Demand Excel dosyalarını (1–3 senaryo) yükle. Grafikler FINAL_ENERGY sekmesinden okunur.")
 
-uploaded = st.file_uploader(
+# ---- Persisted upload store (page navigation safe) ----
+STATE_KEY = "demand_files_v1"  # versioned key to avoid old state conflicts
+
+if STATE_KEY not in st.session_state:
+    st.session_state[STATE_KEY] = []  # list[{"name": str, "bytes": bytes}]
+
+# Uploader (new files overwrite stored set)
+new_uploads = st.file_uploader(
     "Demand Excel dosyaları (en az 1, en fazla 3)",
     type=["xlsx", "xlsm", "xls"],
     accept_multiple_files=True,
+    key="demand_uploader_v1",
 )
 
-if not uploaded:
+if new_uploads:
+    # limit to 3, and persist bytes (so it survives page switches)
+    persisted = [{"name": f.name, "bytes": f.getvalue()} for f in new_uploads[:3]]
+    st.session_state[STATE_KEY] = persisted
+
+# Controls + info
+c1, c2 = st.columns([1, 3])
+with c1:
+    if st.button("Demand yüklerini temizle", use_container_width=True):
+        st.session_state[STATE_KEY] = []
+        st.rerun()
+with c2:
+    if st.session_state[STATE_KEY]:
+        st.caption("Kayıtlı Demand dosyaları: " + ", ".join(x["name"] for x in st.session_state[STATE_KEY]))
+    else:
+        st.caption("Kayıtlı Demand dosyası yok. Yükleyince sayfa geçişlerinde kaybolmaz.")
+
+files = st.session_state[STATE_KEY]
+
+if not files:
     st.info("Devam etmek için en az 1 Demand Excel yükle.")
     st.stop()
-
-if len(uploaded) > 3:
-    st.warning("En fazla 3 dosya seçilebilir. İlk 3 dosya kullanılacak.")
-    uploaded = uploaded[:3]
-
-files = [{"name": f.name, "bytes": f.getvalue()} for f in uploaded]
 
 # read once to get year range + matrices
 all_years: List[int] = []
@@ -239,7 +250,7 @@ for i, (fname, years, mat) in enumerate(pre_read):
             st.error("Dosya okunamadı veya yıl satırı bulunamadı.")
             continue
 
-        # Household
+        # Household (abs & %)
         hh_abs = _build_household_series(mat)
         years_hh, hh_abs_f = _filter_years(years, hh_abs, y0, y1)
 
@@ -254,7 +265,7 @@ for i, (fname, years, mat) in enumerate(pre_read):
             config=PLOTLY_CONFIG,
         )
 
-        # Services
+        # Services (abs & %)
         sv_abs = _build_services_series(mat)
         years_sv, sv_abs_f = _filter_years(years, sv_abs, y0, y1)
 
@@ -271,5 +282,6 @@ for i, (fname, years, mat) in enumerate(pre_read):
 
 st.divider()
 st.caption(
-    "Not: Senaryo adı dosya isminden `Demand_..._tria..` veya `FinalReport_..._tria..` kuralıyla çıkarılır; `b_` korunur."
+    "Not: Yüklenen dosyalar sayfa geçişlerinde kaybolmaması için oturum hafızasında tutulur. "
+    "Senaryo adı dosya isminden `Demand_..._tria..` veya `FinalReport_..._tria..` kuralıyla çıkarılır; `b_` korunur."
 )
