@@ -303,7 +303,10 @@ st.markdown("""
 }
 
 .kpi-badge {
-    padding: 6px 10px;
+    display: inline-block;   /* KRİTİK */
+    width: auto;             /* KRİTİK */
+    padding: 6px 12px;
+    border-radius: 20px;
     font-size: 16px;
     font-weight: 600;
 }
