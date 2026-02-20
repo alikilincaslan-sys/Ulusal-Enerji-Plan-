@@ -270,16 +270,17 @@ st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 st.markdown("""
 <style>
 .kpi-wrapper {
-    margin-bottom: 25px;
+    margin-bottom: 14px;
 }
 
 .kpi-card {
     background: linear-gradient(145deg, #0f172a, #111827);
-    padding: 22px;
+    padding: 18px 20px 16px 20px;   /* daha kompakt */
     border-radius: 16px;
     border: 1px solid rgba(255,255,255,0.06);
-    box-shadow: 0 10px 25px rgba(0,0,0,0.35);
+    box-shadow: 0 8px 22px rgba(0,0,0,0.35);
     transition: all 0.25s ease;
+    min-height: 115px;             /* kart yüksekliği küçüldü */
 }
 
 .kpi-card:hover {
