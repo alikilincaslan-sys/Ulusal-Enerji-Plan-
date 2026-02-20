@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="Soğutma ve Veri Merkezleri Analizi", layout="wide")
 
+
 # ----------------------------
 # Helpers
 # ----------------------------
@@ -15,11 +16,11 @@ def _scenario_from_filename(name: str) -> str:
     base = re.sub(r"\.[^.]+$", "", name)
     for pref in ("Demand_", "FinalReport_"):
         if base.startswith(pref):
-            base = base[len(pref) :]
+            base = base[len(pref):]
             break
     m = re.search(r"(_tria.*)$", base, flags=re.IGNORECASE)
     if m:
-        base = base[: m.start()]
+        base = base[:m.start()]
     return base.strip() or name
 
 
@@ -42,7 +43,7 @@ def _read_final_energy_matrix(filelike) -> Tuple[List[int], pd.DataFrame]:
 
     n_years = len(years)
     mat = (
-        df.iloc[:, 2 : 2 + n_years]
+        df.iloc[:, 2:2 + n_years]
         .apply(pd.to_numeric, errors="coerce")
         .fillna(0.0)
     )
@@ -138,7 +139,7 @@ def _stacked_bar_iea_like(
             title="%",
             range=[0, 100],
             ticksuffix="%",
-            tickformat=".0f",
+            tickformat=".0f",  # ondalık yok
             gridcolor="rgba(255,255,255,0.12)",
             zeroline=False,
         )
@@ -150,7 +151,7 @@ def _stacked_bar_iea_like(
     else:
         layout_kwargs["yaxis"] = dict(
             title="GWh",
-            tickformat=",.0f",
+            tickformat=",.0f",  # k yok, tam sayı
             gridcolor="rgba(255,255,255,0.12)",
             zeroline=False,
         )
@@ -169,7 +170,7 @@ def _stacked_bar_iea_like(
 st.title("Soğutma ve Veri Merkezleri Analizi")
 st.caption("Demand Excel dosyalarını (1–3 senaryo) yükle. Grafikler FINAL_ENERGY sekmesinden okunur.")
 
-STATE_KEY = "demand_files_v1"
+STATE_KEY = "demand_files_v2"
 if STATE_KEY not in st.session_state:
     st.session_state[STATE_KEY] = []  # list[{"name": str, "bytes": bytes}]
 
@@ -177,7 +178,7 @@ new_uploads = st.file_uploader(
     "Demand Excel dosyaları (en az 1, en fazla 3)",
     type=["xlsx", "xlsm", "xls"],
     accept_multiple_files=True,
-    key="demand_uploader_v1",
+    key="demand_uploader_v2",
 )
 
 if new_uploads:
@@ -199,48 +200,47 @@ if not files:
     st.info("Devam etmek için en az 1 Demand Excel yükle.")
     st.stop()
 
-# Read once to get year range + matrices
+# --- Read once, build year universe ---
 all_years: List[int] = []
-pre_read = []
+pre_read: List[Tuple[str, List[int], pd.DataFrame, str]] = []  # (name, years, mat, err)
+
 for item in files:
     try:
         years, mat = _read_final_energy_matrix(BytesIO(item["bytes"]))
-        pre_read.append((item["name"], years, mat))
+        pre_read.append((item["name"], years, mat, ""))
         all_years.extend(years)
-    except Exception:
-        pre_read.append((item["name"], [], None))
+    except Exception as e:
+        pre_read.append((item["name"], [], None, str(e)))
 
 all_years = sorted(set(all_years))
 if not all_years:
     st.error("FINAL_ENERGY yıl satırı bulunamadı (1. satır, C sütunundan başlamalı).")
     st.stop()
 
-# Sidebar year range slider
+# --- Slider: ALWAYS define y0,y1 ---
 st.sidebar.markdown("### Ayarlar")
-ymin, ymax = all_years[0], all_years[-1]
+ymin, ymax = int(all_years[0]), int(all_years[-1])
 y0, y1 = st.sidebar.slider(
     "Senaryo yıl aralığı",
-    min_value=int(ymin),
-    max_value=int(ymax),
-    value=(int(ymin), int(ymax)),
+    min_value=ymin,
+    max_value=ymax,
+    value=(ymin, ymax),
     step=1,
 )
 
-# Layout
-n = len(files)
-n_cols = 3 if n == 3 else 2
-cols = st.columns(n_cols, gap="large")
+# --- Layout: always 2 columns (3. dosya altta görünür) ---
+cols = st.columns(2, gap="large")
 
 PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
 
-for i, (fname, years, mat) in enumerate(pre_read):
-    col = cols[i] if n_cols == 3 else cols[i % 2]
-    with col:
+for i, (fname, years, mat, err) in enumerate(pre_read):
+    with cols[i % 2]:
         scenario = _scenario_from_filename(fname)
         st.subheader(scenario)
 
-        if not years or mat is None:
-            st.error("Dosya okunamadı veya yıl satırı bulunamadı.")
+        if err or not years or mat is None:
+            msg = err or "Dosya okunamadı veya yıl satırı bulunamadı."
+            st.error(f"Dosya: {fname}\n\nHata: {msg}")
             continue
 
         # Household (abs & %)
