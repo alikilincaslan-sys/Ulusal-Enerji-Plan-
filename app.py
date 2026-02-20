@@ -2283,32 +2283,42 @@ _MAIN_UPLOAD_KEY = "main_uploaded_files_v1"
 if _MAIN_UPLOAD_KEY not in st.session_state:
     st.session_state[_MAIN_UPLOAD_KEY] = []
 
+# --- Upload persistence (sayfa geçişlerinde kaybolmasın) ---
+_MAIN_UPLOAD_KEY = "main_uploaded_files_v3"
+
+if _MAIN_UPLOAD_KEY not in st.session_state:
+    st.session_state[_MAIN_UPLOAD_KEY] = []
+
 new_uploads = st.file_uploader(
     "Excel dosyaları",
     type=["xlsx"],
     accept_multiple_files=True,
     help="Bir dosya = bir senaryo. Dosya adları senaryo adı olarak kullanılır.",
     label_visibility="collapsed",
-    key="main_uploader_v1",
+    key="main_uploader_v3",
 )
 
-# Yeni yükleme olduysa hafızadaki seti güncelle
+# Yeni yükleme varsa state güncelle
 if new_uploads:
     if len(new_uploads) > 12:
         st.warning("En fazla 12 dosya seçilebilir. İlk 12 dosya kullanılacak.")
         new_uploads = new_uploads[:12]
+
     st.session_state[_MAIN_UPLOAD_KEY] = list(new_uploads)
 
+# Temizleme butonu
 c1, c2 = st.columns([1, 3])
+
 with c1:
     if st.button("Yüklenen Excel’leri temizle", use_container_width=True):
         st.session_state[_MAIN_UPLOAD_KEY] = []
         st.rerun()
+
 with c2:
     if st.session_state[_MAIN_UPLOAD_KEY]:
         st.caption("Kayıtlı dosyalar: " + ", ".join(f.name for f in st.session_state[_MAIN_UPLOAD_KEY]))
     else:
-        st.caption("Kayıtlı dosya yok. Yüklediğin dosyalar sayfa geçişlerinde kaybolmaz.")
+        st.caption("Kayıtlı dosya yok. Yüklenen dosyalar sayfa geçişlerinde kaybolmaz.")
 
 uploaded_files = st.session_state[_MAIN_UPLOAD_KEY]
 
