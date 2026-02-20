@@ -5,8 +5,8 @@ page = st.sidebar.radio(
     ["TUEP Arayüzü", "Talep Analizi"]
 )
 
-if page == "Talep Analizi":
-    import Talep Analizi
+if page == "Demand Analizi":
+    import Demand Analizi
     st.stop()
 
 # =======================
