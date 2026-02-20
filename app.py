@@ -2310,7 +2310,7 @@ if new_uploads:
 c1, c2 = st.columns([1, 3])
 
 with c1:
-    if st.button("Yüklenen Excel’leri temizle", use_container_width=True):
+    if st.button("Yüklenen Excel dosyalarını temizle", use_container_width=True):
         st.session_state[_MAIN_UPLOAD_KEY] = []
         st.rerun()
 
