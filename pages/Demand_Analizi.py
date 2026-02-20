@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="TUEP Demand Analizi", layout="wide")
+st.set_page_config(page_title="Soğutma ve Veri Merkezleri Analizi", layout="wide")
 
 # ============================================================
 # TRANSPORT ELECTRIC CODE MAP (only *_ELE used)
@@ -27,23 +27,6 @@ TRANSPORT_ELE_TR = {
 }
 TRANSPORT_ELE_CODES = list(TRANSPORT_ELE_TR.keys())
 
-# ============================================================
-# TRANSPORT (TOP LEVEL) TR MAP by ROW INDEX (Excel 1-indexed)
-# ============================================================
-TRANSPORT_ROW_TR = {
-    220: "Özel yolcu taşımacılığı",
-    224: "Toplu yolcu taşımacılığı",
-    229: "Demiryolu yolcu taşımacılığı",
-    230: "İç su yollarında yolcu taşımacılığı",
-    541: "Havayolu yolcu taşımacılığı",
-    546: "Bunker yakıtları",
-    551: "Karayolu yük taşımacılığı",
-    558: "Demiryolu yük taşımacılığı",
-    560: "İç su yollarında yük taşımacılığı",
-    563: "Diğer Ulaştırma (563)",
-    564: "Diğer Ulaştırma (564)",
-    565: "Diğer Ulaştırma (565)",
-}
 
 # ============================================================
 # Helpers
@@ -52,11 +35,11 @@ def _scenario_from_filename(name: str) -> str:
     base = re.sub(r"\.[^.]+$", "", name)
     for pref in ("Demand_", "FinalReport_"):
         if base.startswith(pref):
-            base = base[len(pref):]
+            base = base[len(pref) :]
             break
     m = re.search(r"(_tria.*)$", base, flags=re.IGNORECASE)
     if m:
-        base = base[:m.start()]
+        base = base[: m.start()]
     return base.strip() or name
 
 
@@ -79,38 +62,13 @@ def _read_final_energy(filelike) -> Tuple[List[int], pd.DataFrame, List[str], pd
 
     n_years = len(years)
     mat = (
-        df.iloc[:, 2:2 + n_years]
+        df.iloc[:, 2 : 2 + n_years]
         .apply(pd.to_numeric, errors="coerce")
         .fillna(0.0)
     )
 
     codes = df.iloc[:, 0].astype(str).fillna("").tolist()
     return years, mat, codes, df
-
-
-def _rows_sum(mat: pd.DataFrame, excel_rows_1idx: List[int]) -> List[float]:
-    idxs = [r - 1 for r in excel_rows_1idx]
-    idxs = [i for i in idxs if 0 <= i < len(mat)]
-    if not idxs:
-        return [0.0] * mat.shape[1]
-    return mat.iloc[idxs, :].sum(axis=0).tolist()
-
-
-def _sum_series_map(series_map: Dict[str, List[float]]) -> List[float]:
-    if not series_map:
-        return []
-    n = len(next(iter(series_map.values())))
-    out = [0.0] * n
-    for v in series_map.values():
-        out = [a + b for a, b in zip(out, v)]
-    return out
-
-
-def _to_share_percent(numer: List[float], denom: List[float]) -> List[float]:
-    out = []
-    for a, b in zip(numer, denom):
-        out.append((a / b * 100.0) if b else 0.0)
-    return out
 
 
 def _filter_years(
@@ -129,10 +87,11 @@ def _stacked_bar(
     years: List[int],
     series_map: Dict[str, List[float]],
     title: str,
+    *,
     y_title: str,
     y_tickformat: str,
-    use_percent_suffix: bool,
-    barnorm_percent: bool,
+    use_percent_suffix: bool = False,
+    barnorm_percent: bool = False,
 ) -> go.Figure:
     fig = go.Figure()
     for label, values in series_map.items():
@@ -153,10 +112,9 @@ def _stacked_bar(
             xanchor="left",
             yanchor="top",
         ),
-        margin=dict(l=40, r=160, t=60, b=40),
+        margin=dict(l=40, r=190, t=60, b=40),
         font=dict(size=13),
         xaxis=dict(
-            title="",
             type="category",
             tickmode="array",
             tickvals=years,
@@ -165,98 +123,119 @@ def _stacked_bar(
         ),
         yaxis=dict(
             title=y_title,
+            tickformat=y_tickformat,
+            ticksuffix="%" if use_percent_suffix else "",
             gridcolor="rgba(255,255,255,0.12)",
             zeroline=False,
-            tickformat=y_tickformat,
         ),
     )
 
     if barnorm_percent:
         layout_kwargs["barnorm"] = "percent"
         layout_kwargs["yaxis"] = dict(
-            title="%",
+            title=y_title,
             range=[0, 100],
-            ticksuffix="%",
-            tickformat=".0f",
+            tickformat=y_tickformat,
+            ticksuffix="%" if use_percent_suffix else "",
             gridcolor="rgba(255,255,255,0.12)",
             zeroline=False,
         )
 
     fig.update_layout(**layout_kwargs)
 
-    # hover formats
-    if barnorm_percent:
+    if use_percent_suffix:
         for tr in fig.data:
-            tr.update(hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:.0f}%<extra></extra>")
+            tr.update(
+                hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:.0f}%<extra></extra>"
+            )
     else:
-        if use_percent_suffix:
-            for tr in fig.data:
-                tr.update(hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:.0f}%<extra></extra>")
-        else:
-            for tr in fig.data:
-                tr.update(hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:,0f} GWh<extra></extra>")
+        for tr in fig.data:
+            tr.update(
+                hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:,.0f}<extra></extra>"
+            )
 
     return fig
 
 
+def _total_elc_from_B_filter(df_raw: pd.DataFrame, n_years: int) -> List[float]:
+    if df_raw is None or df_raw.empty:
+        return [0.0] * n_years
+    b = df_raw.iloc[:, 1].astype(str).str.strip().str.upper()
+    mask = b.eq("ELC")
+    mat_years = (
+        df_raw.iloc[:, 2 : 2 + n_years]
+        .apply(pd.to_numeric, errors="coerce")
+        .fillna(0.0)
+    )
+    if mask.sum() == 0:
+        return [0.0] * n_years
+    return mat_years.loc[mask].sum(axis=0).tolist()
+
+
+def _to_share_percent(numer: List[float], denom: List[float]) -> List[float]:
+    return [(n / d * 100.0) if d else 0.0 for n, d in zip(numer, denom)]
+
+
+def _sum_by_code(mat: pd.DataFrame, codes: List[str], code: str) -> List[float]:
+    if mat is None or mat.empty or not codes:
+        return [0.0] * (mat.shape[1] if mat is not None else 0)
+    codes_s = pd.Series(codes).astype(str).str.strip().str.upper()
+    target = code.strip().upper()
+    idxs = codes_s[codes_s == target].index.tolist()
+    if not idxs:
+        return [0.0] * mat.shape[1]
+    return mat.iloc[idxs, :].sum(axis=0).tolist()
+
+
 def _build_household_series(mat: pd.DataFrame) -> Dict[str, List[float]]:
+    def safe_sum(rows_1idx: List[int]) -> List[float]:
+        idx = [r - 1 for r in rows_1idx if 0 <= (r - 1) < len(mat)]
+        if not idx:
+            return [0.0] * mat.shape[1]
+        return mat.iloc[idx, :].sum(axis=0).tolist()
+
     return {
-        "Ev Aletleri": _rows_sum(mat, [235, 253, 241]),
-        "Alan Isıtma": _rows_sum(mat, [245, 248]),
-        "Su Isıtma": _rows_sum(mat, [260, 262]),
-        "Pişirme": _rows_sum(mat, [236]),
-        "Soğutma": _rows_sum(mat, [234]),
+        "Ev Aletleri": safe_sum([235, 253, 241]),
+        "Alan Isıtma": safe_sum([245, 248]),
+        "Su Isıtma": safe_sum([260, 262]),
+        "Pişirme": safe_sum([236]),
+        "Soğutma": safe_sum([234]),
     }
 
 
 def _build_services_series(mat: pd.DataFrame) -> Dict[str, List[float]]:
+    def safe_sum(rows_1idx: List[int]) -> List[float]:
+        idx = [r - 1 for r in rows_1idx if 0 <= (r - 1) < len(mat)]
+        if not idx:
+            return [0.0] * mat.shape[1]
+        return mat.iloc[idx, :].sum(axis=0).tolist()
+
     return {
-        "Veri Merkezleri": _rows_sum(mat, [578]),
-        "Soğutma": _rows_sum(mat, [577]),
-        "Aydınlatma": _rows_sum(mat, [579]),
-        "Alan Isıtma": _rows_sum(mat, [588, 591]),
-        "Su Isıtma": _rows_sum(mat, [602, 604]),
+        "Veri Merkezleri": safe_sum([578]),
+        "Soğutma": safe_sum([577]),
+        "Aydınlatma": safe_sum([579]),
+        "Alan Isıtma": safe_sum([588, 591]),
+        "Su Isıtma": safe_sum([602, 604]),
     }
 
 
-def _build_transport_top_series(mat: pd.DataFrame) -> Dict[str, List[float]]:
-    # Excel row numbers → Turkish labels
-    out: Dict[str, List[float]] = {}
-    for r, label in TRANSPORT_ROW_TR.items():
-        out[label] = _rows_sum(mat, [r])
-    return out
-
-
 def _build_transport_electric_series(mat: pd.DataFrame, codes: List[str]) -> Dict[str, List[float]]:
-    # codes list is column A values (strings) aligned with mat rows
-    idx_by_code: Dict[str, int] = {}
-    for i, c in enumerate(codes):
-        idx_by_code[str(c).strip()] = i
-
     out: Dict[str, List[float]] = {}
-    n_years = mat.shape[1]
     for code in TRANSPORT_ELE_CODES:
-        i = idx_by_code.get(code, None)
-        if i is None or i < 0 or i >= len(mat):
-            out[TRANSPORT_ELE_TR[code]] = [0.0] * n_years
-        else:
-            out[TRANSPORT_ELE_TR[code]] = mat.iloc[i, :].tolist()
+        label = TRANSPORT_ELE_TR.get(code, code)
+        out[label] = _sum_by_code(mat, codes, code)
     return out
 
 
-def _total_elc_from_B_filter(df_raw: pd.DataFrame, n_years: int) -> List[float]:
-    # B sütunu "ELC" olanların toplamı (C..)
-    try:
-        bcol = df_raw.iloc[:, 1].astype(str).str.upper().fillna("")
-        mask = bcol.eq("ELC")
-        mat = (
-            df_raw.loc[mask, df_raw.columns[2:2 + n_years]]
-            .apply(pd.to_numeric, errors="coerce")
-            .fillna(0.0)
-        )
-        return mat.sum(axis=0).tolist()
-    except Exception:
-        return [0.0] * n_years
+def _sum_series_map(series_map: Dict[str, List[float]]) -> List[float]:
+    if not series_map:
+        return []
+    keys = list(series_map.keys())
+    n = len(series_map[keys[0]])
+    tot = [0.0] * n
+    for v in series_map.values():
+        tot = [a + b for a, b in zip(tot, v)]
+    return tot
 
 
 # ============================================================
@@ -265,23 +244,20 @@ def _total_elc_from_B_filter(df_raw: pd.DataFrame, n_years: int) -> List[float]:
 st.title("Soğutma ve Veri Merkezleri Analizi")
 st.caption("Demand Excel dosyalarını (1–3 senaryo) yükle. Grafikler FINAL_ENERGY sekmesinden okunur.")
 
-# ---- Persisted upload store (page navigation safe) ----
-STATE_KEY = "demand_files_v1"  # versioned key to avoid old state conflicts
+STATE_KEY = "demand_files_v_codebased"
 if STATE_KEY not in st.session_state:
-    st.session_state[STATE_KEY] = []  # list[{"name": str, "bytes": bytes}]
+    st.session_state[STATE_KEY] = []
 
-# Uploader (new files overwrite stored set)
 new_uploads = st.file_uploader(
     "Demand Excel dosyaları (en az 1, en fazla 3)",
     type=["xlsx", "xlsm", "xls"],
     accept_multiple_files=True,
-    key="demand_uploader_v1",
+    key="demand_uploader_v_codebased",
 )
 
 if new_uploads:
     st.session_state[STATE_KEY] = [{"name": f.name, "bytes": f.getvalue()} for f in new_uploads[:3]]
 
-# Controls + info
 c1, c2 = st.columns([1, 3])
 with c1:
     if st.button("Yüklenen Excel'leri temizle", use_container_width=True):
@@ -298,11 +274,11 @@ if not files:
     st.info("Devam etmek için en az 1 Demand Excel yükle.")
     st.stop()
 
-# Plotly config
+# Plotly: ZOOM / FULLSCREEN aktif
 PLOTLY_CONFIG = {
     "displayModeBar": True,
     "responsive": True,
-    "scrollZoom": False,
+    "scrollZoom": False,   # mouse wheel zoom
 }
 
 # Pre-read
@@ -322,41 +298,18 @@ if not all_years:
     st.error("FINAL_ENERGY yıl satırı bulunamadı (1. satır, C sütunundan başlamalı).")
     st.stop()
 
-# ----------------------------
-# Sidebar: Ayarlar + Hızlı seçim
-# ----------------------------
+# Sidebar year range
 st.sidebar.markdown("### Ayarlar")
-
 ymin, ymax = int(all_years[0]), int(all_years[-1])
-
-# Persisted year range state
-YR_KEY = "demand_year_range_v1"
-if YR_KEY not in st.session_state:
-    st.session_state[YR_KEY] = (ymin, ymax)
-
-st.sidebar.markdown("**Hızlı seçim**")
-b1, b2 = st.sidebar.columns(2)
-with b1:
-    if st.button("Net Zero (2025–2050)", use_container_width=True, key="demand_quick_netzero"):
-        st.session_state[YR_KEY] = (max(2025, ymin), min(2050, ymax))
-with b2:
-    if st.button("TUEP (2025–2035)", use_container_width=True, key="demand_quick_tuep"):
-        st.session_state[YR_KEY] = (max(2025, ymin), min(2035, ymax))
-
-# slider: step=5
 y0, y1 = st.sidebar.slider(
     "Senaryo yıl aralığı",
     min_value=ymin,
     max_value=ymax,
-    value=st.session_state[YR_KEY],
-    step=5,
-    key="demand_year_slider_v1",
+    value=(ymin, ymax),
+    step=1,
 )
-st.session_state[YR_KEY] = (y0, y1)
 
-# ----------------------------
-# Layout: Tek senaryoda tek kolon, 2+ senaryoda 2 kolon
-# ----------------------------
+# --- FIX: Tek senaryoda boşluk kalmasın
 n_cards = len(pre_read)
 n_cols = 1 if n_cards == 1 else 2
 cols = st.columns(n_cols, gap="large")
@@ -373,7 +326,7 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
         n_years = len(years)
 
         # ============================================================
-        # A) SUMMARY (NOT 100% normalized)  -> % of TOTAL ELC
+        # A) SUMMARY (NOT 100% normalized)
         # ============================================================
         total_elc = _total_elc_from_B_filter(df_raw, n_years=n_years)
 
@@ -398,7 +351,7 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
                 y_title="%",
                 y_tickformat=".0f",
                 use_percent_suffix=True,
-                barnorm_percent=False,  # IMPORTANT: not 100% normalized
+                barnorm_percent=False,
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
@@ -416,7 +369,7 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
                 years_hh, hh_abs_f,
                 "Konutlarda Elektrik Tüketimi (GWh) – Mutlak",
                 y_title="GWh",
-                y_tickformat=",0f",
+                y_tickformat=",.0f",
                 use_percent_suffix=False,
                 barnorm_percent=False,
             ),
@@ -424,7 +377,6 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
             config=PLOTLY_CONFIG,
             key=f"demand_{i}_hh_abs",
         )
-
         st.plotly_chart(
             _stacked_bar(
                 years_hh, hh_abs_f,
@@ -432,7 +384,7 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
                 y_title="%",
                 y_tickformat=".0f",
                 use_percent_suffix=True,
-                barnorm_percent=True,  # distribution (100%)
+                barnorm_percent=True,
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
@@ -450,7 +402,7 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
                 years_sv, sv_abs_f,
                 "Hizmet Sektörü Elektrik Tüketimi (GWh) – Mutlak",
                 y_title="GWh",
-                y_tickformat=",0f",
+                y_tickformat=",.0f",
                 use_percent_suffix=False,
                 barnorm_percent=False,
             ),
@@ -458,7 +410,6 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
             config=PLOTLY_CONFIG,
             key=f"demand_{i}_sv_abs",
         )
-
         st.plotly_chart(
             _stacked_bar(
                 years_sv, sv_abs_f,
@@ -466,7 +417,7 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
                 y_title="%",
                 y_tickformat=".0f",
                 use_percent_suffix=True,
-                barnorm_percent=True,  # distribution (100%)
+                barnorm_percent=True,
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
@@ -474,17 +425,16 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
         )
 
         # ============================================================
-        # D) Transport (top-level) abs + % distribution (using row numbers)
+        # D) Transport ELECTRIC only (abs + % distribution)
         # ============================================================
-        tr_top_abs = _build_transport_top_series(mat)
-        years_tr, tr_top_abs_f = _filter_years(years, tr_top_abs, y0, y1)
+        years_tr, tr_abs_f = _filter_years(years, tr_ele_map, y0, y1)
 
         st.plotly_chart(
             _stacked_bar(
-                years_tr, tr_top_abs_f,
+                years_tr, tr_abs_f,
                 "Ulaştırma Elektrik Tüketimi (GWh) – Mutlak",
                 y_title="GWh",
-                y_tickformat=",0f",
+                y_tickformat=",.0f",
                 use_percent_suffix=False,
                 barnorm_percent=False,
             ),
@@ -492,10 +442,9 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
             config=PLOTLY_CONFIG,
             key=f"demand_{i}_tr_abs",
         )
-
         st.plotly_chart(
             _stacked_bar(
-                years_tr, tr_top_abs_f,
+                years_tr, tr_abs_f,
                 "Ulaştırma Elektrik Tüketimi (%) – Dağılım",
                 y_title="%",
                 y_tickformat=".0f",
@@ -509,6 +458,8 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
 
 st.divider()
 st.caption(
-    "Not: Yüklenen dosyalar sayfa geçişlerinde kaybolmaması için oturum hafızasında tutulur. "
-    "Senaryo adı dosya isminden `Demand_..._tria..` veya `FinalReport_..._tria..` kuralıyla çıkarılır; `b_` korunur."
+    "Not: Özet grafikte yüzdeler normalize edilmez; her seri toplam nihai elektrik talebine katkı (%) olarak üst üste toplanır. "
+    "Toplam elektrik talebi, FINAL_ENERGY içinde B sütunu 'ELC' olan tüm satırların toplamıdır. "
+    "Ulaştırma grafikleri A sütunundaki kodlardan (yalnız *_ELE) okunur; satır kayması sorun olmaz. "
+    "Zoom için grafik üstünde fare tekerleği (scroll) aktif; modebar açık."
 )
