@@ -320,8 +320,94 @@ st.markdown("""
     background: rgba(239,68,68,0.15);
     color: #EF4444;
 }
+
+.kpi-title .kpi-icon{
+    display:inline-flex;
+    align-items:center;
+    margin-right:8px;
+    color:#B5BDC9;
+    opacity:0.95;
+}
+.kpi-title .kpi-icon svg{
+    width:16px;
+    height:16px;
+}
+
 </style>
 """, unsafe_allow_html=True)
+
+
+# ===============================
+# Offline SVG Icon Set (KPI)
+# ===============================
+_KPI_SVG = {
+    # GSYH
+    "bar-chart": """<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 19V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M4 19H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M7 16V12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M12 16V8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M17 16V10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>""",
+    # CAGR
+    "trend-up": """<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 16L10 10L14 14L20 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M20 8V14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M20 8H14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>""",
+    # Kurulu güç (santral)
+    "power-plant": """<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 20H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M6 20V11L10 9V20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M10 20V7L14 5V20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M14 20V10L18 8V20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M18 6C18 4.9 18.6 4.2 19.3 3.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M16.5 6C16.5 4.9 17.1 4.2 17.8 3.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>""",
+    # Toplam arz (lightning)
+    "lightning": """<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M13 2L4 14H11L9 22L20 10H13L13 2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+    </svg>""",
+    # YE payı (leaf)
+    "leaf": """<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M20 4C12 4 6 8 4 20C16 18 20 12 20 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M9 15C11 13 14 10 20 7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>""",
+    # Dışa bağımlılık (globe)
+    "globe": """<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+        <path d="M3 12H21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M12 3C9 6 9 18 12 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M12 3C15 6 15 18 12 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>""",
+    # Emisyon (CO2 + cloud)
+    "co2-cloud": """<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M7 18H17C19.2 18 21 16.2 21 14C21 12 19.6 10.3 17.7 10.1C17 7.7 14.8 6 12.2 6C9.6 6 7.4 7.7 6.7 10.1C4.8 10.3 3.4 12 3.4 14C3.4 16.2 5.2 18 7 18Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M8 21H10.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M13.5 21H16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M8 21C8 22.1 8.9 23 10 23" stroke="currentColor" stroke-width="0" />
+        <text x="12" y="16" text-anchor="middle" font-size="7" fill="currentColor" font-family="Arial, sans-serif">CO₂</text>
+    </svg>""",
+}
+
+def _pick_kpi_icon(label: str) -> str | None:
+    """Match KPI label to an offline SVG icon key."""
+    s = (label or "").lower()
+    if "gsyh" in s or "gdp" in s:
+        return "bar-chart"
+    if "cagr" in s:
+        return "trend-up"
+    if "kurulu" in s and "güç" in s:
+        return "power-plant"
+    if "toplam arz" in s or ("arz" in s and "toplam" in s):
+        return "lightning"
+    if "ye pay" in s or "yenilen" in s:
+        return "leaf"
+    if "dışa" in s and "bağıml" in s:
+        return "globe"
+    if "emisyon" in s or "co2" in s:
+        return "co2-cloud"
+    return None
 
 # ===============================
 # Executive KPI Card Renderer (Power BI-like)
@@ -353,6 +439,10 @@ def render_metric_card(label, value, delta=None, delta_color="normal", help=None
 
         positive = (sign >= 0)
 
+        icon_key = _pick_kpi_icon(label)
+        icon_svg = _KPI_SVG.get(icon_key) if icon_key else None
+        icon_html = f'<span class="kpi-icon">{icon_svg}</span>' if icon_svg else ""
+
         badge_html = ""
         if delta_txt:
             arrow = "↑" if positive else "↓"
@@ -363,7 +453,7 @@ def render_metric_card(label, value, delta=None, delta_color="normal", help=None
             f"""
             <div class="kpi-wrapper">
               <div class="kpi-card">
-                <div class="kpi-title">{label}</div>
+                <div class="kpi-title">{icon_html}{label}</div>
                 <div class="kpi-value">{value}</div>
                 {badge_html}
               </div>
