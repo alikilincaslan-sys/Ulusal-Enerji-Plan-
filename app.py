@@ -303,7 +303,7 @@ st.markdown("""
 }
 
 .kpi-badge {
-    padding: 6px 14px;
+    padding: 6px 10px;
     font-size: 13px;
     font-weight: 600;
 }
