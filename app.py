@@ -289,11 +289,10 @@ st.markdown("""
 }
 
 .kpi-title {
-    font-size: 13px;
-    color: #9CA3AF;
-    letter-spacing: 0.6px;
-    margin-bottom: 8px;
-    text-transform: uppercase;
+    font-size: 15px;       /* büyüdü */
+    color: #B5BDC9;        /* biraz daha açık */
+    margin-bottom: 6px;
+    font-weight: 500;
 }
 
 .kpi-value {
