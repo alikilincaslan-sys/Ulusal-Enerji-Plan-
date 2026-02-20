@@ -1,173 +1,151 @@
 import streamlit as st
 
 # ==============================
-# TUEP • Power BI-like UI Theme (global)
-# - Must be called before any other Streamlit command.
+# POWER BI STYLE UI THEME (auto-injected)
 # ==============================
-st.set_page_config(page_title="TUEP Arayüzü", layout="wide")
+st.set_page_config(page_title="TUEP Dashboard", layout="wide")
 
-def _apply_powerbi_ui(app_title: str = "TUEP Arayüzü"):
-    st.markdown(f"""
+def _apply_powerbi_ui():
+    st.markdown("""
     <style>
-    :root {{
-        --bg: #0B1220;
-        --card: #0F1B2D;
-        --text: #E8EEF7;
-        --muted: #9FB0C3;
-        --accent: #2F6FED;
-        --border: rgba(255,255,255,0.08);
-        --grid: rgba(255,255,255,0.10);
-    }}
+    :root {
+        --tuep-bg: #0B1220;
+        --tuep-card: #0F1B2D;
+        --tuep-text: #E8EEF7;
+        --tuep-muted: #9FB0C3;
+        --tuep-border: rgba(255,255,255,0.08);
+        --tuep-accent: rgba(47,111,237,0.40);
+    }
 
-    /* App base */
-    .stApp {{
-        background: var(--bg);
-        color: var(--text);
-    }}
-    html, body, [class*="css"] {{
-        font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-    }}
+    .stApp { background: var(--tuep-bg); color: var(--tuep-text); }
 
-    /* Content width / spacing */
-    .block-container {{
-        padding-top: 1.0rem;
-        padding-bottom: 2.0rem;
+    html, body, [class*="css"]  {
+        font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+    }
+
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 2rem;
         max-width: 1500px;
-    }}
+    }
 
-    /* Sidebar */
-    section[data-testid="stSidebar"] {{
-        background: var(--card);
-        border-right: 1px solid rgba(255,255,255,0.05);
-    }}
-
-    /* Sticky header (main content) */
-    .tuep-header {{
+    /* Sticky Header */
+    .tuep-header {
         position: sticky;
         top: 0;
         z-index: 999;
-        background: linear-gradient(180deg, rgba(11,18,32,0.95), rgba(11,18,32,0.75));
+        background: linear-gradient(180deg, rgba(11,18,32,0.96), rgba(11,18,32,0.86));
         backdrop-filter: blur(10px);
-        border: 1px solid var(--border);
+        border: 1px solid var(--tuep-border);
         border-radius: 18px;
         padding: 14px 18px;
-        margin: 0 0 14px 0;
-        box-shadow: 0 10px 26px rgba(0,0,0,0.28);
-    }}
-    .tuep-title {{
+        margin-bottom: 14px;
+    }
+    .tuep-title {
         font-size: 20px;
-        font-weight: 780;
+        font-weight: 750;
         letter-spacing: 0.2px;
-        line-height: 1.15;
-    }}
-    .tuep-sub {{
+        line-height: 1.2;
+        margin: 0;
+    }
+    .tuep-sub {
         font-size: 12px;
-        color: var(--muted);
-        margin-top: 2px;
-    }}
+        color: var(--tuep-muted);
+        margin-top: 3px;
+    }
 
-    /* Chart & section cards */
-    .chart-card {{
-        background: var(--card);
-        border: 1px solid var(--border);
+    /* Sidebar styling */
+    section[data-testid="stSidebar"] {
+        background: var(--tuep-card);
+        border-right: 1px solid rgba(255,255,255,0.06);
+    }
+    section[data-testid="stSidebar"] * {
+        color: var(--tuep-text);
+    }
+
+    /* Chart / Section card */
+    .tuep-card {
+        background: var(--tuep-card);
+        border: 1px solid var(--tuep-border);
         border-radius: 20px;
         padding: 14px 14px 10px 14px;
         box-shadow: 0 8px 20px rgba(0,0,0,0.30);
         margin-bottom: 14px;
-    }}
-    .section-title {{
-        font-size: 14px;
-        font-weight: 750;
-        margin-bottom: 8px;
-    }}
+    }
 
-    /* Make st.metric look like KPI cards */
-    div[data-testid="stMetric"] {{
-        background: var(--card);
-        border: 1px solid var(--border);
+    /* Improve st.metric look without code changes */
+    div[data-testid="metric-container"] {
+        background: var(--tuep-card);
+        border: 1px solid var(--tuep-border);
+        padding: 12px 12px;
         border-radius: 18px;
-        padding: 14px 14px 12px 14px;
-        box-shadow: 0 8px 18px rgba(0,0,0,0.25);
-    }}
-    div[data-testid="stMetric"] label {{
-        color: var(--muted) !important;
-        font-weight: 650;
-        letter-spacing: .2px;
-    }}
-    div[data-testid="stMetric"] [data-testid="stMetricValue"] {{
-        color: var(--text) !important;
-        font-weight: 800;
-    }}
-    div[data-testid="stMetric"] [data-testid="stMetricDelta"] {{
-        font-weight: 700;
-    }}
+        box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+    }
+    div[data-testid="metric-container"]:hover {
+        border-color: var(--tuep-accent);
+        transform: translateY(-1px);
+        transition: 120ms ease;
+    }
+    div[data-testid="metric-container"] label,
+    div[data-testid="metric-container"] span,
+    div[data-testid="metric-container"] p {
+        color: var(--tuep-text) !important;
+    }
 
     /* Inputs */
-    .stSelectbox > div > div, .stMultiSelect > div > div, .stNumberInput > div > div {{
+    .stSelectbox > div > div, .stMultiSelect > div > div, .stTextInput > div > div {
         background: rgba(255,255,255,0.03);
-        border: 1px solid var(--border);
+        border: 1px solid var(--tuep-border);
         border-radius: 12px;
-    }}
-    .stRadio > div {{
-        background: rgba(255,255,255,0.02);
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        padding: 10px 12px;
-    }}
-
-    /* Buttons */
-    .stButton > button {{
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        background: rgba(255,255,255,0.04);
-        color: var(--text);
-        font-weight: 650;
-    }}
-    .stButton > button:hover {{
-        border-color: rgba(47,111,237,0.40);
-        transform: translateY(-1px);
-    }}
+    }
 
     /* Hide Streamlit menu/footer */
-    #MainMenu {{ visibility: hidden; }}
-    footer {{ visibility: hidden; }}
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
     </style>
 
     <div class="tuep-header">
-        <div class="tuep-title">{app_title}</div>
-        <div class="tuep-sub">Üst Düzey Sunum Modu • Kurumsal Görünüm • Power BI Hissi</div>
+        <div class="tuep-title">TUEP Arayüzü</div>
+        <div class="tuep-sub">Üst Düzey Sunum Modu • Kurumsal görünüm • Power BI hissi</div>
     </div>
     """, unsafe_allow_html=True)
 
-def _patch_chart_renderers():
-    """Wrap all Streamlit charts in a consistent 'card' container without touching existing calls."""
-    if getattr(st, "_tuep_card_patch_applied", False):
-        return
-
-    _orig_altair = getattr(st, "altair_chart", None)
-    _orig_plotly = getattr(st, "plotly_chart", None)
-
-    def _wrap_card(callable_, *args, **kwargs):
-        st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-        try:
-            return callable_(*args, **kwargs)
-        finally:
+def _wrap_chart_calls():
+    # Wrap altair & plotly charts with a card, globally (no need to edit every call)
+    try:
+        _orig_altair = st.altair_chart
+        def _altair_card(*args, **kwargs):
+            st.markdown('<div class="tuep-card">', unsafe_allow_html=True)
+            out = _orig_altair(*args, **kwargs)
             st.markdown('</div>', unsafe_allow_html=True)
+            return out
+        st.altair_chart = _altair_card
+    except Exception:
+        pass
 
-    if callable(_orig_altair):
-        def altair_chart_card(*args, **kwargs):
-            return _wrap_card(_orig_altair, *args, **kwargs)
-        st.altair_chart = altair_chart_card  # type: ignore
+    try:
+        _orig_plotly = st.plotly_chart
+        def _plotly_card(*args, **kwargs):
+            # Hide modebar by default (Power BI-ish)
+            cfg = kwargs.get("config", None)
+            if cfg is None:
+                kwargs["config"] = {"displayModeBar": False}
+            else:
+                cfg = dict(cfg)
+                cfg.setdefault("displayModeBar", False)
+                kwargs["config"] = cfg
+            st.markdown('<div class="tuep-card">', unsafe_allow_html=True)
+            out = _orig_plotly(*args, **kwargs)
+            st.markdown('</div>', unsafe_allow_html=True)
+            return out
+        st.plotly_chart = _plotly_card
+    except Exception:
+        pass
 
-    if callable(_orig_plotly):
-        def plotly_chart_card(*args, **kwargs):
-            return _wrap_card(_orig_plotly, *args, **kwargs)
-        st.plotly_chart = plotly_chart_card  # type: ignore
+_apply_powerbi_ui()
+_wrap_chart_calls()
 
-    st._tuep_card_patch_applied = True  # type: ignore
 
-_apply_powerbi_ui(app_title="TUEP Arayüzü")
-_patch_chart_renderers()
 page = st.sidebar.radio(
     "Sayfa Seç",
     ["TUEP Arayüzü", "Talep Analizi"]
@@ -439,59 +417,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import altair as alt
-
-# --- Altair global dark theme (Power BI-like) ---
-def _register_altair_dark_theme():
-    try:
-        import altair as alt  # ensure available
-    except Exception:
-        return
-    if getattr(alt, "_tuep_dark_theme_registered", False):
-        try:
-            alt.themes.enable("tuep_dark")
-        except Exception:
-            pass
-        return
-
-    def tuep_dark():
-        return {
-            "config": {
-                "background": "rgba(0,0,0,0)",
-                "view": {"stroke": "rgba(255,255,255,0.08)"},
-                "axis": {
-                    "grid": True,
-                    "gridColor": "rgba(255,255,255,0.10)",
-                    "gridOpacity": 0.35,
-                    "labelColor": "#E8EEF7",
-                    "titleColor": "#E8EEF7",
-                    "domainColor": "rgba(255,255,255,0.18)",
-                    "tickColor": "rgba(255,255,255,0.18)",
-                },
-                "legend": {
-                    "labelColor": "#E8EEF7",
-                    "titleColor": "#E8EEF7",
-                    "labelFontSize": 12,
-                    "titleFontSize": 12,
-                    "symbolOpacity": 0.95,
-                },
-                "title": {
-                    "color": "#E8EEF7",
-                    "fontSize": 16,
-                    "anchor": "start",
-                    "offset": 8,
-                },
-            }
-        }
-
-    try:
-        alt.themes.register("tuep_dark", tuep_dark)
-        alt.themes.enable("tuep_dark")
-        alt._tuep_dark_theme_registered = True  # type: ignore
-    except Exception:
-        pass
-
-_register_altair_dark_theme()
-
 from io import BytesIO
 
 import base64
