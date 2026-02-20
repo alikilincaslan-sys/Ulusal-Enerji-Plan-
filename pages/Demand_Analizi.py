@@ -278,7 +278,7 @@ if not files:
 PLOTLY_CONFIG = {
     "displayModeBar": True,
     "responsive": True,
-    "scrollZoom": True,   # mouse wheel zoom
+    "scrollZoom": False,   # mouse wheel zoom
 }
 
 # Pre-read
