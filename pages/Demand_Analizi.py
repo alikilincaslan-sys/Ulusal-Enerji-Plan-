@@ -251,33 +251,33 @@ for i, (fname, years, mat) in enumerate(pre_read):
             continue
 
         # Household (abs & %)
-        hh_abs = _build_household_series(mat)
-        years_hh, hh_abs_f = _filter_years(years, hh_abs, y0, y1)
-
         st.plotly_chart(
             _stacked_bar_iea_like(years_hh, hh_abs_f, "Konutlarda Elektrik Tüketimi (GWh) – Mutlak", percent=False),
             use_container_width=True,
             config=PLOTLY_CONFIG,
-        )
+            key=f"demand_{i}_{scenario}_hh_abs",
+)
         st.plotly_chart(
             _stacked_bar_iea_like(years_hh, hh_abs_f, "Konutlarda Elektrik Tüketimi (%) – Dağılım", percent=True),
             use_container_width=True,
             config=PLOTLY_CONFIG,
-        )
+            key=f"demand_{i}_{scenario}_hh_pct",
+)
 
         # Services (abs & %)
         sv_abs = _build_services_series(mat)
         years_sv, sv_abs_f = _filter_years(years, sv_abs, y0, y1)
-
         st.plotly_chart(
             _stacked_bar_iea_like(years_sv, sv_abs_f, "Hizmet Sektörü Elektrik Tüketimi (GWh) – Mutlak", percent=False),
             use_container_width=True,
             config=PLOTLY_CONFIG,
+            key=f"demand_{i}_{scenario}_sv_abs",
         )
         st.plotly_chart(
             _stacked_bar_iea_like(years_sv, sv_abs_f, "Hizmet Sektörü Elektrik Tüketimi (%) – Dağılım", percent=True),
             use_container_width=True,
             config=PLOTLY_CONFIG,
+            key=f"demand_{i}_{scenario}_sv_pct",
         )
 
 st.divider()
