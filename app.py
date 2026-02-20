@@ -2278,13 +2278,53 @@ render_title_with_logo("Türkiye Ulusal Enerji Planı Modeli Arayüzü", logo_fi
 st.subheader("Senaryo dosyaları")
 st.caption("Excel (.xlsx) • Çoklu senaryo • Maks. 12 dosya")
 
-uploaded_files = st.file_uploader(
+# -----------------------------
+# Upload persistence (keep files when switching pages)
+# -----------------------------
+_MAIN_UPLOAD_STATE_KEY = "main_uploaded_files_v1"
+
+def _pack_uploaded_files(files):
+    packed = []
+    for f in (files or []):
+        try:
+            packed.append({"name": getattr(f, "name", "scenario.xlsx"), "bytes": f.getvalue()})
+        except Exception:
+            # safest fallback: ignore problematic file
+            continue
+    return packed
+
+def _unpack_uploaded_files(packed):
+    from io import BytesIO
+    out = []
+    for rec in (packed or []):
+        bio = BytesIO(rec.get("bytes", b""))
+        # Streamlit's UploadedFile has a .name attr; we mimic it for downstream code
+        bio.name = rec.get("name", "scenario.xlsx")
+        out.append(bio)
+    return out
+
+# Uploader (new uploads overwrite the persisted set)
+_new_uploads = st.file_uploader(
     "Excel dosyaları",
     type=["xlsx"],
     accept_multiple_files=True,
     help="Bir dosya = bir senaryo. Dosya adları senaryo adı olarak kullanılır.",
     label_visibility="collapsed",
+    key="main_excel_uploader",
 )
+
+# Persist or reuse
+if _new_uploads:
+    st.session_state[_MAIN_UPLOAD_STATE_KEY] = _pack_uploaded_files(_new_uploads)
+
+uploaded_files = _unpack_uploaded_files(st.session_state.get(_MAIN_UPLOAD_STATE_KEY, []))
+
+# Optional: clear button (keeps UI clean, prevents 'why is it still loaded?' confusion)
+with st.sidebar:
+    if st.button("Yüklenen Excel'leri temizle", help="Sayfa değiştirince dosyalar kaybolmasın diye hafızada tutulur. Bu buton hepsini sıfırlar."):
+        st.session_state.pop(_MAIN_UPLOAD_STATE_KEY, None)
+        st.session_state.pop("main_excel_uploader", None)
+        st.rerun()
 
 st.divider()
 
