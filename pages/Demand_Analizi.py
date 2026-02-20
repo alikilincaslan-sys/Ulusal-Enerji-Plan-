@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="Soğutma ve Veri Merkezleri Analizi", layout="wide")
+st.set_page_config(page_title="Elektrikli Araçlar, Soğutma ve Veri Merkezleri Analizi", layout="wide")
 
 # ============================================================
 # TRANSPORT ELECTRIC CODE MAP (only *_ELE used)
@@ -241,7 +241,7 @@ def _sum_series_map(series_map: Dict[str, List[float]]) -> List[float]:
 # ============================================================
 # UI
 # ============================================================
-st.title("Soğutma ve Veri Merkezleri Analizi")
+st.title("Elektrikli Araçlar, Soğutma ve Veri Merkezleri Analizi")
 st.caption("Demand Excel dosyalarını (1–3 senaryo) yükle. Grafikler FINAL_ENERGY sekmesinden okunur.")
 
 STATE_KEY = "demand_files_v_codebased"
