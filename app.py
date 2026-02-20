@@ -321,6 +321,60 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
+
+# ===============================
+# Executive KPI Card Renderer (Power BI-like)
+# ===============================
+def render_metric_card(label, value, delta=None, delta_color="normal", help=None):
+    """Drop-in replacement for st.metric with a more professional card look.
+
+    - delta_color: 'normal' (default) or 'inverse' (where a decrease is good)
+    - help is accepted for API compatibility (ignored visually).
+    """
+    try:
+        delta_txt = None if delta is None else str(delta).strip()
+        if not delta_txt or delta_txt in {"—", "None", "nan"}:
+            delta_txt = None
+
+        # Infer sign from delta text (e.g., '+1.2%', '-0.5 puan', '%1.4 CAGR')
+        sign = 0
+        if delta_txt:
+            m = re.search(r"[+-]", delta_txt)
+            if m:
+                sign = -1 if m.group(0) == "-" else 1
+            else:
+                # handle cases like '%1.2 CAGR' (no explicit sign)
+                sign = -1 if "-" in delta_txt[:6] else 1
+
+        # Inverse metrics: decrease is good
+        if str(delta_color).strip().lower() == "inverse":
+            sign = -sign if sign != 0 else 0
+
+        positive = (sign >= 0)
+
+        badge_html = ""
+        if delta_txt:
+            arrow = "↑" if positive else "↓"
+            cls = "kpi-up" if positive else "kpi-down"
+            badge_html = f'<div class="kpi-badge {cls}">{arrow} {delta_txt}</div>'
+
+        st.markdown(
+            f"""
+            <div class="kpi-wrapper">
+              <div class="kpi-card">
+                <div class="kpi-title">{label}</div>
+                <div class="kpi-value">{value}</div>
+                {badge_html}
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        # Safe fallback
+        st.metric(label, value, delta=delta, help=help, delta_color=delta_color)
+
+
 # -----------------------------
 # Units
 # -----------------------------
@@ -3578,7 +3632,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         yr = f"{y1}" if y1 is not None else ""
 
         # 1) GSYH (son yıl)
-        st.metric(
+        render_metric_card(
             f"GSYH (milyar $, {yr})",
             _fmt_range(kpi.get("gdp_0", np.nan), kpi.get("gdp_1", np.nan), ",.2f"),
             delta=_metric_delta(kpi.get("gdp_0", np.nan), kpi.get("gdp_1", np.nan), kind="pct"),
@@ -3586,7 +3640,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         )
 
         # 2) GSYH CAGR
-        st.metric(
+        render_metric_card(
             "GSYH CAGR (%)",
             f"{kpi['gdp_cagr']*100:.1f}%" if np.isfinite(kpi.get("gdp_cagr", np.nan)) else "—",
         )
@@ -3601,7 +3655,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         years_span = int(kpi.get("y1", 0) - kpi.get("y0", 0))
         supply_cagr = _cagr(supply_0, supply_1, years_span)
 
-        st.metric(
+        render_metric_card(
             f"Toplam Arz ({_energy_unit_label()}, {yr})",
             _fmt_range(supply_0, supply_1, ",.0f"),
             delta=(f"%{_fmt_num(supply_cagr*100, ',.1f')} CAGR" if np.isfinite(supply_cagr) else "—"),
@@ -3615,7 +3669,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         years_span = int(kpi.get("y1", 0) - kpi.get("y0", 0))
         cap_cagr = _cagr(cap_0, cap_1, years_span)
 
-        st.metric(
+        render_metric_card(
             f"Kurulu Güç (GW, {yr})",
             _fmt_range(cap_0, cap_1, ",.0f"),
             delta=(f"%{_fmt_num(cap_cagr*100, ',.1f')} CAGR" if np.isfinite(cap_cagr) else "—"),
@@ -3626,18 +3680,18 @@ for i, kpi in enumerate(kpis[:ncols]):
         solar_avg = kpi.get("solar_add_avg", np.nan)
         wind_avg = kpi.get("wind_add_avg", np.nan)
         if np.isfinite(solar_avg) or np.isfinite(wind_avg):
-            st.metric(
+            render_metric_card(
                 "Yıllık GES/RES KG artışı (Ort.)",
                 f"{solar_avg:.0f} GW / {wind_avg:.0f} GW" if (np.isfinite(solar_avg) and np.isfinite(wind_avg)) else (
                     f"{solar_avg:.0f} GW / —" if np.isfinite(solar_avg) else f"— / {wind_avg:.0f} GW"
                 ),
             )
         else:
-            st.metric("Yıllık GES/RES KG artışı (Ort.)", "—")
+            render_metric_card("Yıllık GES/RES KG artışı (Ort.)", "—")
 
 
         # 5) YE Payı
-        st.metric(
+        render_metric_card(
             f"YE Payı (%, {yr})",
             _fmt_range(kpi.get("ye_total_0", np.nan), kpi.get("ye_total_1", np.nan), ".1f", "%"),
             delta=_metric_delta(kpi.get("ye_total_0", np.nan), kpi.get("ye_total_1", np.nan), kind="pp"),
@@ -3645,7 +3699,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         )
 
         # 6) Kesintili YE Payı
-        st.metric(
+        render_metric_card(
             f"Kesintili YE Payı (%, {yr})",
             _fmt_range(kpi.get("ye_int_0", np.nan), kpi.get("ye_int_1", np.nan), ".1f", "%"),
             delta=_metric_delta(kpi.get("ye_int_0", np.nan), kpi.get("ye_int_1", np.nan), kind="pp"),
@@ -3653,7 +3707,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         )
 
         # 7) Dışa bağımlılık (azalış iyidir -> inverse)
-        st.metric(
+        render_metric_card(
             f"Dışa Bağımlılık (%, {yr})",
             _fmt_range(kpi.get("dep_0", np.nan), kpi.get("dep_1", np.nan), ".1f", "%"),
             delta=_metric_delta(kpi.get("dep_0", np.nan), kpi.get("dep_1", np.nan), kind="pp"),
@@ -3661,7 +3715,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         )
 
         # 8) Kişi başına elektrik
-        st.metric(
+        render_metric_card(
             f"Kişi Başına Elektrik (kWh/kişi, {yr})",
             _fmt_range(kpi.get("pc_0", np.nan), kpi.get("pc_1", np.nan), ",.0f"),
             delta=_metric_delta(kpi.get("pc_0", np.nan), kpi.get("pc_1", np.nan), kind="pct"),
@@ -3669,7 +3723,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         )
 
         # 9) Karbon fiyatı
-        st.metric(
+        render_metric_card(
             f"Karbon Fiyatı ($/tCO₂, {yr})",
             _fmt_range(kpi.get("cp_0", np.nan), kpi.get("cp_1", np.nan), ",.0f"),
             delta=_metric_delta(kpi.get("cp_0", np.nan), kpi.get("cp_1", np.nan), kind="pct"),
@@ -3677,7 +3731,7 @@ for i, kpi in enumerate(kpis[:ncols]):
         )
 
         # 10) Elektrik emisyonları (azalış iyidir -> inverse)
-        st.metric(
+        render_metric_card(
             f"Elektrik Emisyonları (ktn CO₂, {yr})",
             _fmt_range(kpi.get("co2_0", np.nan), kpi.get("co2_1", np.nan), ",.0f"),
             delta=_metric_delta(kpi.get("co2_0", np.nan), kpi.get("co2_1", np.nan), kind="pct"),
