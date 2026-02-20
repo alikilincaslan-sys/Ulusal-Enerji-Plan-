@@ -1,5 +1,173 @@
 import streamlit as st
 
+# ==============================
+# TUEP • Power BI-like UI Theme (global)
+# - Must be called before any other Streamlit command.
+# ==============================
+st.set_page_config(page_title="TUEP Arayüzü", layout="wide")
+
+def _apply_powerbi_ui(app_title: str = "TUEP Arayüzü"):
+    st.markdown(f"""
+    <style>
+    :root {{
+        --bg: #0B1220;
+        --card: #0F1B2D;
+        --text: #E8EEF7;
+        --muted: #9FB0C3;
+        --accent: #2F6FED;
+        --border: rgba(255,255,255,0.08);
+        --grid: rgba(255,255,255,0.10);
+    }}
+
+    /* App base */
+    .stApp {{
+        background: var(--bg);
+        color: var(--text);
+    }}
+    html, body, [class*="css"] {{
+        font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    }}
+
+    /* Content width / spacing */
+    .block-container {{
+        padding-top: 1.0rem;
+        padding-bottom: 2.0rem;
+        max-width: 1500px;
+    }}
+
+    /* Sidebar */
+    section[data-testid="stSidebar"] {{
+        background: var(--card);
+        border-right: 1px solid rgba(255,255,255,0.05);
+    }}
+
+    /* Sticky header (main content) */
+    .tuep-header {{
+        position: sticky;
+        top: 0;
+        z-index: 999;
+        background: linear-gradient(180deg, rgba(11,18,32,0.95), rgba(11,18,32,0.75));
+        backdrop-filter: blur(10px);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 14px 18px;
+        margin: 0 0 14px 0;
+        box-shadow: 0 10px 26px rgba(0,0,0,0.28);
+    }}
+    .tuep-title {{
+        font-size: 20px;
+        font-weight: 780;
+        letter-spacing: 0.2px;
+        line-height: 1.15;
+    }}
+    .tuep-sub {{
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 2px;
+    }}
+
+    /* Chart & section cards */
+    .chart-card {{
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 14px 14px 10px 14px;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.30);
+        margin-bottom: 14px;
+    }}
+    .section-title {{
+        font-size: 14px;
+        font-weight: 750;
+        margin-bottom: 8px;
+    }}
+
+    /* Make st.metric look like KPI cards */
+    div[data-testid="stMetric"] {{
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 14px 14px 12px 14px;
+        box-shadow: 0 8px 18px rgba(0,0,0,0.25);
+    }}
+    div[data-testid="stMetric"] label {{
+        color: var(--muted) !important;
+        font-weight: 650;
+        letter-spacing: .2px;
+    }}
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] {{
+        color: var(--text) !important;
+        font-weight: 800;
+    }}
+    div[data-testid="stMetric"] [data-testid="stMetricDelta"] {{
+        font-weight: 700;
+    }}
+
+    /* Inputs */
+    .stSelectbox > div > div, .stMultiSelect > div > div, .stNumberInput > div > div {{
+        background: rgba(255,255,255,0.03);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+    }}
+    .stRadio > div {{
+        background: rgba(255,255,255,0.02);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 10px 12px;
+    }}
+
+    /* Buttons */
+    .stButton > button {{
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.04);
+        color: var(--text);
+        font-weight: 650;
+    }}
+    .stButton > button:hover {{
+        border-color: rgba(47,111,237,0.40);
+        transform: translateY(-1px);
+    }}
+
+    /* Hide Streamlit menu/footer */
+    #MainMenu {{ visibility: hidden; }}
+    footer {{ visibility: hidden; }}
+    </style>
+
+    <div class="tuep-header">
+        <div class="tuep-title">{app_title}</div>
+        <div class="tuep-sub">Üst Düzey Sunum Modu • Kurumsal Görünüm • Power BI Hissi</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def _patch_chart_renderers():
+    """Wrap all Streamlit charts in a consistent 'card' container without touching existing calls."""
+    if getattr(st, "_tuep_card_patch_applied", False):
+        return
+
+    _orig_altair = getattr(st, "altair_chart", None)
+    _orig_plotly = getattr(st, "plotly_chart", None)
+
+    def _wrap_card(callable_, *args, **kwargs):
+        st.markdown('<div class="chart-card">', unsafe_allow_html=True)
+        try:
+            return callable_(*args, **kwargs)
+        finally:
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    if callable(_orig_altair):
+        def altair_chart_card(*args, **kwargs):
+            return _wrap_card(_orig_altair, *args, **kwargs)
+        st.altair_chart = altair_chart_card  # type: ignore
+
+    if callable(_orig_plotly):
+        def plotly_chart_card(*args, **kwargs):
+            return _wrap_card(_orig_plotly, *args, **kwargs)
+        st.plotly_chart = plotly_chart_card  # type: ignore
+
+    st._tuep_card_patch_applied = True  # type: ignore
+
+_apply_powerbi_ui(app_title="TUEP Arayüzü")
+_patch_chart_renderers()
 page = st.sidebar.radio(
     "Sayfa Seç",
     ["TUEP Arayüzü", "Talep Analizi"]
@@ -271,11 +439,62 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import altair as alt
+
+# --- Altair global dark theme (Power BI-like) ---
+def _register_altair_dark_theme():
+    try:
+        import altair as alt  # ensure available
+    except Exception:
+        return
+    if getattr(alt, "_tuep_dark_theme_registered", False):
+        try:
+            alt.themes.enable("tuep_dark")
+        except Exception:
+            pass
+        return
+
+    def tuep_dark():
+        return {
+            "config": {
+                "background": "rgba(0,0,0,0)",
+                "view": {"stroke": "rgba(255,255,255,0.08)"},
+                "axis": {
+                    "grid": True,
+                    "gridColor": "rgba(255,255,255,0.10)",
+                    "gridOpacity": 0.35,
+                    "labelColor": "#E8EEF7",
+                    "titleColor": "#E8EEF7",
+                    "domainColor": "rgba(255,255,255,0.18)",
+                    "tickColor": "rgba(255,255,255,0.18)",
+                },
+                "legend": {
+                    "labelColor": "#E8EEF7",
+                    "titleColor": "#E8EEF7",
+                    "labelFontSize": 12,
+                    "titleFontSize": 12,
+                    "symbolOpacity": 0.95,
+                },
+                "title": {
+                    "color": "#E8EEF7",
+                    "fontSize": 16,
+                    "anchor": "start",
+                    "offset": 8,
+                },
+            }
+        }
+
+    try:
+        alt.themes.register("tuep_dark", tuep_dark)
+        alt.themes.enable("tuep_dark")
+        alt._tuep_dark_theme_registered = True  # type: ignore
+    except Exception:
+        pass
+
+_register_altair_dark_theme()
+
 from io import BytesIO
 
 import base64
-st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
-
 # -----------------------------
 # Units
 # -----------------------------
