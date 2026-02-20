@@ -191,7 +191,7 @@ if new_uploads:
 # Controls + info
 c1, c2 = st.columns([1, 3])
 with c1:
-    if st.button("Demand yüklerini temizle", use_container_width=True):
+    if st.button("Yüklenen Excel Dosyalarını temizle", use_container_width=True):
         st.session_state[STATE_KEY] = []
         st.rerun()
 with c2:
