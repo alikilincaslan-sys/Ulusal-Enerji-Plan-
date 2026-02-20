@@ -1,3 +1,13 @@
+import streamlit as st
+
+page = st.sidebar.radio(
+    "Sayfa Seç",
+    ["TUEP Arayüzü", "Talep Analizi"]
+)
+
+if page == "Talep Analizi":
+    import Demand_Analizi
+    st.stop()
 
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
