@@ -303,11 +303,9 @@ st.markdown("""
 }
 
 .kpi-badge {
-    display: inline-block;
-    padding: 5px 12px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 500;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 600;
 }
 
 .kpi-up {
