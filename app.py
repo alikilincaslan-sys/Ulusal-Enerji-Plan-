@@ -6,9 +6,10 @@ page = st.sidebar.radio(
 )
 
 if page == "Talep Analizi":
-    import Demand_Analizi
+    import Demand_Analizi as da
+    da.run_demand()   # veya da.main() / da.app()
     st.stop()
-
+    
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
