@@ -6,7 +6,7 @@ page = st.sidebar.radio(
 )
 
 if page == "Talep Analizi":
-    import Demand_Analizi as da
+    from pages import Demand_Analizi as da
     da.run_demand()   # veya da.main() / da.app()
     st.stop()
     
