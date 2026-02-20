@@ -2331,12 +2331,7 @@ with st.sidebar:
     st.header("Paneller")
 
     # Üst bilgi kartları (her zaman en üstte yer alır; panellerden bağımsız)
-    compact_top_kpis = st.checkbox(
-        "Üst bilgi kartlarını göster",
-        value=True,
-        help="Nüfus/GSYH/Kişi başına elektrik/Karbon fiyatı gibi temel göstergeleri sayfanın en üstünde küçük kartlar olarak gösterir. Panel seçimlerinden bağımsızdır.",
-    )
-
+  
     show_assumptions = st.checkbox("Senaryo Varsayımları", value=False)
     show_indicators = st.checkbox("Sistem Göstergeleri", value=False)
     show_electric = st.checkbox("Elektrik", value=True)
