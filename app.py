@@ -267,7 +267,60 @@ from io import BytesIO
 
 import base64
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
+st.markdown("""
+<style>
+.kpi-wrapper {
+    margin-bottom: 25px;
+}
 
+.kpi-card {
+    background: linear-gradient(145deg, #0f172a, #111827);
+    padding: 22px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.06);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.35);
+    transition: all 0.25s ease;
+}
+
+.kpi-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 14px 30px rgba(0,0,0,0.45);
+}
+
+.kpi-title {
+    font-size: 13px;
+    color: #9CA3AF;
+    letter-spacing: 0.6px;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+}
+
+.kpi-value {
+    font-size: 34px;
+    font-weight: 600;
+    color: #F9FAFB;
+    margin-bottom: 10px;
+}
+
+.kpi-badge {
+    display: inline-block;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.kpi-up {
+    background: rgba(34,197,94,0.15);
+    color: #22C55E;
+}
+
+.kpi-down {
+    background: rgba(239,68,68,0.15);
+    color: #EF4444;
+}
+</style>
+""", unsafe_allow_html=True)
 # -----------------------------
 # Units
 # -----------------------------
