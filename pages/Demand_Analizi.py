@@ -99,19 +99,13 @@ def _stacked_bar_iea_like(
 
     # stacked bars
     for label, values in series_map.items():
-        fig.add_trace(
-            go.Bar(
-                x=years,
-                y=values,
-                name=label,
-            )
-        )
+        fig.add_trace(go.Bar(x=years, y=values, name=label))
 
     layout_kwargs = dict(
         template="plotly_dark",
         title=dict(text=title, x=0.0, xanchor="left"),
         barmode="stack",
-        bargap=0.35,         # <<< daha tok görünüm
+        bargap=0.35,
         bargroupgap=0.05,
         hovermode="x unified",
         legend=dict(
@@ -139,18 +133,43 @@ def _stacked_bar_iea_like(
         ),
     )
 
-    # %100 stacked için doğru yol: barnorm="percent"
     if percent:
+        # %100 stacked
         layout_kwargs["barnorm"] = "percent"
         layout_kwargs["yaxis"] = dict(
             title="%",
             range=[0, 100],
             ticksuffix="%",
+            tickformat=".0f",  # <<< ondalık yok
             gridcolor="rgba(255,255,255,0.12)",
             zeroline=False,
         )
+        fig.update_layout(**layout_kwargs)
 
-    fig.update_layout(**layout_kwargs)
+        # Hover: yüzdeyi tam sayı göster
+        for tr in fig.data:
+            tr.update(
+                hovertemplate="%{x}<br>"
+                              f"{tr.name}: "
+                              "%{y:.0f}%<extra></extra>"
+            )
+    else:
+        # Mutlak GWh: tam sayı + binlik ayırıcı, k yok
+        layout_kwargs["yaxis"] = dict(
+            title="GWh",
+            tickformat=",.0f",  # <<< 12,345 gibi
+            gridcolor="rgba(255,255,255,0.12)",
+            zeroline=False,
+        )
+        fig.update_layout(**layout_kwargs)
+
+        for tr in fig.data:
+            tr.update(
+                hovertemplate="%{x}<br>"
+                              f"{tr.name}: "
+                              "%{y:,.0f} GWh<extra></extra>"
+            )
+
     return fig
 
 
@@ -192,7 +211,7 @@ if not all_years:
     st.error("FINAL_ENERGY yıl satırı bulunamadı (1. satır, C sütunundan başlamalı).")
     st.stop()
 
-# Sidebar year range slider (aynı mantık)
+# Sidebar year range slider
 st.sidebar.markdown("### Ayarlar")
 ymin, ymax = all_years[0], all_years[-1]
 y0, y1 = st.sidebar.slider(
@@ -208,7 +227,6 @@ n = len(files)
 n_cols = 3 if n == 3 else 2
 cols = st.columns(n_cols, gap="large")
 
-# Plotly config: üstteki ikon barını kapat (daha “sunum” gibi)
 PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
 
 for i, (fname, years, mat) in enumerate(pre_read):
@@ -221,9 +239,8 @@ for i, (fname, years, mat) in enumerate(pre_read):
             st.error("Dosya okunamadı veya yıl satırı bulunamadı.")
             continue
 
-        # Household (abs & %)
+        # Household
         hh_abs = _build_household_series(mat)
-
         years_hh, hh_abs_f = _filter_years(years, hh_abs, y0, y1)
 
         st.plotly_chart(
@@ -231,14 +248,13 @@ for i, (fname, years, mat) in enumerate(pre_read):
             use_container_width=True,
             config=PLOTLY_CONFIG,
         )
-
         st.plotly_chart(
             _stacked_bar_iea_like(years_hh, hh_abs_f, "Konutlarda Elektrik Tüketimi (%) – Dağılım", percent=True),
             use_container_width=True,
             config=PLOTLY_CONFIG,
         )
 
-        # Services (abs & %)
+        # Services
         sv_abs = _build_services_series(mat)
         years_sv, sv_abs_f = _filter_years(years, sv_abs, y0, y1)
 
@@ -247,7 +263,6 @@ for i, (fname, years, mat) in enumerate(pre_read):
             use_container_width=True,
             config=PLOTLY_CONFIG,
         )
-
         st.plotly_chart(
             _stacked_bar_iea_like(years_sv, sv_abs_f, "Hizmet Sektörü Elektrik Tüketimi (%) – Dağılım", percent=True),
             use_container_width=True,
