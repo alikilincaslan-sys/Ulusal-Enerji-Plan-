@@ -15,11 +15,11 @@ def _scenario_from_filename(name: str) -> str:
     base = re.sub(r"\.[^.]+$", "", name)
     for pref in ("Demand_", "FinalReport_"):
         if base.startswith(pref):
-            base = base[len(pref):]
+            base = base[len(pref) :]
             break
     m = re.search(r"(_tria.*)$", base, flags=re.IGNORECASE)
     if m:
-        base = base[:m.start()]
+        base = base[: m.start()]
     return base.strip() or name
 
 
@@ -169,13 +169,10 @@ def _stacked_bar_iea_like(
 st.title("Soğutma ve Veri Merkezleri Analizi")
 st.caption("Demand Excel dosyalarını (1–3 senaryo) yükle. Grafikler FINAL_ENERGY sekmesinden okunur.")
 
-# ---- Persisted upload store (page navigation safe) ----
-STATE_KEY = "demand_files_v1"  # versioned key to avoid old state conflicts
-
+STATE_KEY = "demand_files_v1"
 if STATE_KEY not in st.session_state:
     st.session_state[STATE_KEY] = []  # list[{"name": str, "bytes": bytes}]
 
-# Uploader (new files overwrite stored set)
 new_uploads = st.file_uploader(
     "Demand Excel dosyaları (en az 1, en fazla 3)",
     type=["xlsx", "xlsm", "xls"],
@@ -184,14 +181,11 @@ new_uploads = st.file_uploader(
 )
 
 if new_uploads:
-    # limit to 3, and persist bytes (so it survives page switches)
-    persisted = [{"name": f.name, "bytes": f.getvalue()} for f in new_uploads[:3]]
-    st.session_state[STATE_KEY] = persisted
+    st.session_state[STATE_KEY] = [{"name": f.name, "bytes": f.getvalue()} for f in new_uploads[:3]]
 
-# Controls + info
 c1, c2 = st.columns([1, 3])
 with c1:
-    if st.button("Yüklenen Excel Dosyalarını temizle", use_container_width=True):
+    if st.button("Yüklenen Excel'leri temizle", use_container_width=True):
         st.session_state[STATE_KEY] = []
         st.rerun()
 with c2:
@@ -201,12 +195,11 @@ with c2:
         st.caption("Kayıtlı Demand dosyası yok. Yükleyince sayfa geçişlerinde kaybolmaz.")
 
 files = st.session_state[STATE_KEY]
-
 if not files:
     st.info("Devam etmek için en az 1 Demand Excel yükle.")
     st.stop()
 
-# read once to get year range + matrices
+# Read once to get year range + matrices
 all_years: List[int] = []
 pre_read = []
 for item in files:
@@ -251,33 +244,37 @@ for i, (fname, years, mat) in enumerate(pre_read):
             continue
 
         # Household (abs & %)
+        hh_abs = _build_household_series(mat)
+        years_hh, hh_abs_f = _filter_years(years, hh_abs, y0, y1)
+
         st.plotly_chart(
             _stacked_bar_iea_like(years_hh, hh_abs_f, "Konutlarda Elektrik Tüketimi (GWh) – Mutlak", percent=False),
             use_container_width=True,
             config=PLOTLY_CONFIG,
-            key=f"demand_{i}_{scenario}_hh_abs",
-)
+            key=f"demand_{i}_hh_abs",
+        )
         st.plotly_chart(
             _stacked_bar_iea_like(years_hh, hh_abs_f, "Konutlarda Elektrik Tüketimi (%) – Dağılım", percent=True),
             use_container_width=True,
             config=PLOTLY_CONFIG,
-            key=f"demand_{i}_{scenario}_hh_pct",
-)
+            key=f"demand_{i}_hh_pct",
+        )
 
         # Services (abs & %)
         sv_abs = _build_services_series(mat)
         years_sv, sv_abs_f = _filter_years(years, sv_abs, y0, y1)
+
         st.plotly_chart(
             _stacked_bar_iea_like(years_sv, sv_abs_f, "Hizmet Sektörü Elektrik Tüketimi (GWh) – Mutlak", percent=False),
             use_container_width=True,
             config=PLOTLY_CONFIG,
-            key=f"demand_{i}_{scenario}_sv_abs",
+            key=f"demand_{i}_sv_abs",
         )
         st.plotly_chart(
             _stacked_bar_iea_like(years_sv, sv_abs_f, "Hizmet Sektörü Elektrik Tüketimi (%) – Dağılım", percent=True),
             use_container_width=True,
             config=PLOTLY_CONFIG,
-            key=f"demand_{i}_{scenario}_sv_pct",
+            key=f"demand_{i}_sv_pct",
         )
 
 st.divider()
