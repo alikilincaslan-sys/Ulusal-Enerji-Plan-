@@ -3328,7 +3328,7 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
 # -----------------------------
 # KPI row (per scenario)
 # -----------------------------
-st.subheader("Yönetici Bilgi Kartları")
+st.subheader("Yönetici Özeti")
 ncols = _ncols_for_selected(len(selected_scenarios))
 cols = st.columns(ncols)
 
