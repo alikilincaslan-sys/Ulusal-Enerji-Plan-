@@ -9,30 +9,22 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Soğutma ve Veri Merkezleri Analizi", layout="wide")
 
 # ============================================================
-# 1) TRANSPORT ELECTRIC CODE MAP (only *_ELE used)
+# TRANSPORT ELECTRIC CODE MAP (only *_ELE used)
 # ============================================================
 TRANSPORT_ELE_TR = {
-    # Passenger (private/public)
     "PSCAR_ELE": "Özel yolcu (Binek araç) – Elektrik",
     "PS2WL_ELE": "Özel yolcu (2 teker) – Elektrik",
     "PSPRD_ELE": "Toplu yolcu (Karayolu) – Elektrik",
-
-    # Rail passenger
     "PSRLM_ELE": "Metro/Tramvay – Elektrik",
     "PSRLL_ELE": "Demiryolu yolcu (Yavaş) – Elektrik",
     "PSRLF_ELE": "Demiryolu yolcu (Hızlı) – Elektrik",
-
-    # Water / Air passenger
     "PSWTR_ELE": "İç su yolları yolcu – Elektrik",
     "PSAIR_ELE": "Havayolu yolcu – Elektrik",
-
-    # Freight
     "FRHDT_ELE": "Karayolu yük (Ağır ticari) – Elektrik",
     "FRLDT_ELE": "Karayolu yük (Hafif ticari) – Elektrik",
     "FRRLS_ELE": "Demiryolu yük – Elektrik",
     "FRWTR_ELE": "İç su yolları yük – Elektrik",
 }
-
 TRANSPORT_ELE_CODES = list(TRANSPORT_ELE_TR.keys())
 
 
@@ -43,27 +35,17 @@ def _scenario_from_filename(name: str) -> str:
     base = re.sub(r"\.[^.]+$", "", name)
     for pref in ("Demand_", "FinalReport_"):
         if base.startswith(pref):
-            base = base[len(pref):]
+            base = base[len(pref) :]
             break
     m = re.search(r"(_tria.*)$", base, flags=re.IGNORECASE)
     if m:
-        base = base[:m.start()]
+        base = base[: m.start()]
     return base.strip() or name
 
 
 def _read_final_energy(filelike) -> Tuple[List[int], pd.DataFrame, List[str], pd.DataFrame]:
-    """
-    Reads sheet FINAL_ENERGY without headers.
-    Years are in row 1 (Excel) starting from column C.
-    Returns:
-      years: list[int]
-      mat: numeric matrix for year columns (C..)
-      codes: column A strings for each row (same row count as mat)
-      df_raw: raw dataframe (needed for B-column ELC filter totals)
-    """
     df = pd.read_excel(filelike, sheet_name="FINAL_ENERGY", header=None, engine=None)
 
-    # Years: Excel row 1 -> df.iloc[0], from col C -> index 2
     years_raw = df.iloc[0, 2:].tolist()
     years: List[int] = []
     for y in years_raw:
@@ -80,7 +62,7 @@ def _read_final_energy(filelike) -> Tuple[List[int], pd.DataFrame, List[str], pd
 
     n_years = len(years)
     mat = (
-        df.iloc[:, 2:2 + n_years]
+        df.iloc[:, 2 : 2 + n_years]
         .apply(pd.to_numeric, errors="coerce")
         .fillna(0.0)
     )
@@ -111,11 +93,6 @@ def _stacked_bar(
     use_percent_suffix: bool = False,
     barnorm_percent: bool = False,
 ) -> go.Figure:
-    """
-    General stacked bar.
-    - barnorm_percent=True -> 100% normalized stacked (distribution).
-    - barnorm_percent=False -> normal stacked (values add up; not forced to 100%).
-    """
     fig = go.Figure()
     for label, values in series_map.items():
         fig.add_trace(go.Bar(x=years, y=values, name=label))
@@ -166,37 +143,32 @@ def _stacked_bar(
 
     fig.update_layout(**layout_kwargs)
 
-    # Hover formatting
     if use_percent_suffix:
         for tr in fig.data:
-            tr.update(hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:.0f}%<extra></extra>")
+            tr.update(
+                hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:.0f}%<extra></extra>"
+            )
     else:
         for tr in fig.data:
-            tr.update(hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:,.0f}<extra></extra>")
+            tr.update(
+                hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:,.0f}<extra></extra>"
+            )
 
     return fig
 
 
 def _total_elc_from_B_filter(df_raw: pd.DataFrame, n_years: int) -> List[float]:
-    """
-    Total electricity demand = sum of all rows where column B == 'ELC'
-    across year columns (C..).
-    """
     if df_raw is None or df_raw.empty:
         return [0.0] * n_years
-
-    b = df_raw.iloc[:, 1].astype(str).str.strip().str.upper()  # column B
+    b = df_raw.iloc[:, 1].astype(str).str.strip().str.upper()
     mask = b.eq("ELC")
-
     mat_years = (
-        df_raw.iloc[:, 2:2 + n_years]
+        df_raw.iloc[:, 2 : 2 + n_years]
         .apply(pd.to_numeric, errors="coerce")
         .fillna(0.0)
     )
-
     if mask.sum() == 0:
         return [0.0] * n_years
-
     return mat_years.loc[mask].sum(axis=0).tolist()
 
 
@@ -205,13 +177,8 @@ def _to_share_percent(numer: List[float], denom: List[float]) -> List[float]:
 
 
 def _sum_by_code(mat: pd.DataFrame, codes: List[str], code: str) -> List[float]:
-    """
-    Sum all rows where column A exactly equals `code` (case-insensitive, trimmed).
-    Returns a year-series list.
-    """
     if mat is None or mat.empty or not codes:
         return [0.0] * (mat.shape[1] if mat is not None else 0)
-
     codes_s = pd.Series(codes).astype(str).str.strip().str.upper()
     target = code.strip().upper()
     idxs = codes_s[codes_s == target].index.tolist()
@@ -221,32 +188,38 @@ def _sum_by_code(mat: pd.DataFrame, codes: List[str], code: str) -> List[float]:
 
 
 def _build_household_series(mat: pd.DataFrame) -> Dict[str, List[float]]:
-    # (senin daha önce verdiğin kural)
+    def safe_sum(rows_1idx: List[int]) -> List[float]:
+        idx = [r - 1 for r in rows_1idx if 0 <= (r - 1) < len(mat)]
+        if not idx:
+            return [0.0] * mat.shape[1]
+        return mat.iloc[idx, :].sum(axis=0).tolist()
+
     return {
-        "Ev Aletleri": (mat.iloc[[235 - 1, 253 - 1, 241 - 1], :].sum(axis=0)).tolist(),
-        "Alan Isıtma": (mat.iloc[[245 - 1, 248 - 1], :].sum(axis=0)).tolist(),
-        "Su Isıtma": (mat.iloc[[260 - 1, 262 - 1], :].sum(axis=0)).tolist(),
-        "Pişirme": (mat.iloc[[236 - 1], :].sum(axis=0)).tolist(),
-        "Soğutma": (mat.iloc[[234 - 1], :].sum(axis=0)).tolist(),
+        "Ev Aletleri": safe_sum([235, 253, 241]),
+        "Alan Isıtma": safe_sum([245, 248]),
+        "Su Isıtma": safe_sum([260, 262]),
+        "Pişirme": safe_sum([236]),
+        "Soğutma": safe_sum([234]),
     }
 
 
 def _build_services_series(mat: pd.DataFrame) -> Dict[str, List[float]]:
-    # (senin daha önce verdiğin kural)
+    def safe_sum(rows_1idx: List[int]) -> List[float]:
+        idx = [r - 1 for r in rows_1idx if 0 <= (r - 1) < len(mat)]
+        if not idx:
+            return [0.0] * mat.shape[1]
+        return mat.iloc[idx, :].sum(axis=0).tolist()
+
     return {
-        "Veri Merkezleri": (mat.iloc[[578 - 1], :].sum(axis=0)).tolist(),
-        "Soğutma": (mat.iloc[[577 - 1], :].sum(axis=0)).tolist(),
-        "Aydınlatma": (mat.iloc[[579 - 1], :].sum(axis=0)).tolist(),
-        "Alan Isıtma": (mat.iloc[[588 - 1, 591 - 1], :].sum(axis=0)).tolist(),
-        "Su Isıtma": (mat.iloc[[602 - 1, 604 - 1], :].sum(axis=0)).tolist(),
+        "Veri Merkezleri": safe_sum([578]),
+        "Soğutma": safe_sum([577]),
+        "Aydınlatma": safe_sum([579]),
+        "Alan Isıtma": safe_sum([588, 591]),
+        "Su Isıtma": safe_sum([602, 604]),
     }
 
 
 def _build_transport_electric_series(mat: pd.DataFrame, codes: List[str]) -> Dict[str, List[float]]:
-    """
-    Transport electricity series from A-column code matching, only *_ELE codes in TRANSPORT_ELE_CODES.
-    Labels are Turkish (TRANSPORT_ELE_TR).
-    """
     out: Dict[str, List[float]] = {}
     for code in TRANSPORT_ELE_CODES:
         label = TRANSPORT_ELE_TR.get(code, code)
@@ -301,6 +274,13 @@ if not files:
     st.info("Devam etmek için en az 1 Demand Excel yükle.")
     st.stop()
 
+# Plotly: ZOOM / FULLSCREEN aktif
+PLOTLY_CONFIG = {
+    "displayModeBar": True,
+    "responsive": True,
+    "scrollZoom": True,   # mouse wheel zoom
+}
+
 # Pre-read
 all_years: List[int] = []
 pre_read: List[Tuple[str, List[int], pd.DataFrame, List[str], pd.DataFrame, str]] = []
@@ -329,11 +309,13 @@ y0, y1 = st.sidebar.slider(
     step=1,
 )
 
-cols = st.columns(2, gap="large")
-PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
+# --- FIX: Tek senaryoda boşluk kalmasın
+n_cards = len(pre_read)
+n_cols = 1 if n_cards == 1 else 2
+cols = st.columns(n_cols, gap="large")
 
 for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
-    with cols[i % 2]:
+    with cols[i % n_cols]:
         scenario = _scenario_from_filename(fname)
         st.subheader(scenario)
 
@@ -345,17 +327,14 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
 
         # ============================================================
         # A) SUMMARY (NOT 100% normalized)
-        # Values are contribution % to total electricity demand
         # ============================================================
         total_elc = _total_elc_from_B_filter(df_raw, n_years=n_years)
 
-        # Electric transport total (sum of all transport *_ELE codes you provided)
         tr_ele_map = _build_transport_electric_series(mat, codes)
         transport_ele_total_abs = _sum_series_map(tr_ele_map)
 
-        # Household cooling (row 234) and services DC (row 578)
-        household_cooling_abs = (mat.iloc[[234 - 1], :].sum(axis=0)).tolist()
-        services_dc_abs = (mat.iloc[[578 - 1], :].sum(axis=0)).tolist()
+        household_cooling_abs = mat.iloc[[234 - 1], :].sum(axis=0).tolist() if len(mat) >= 234 else [0.0] * n_years
+        services_dc_abs = mat.iloc[[578 - 1], :].sum(axis=0).tolist() if len(mat) >= 578 else [0.0] * n_years
 
         summary_pct = {
             "Veri Merkezleri": _to_share_percent(services_dc_abs, total_elc),
@@ -372,7 +351,7 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
                 y_title="%",
                 y_tickformat=".0f",
                 use_percent_suffix=True,
-                barnorm_percent=False,  # IMPORTANT: not normalized to 100
+                barnorm_percent=False,
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
@@ -405,7 +384,7 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
                 y_title="%",
                 y_tickformat=".0f",
                 use_percent_suffix=True,
-                barnorm_percent=True,  # 100% distribution
+                barnorm_percent=True,
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
@@ -447,7 +426,6 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
 
         # ============================================================
         # D) Transport ELECTRIC only (abs + % distribution)
-        # Now legend is Turkish via TRANSPORT_ELE_TR (code-based; robust to row shifts)
         # ============================================================
         years_tr, tr_abs_f = _filter_years(years, tr_ele_map, y0, y1)
 
@@ -482,5 +460,6 @@ st.divider()
 st.caption(
     "Not: Özet grafikte yüzdeler normalize edilmez; her seri toplam nihai elektrik talebine katkı (%) olarak üst üste toplanır. "
     "Toplam elektrik talebi, FINAL_ENERGY içinde B sütunu 'ELC' olan tüm satırların toplamıdır. "
-    "Ulaştırma grafikleri A sütunundaki kodlardan (yalnız *_ELE) okunur; satır kayması sorun olmaz."
+    "Ulaştırma grafikleri A sütunundaki kodlardan (yalnız *_ELE) okunur; satır kayması sorun olmaz. "
+    "Zoom için grafik üstünde fare tekerleği (scroll) aktif; modebar açık."
 )
