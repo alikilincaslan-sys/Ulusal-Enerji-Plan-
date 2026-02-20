@@ -9,23 +9,24 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Soğutma ve Veri Merkezleri Analizi", layout="wide")
 
 # ----------------------------
-# Label dictionary (transport)
+# Transport labels (ROW-based; safest)
 # ----------------------------
-TRANSPORT_TR = {
-    "PSPRV": "Özel yolcu taşımacılığı",
-    "PSPBL": "Toplu yolcu taşımacılığı",
-    "PSRLS": "Demiryolu yolcu taşımacılığı",
-    "PSWTR": "İç su yollarında yolcu taşımacılığı",
-    "PSAIR": "Havayolu yolcu taşımacılığı",
-    "FRBNK": "Bunker yakıtları",
-    "FRTRK": "Karayolu yük taşımacılığı",
-    "FRRLS": "Demiryolu yük taşımacılığı",
-    "FRWTR": "İç su yollarında yük taşımacılığı",
-}
-
-# Excel row numbers (1-indexed) for transport electricity series
 TRANSPORT_ROWS_1IDX = [220, 224, 229, 230, 541, 546, 551, 558, 560, 563, 564, 565]
 
+TRANSPORT_ROW_LABEL_TR = {
+    220: "Özel yolcu taşımacılığı",
+    224: "Toplu yolcu taşımacılığı",
+    229: "Demiryolu yolcu taşımacılığı",
+    230: "İç su yollarında yolcu taşımacılığı",
+    541: "Havayolu yolcu taşımacılığı",
+    546: "Bunker yakıtları",
+    551: "Karayolu yük taşımacılığı",
+    558: "Demiryolu yük taşımacılığı",
+    560: "İç su yollarında yük taşımacılığı",
+    563: "Diğer Ulaştırma (563)",
+    564: "Diğer Ulaştırma (564)",
+    565: "Diğer Ulaştırma (565)",
+}
 
 # ----------------------------
 # Helpers
@@ -54,7 +55,6 @@ def _read_final_energy(filelike) -> Tuple[List[int], pd.DataFrame, List[str], pd
     """
     df = pd.read_excel(filelike, sheet_name="FINAL_ENERGY", header=None, engine=None)
 
-    # Years: Excel row 1 -> df.iloc[0], from col C -> index 2
     years_raw = df.iloc[0, 2:].tolist()
     years: List[int] = []
     for y in years_raw:
@@ -124,8 +124,17 @@ def _stacked_bar_iea_like(
     years: List[int],
     series_map: Dict[str, List[float]],
     title: str,
-    percent: bool = False,
+    *,
+    y_title: str,
+    y_tickformat: str,
+    use_percent_suffix: bool = False,
+    barnorm_percent: bool = False,
 ) -> go.Figure:
+    """
+    General stacked bar.
+    - If barnorm_percent=True -> Plotly normalizes to 100% (NOT what we want for summary now).
+    - Otherwise, uses given y values as-is.
+    """
     fig = go.Figure()
     for label, values in series_map.items():
         fig.add_trace(go.Bar(x=years, y=values, name=label))
@@ -156,67 +165,58 @@ def _stacked_bar_iea_like(
             showgrid=False,
         ),
         yaxis=dict(
-            title="%" if percent else "GWh",
+            title=y_title,
+            tickformat=y_tickformat,
             gridcolor="rgba(255,255,255,0.12)",
             zeroline=False,
         ),
     )
 
-    if percent:
+    if barnorm_percent:
         layout_kwargs["barnorm"] = "percent"
         layout_kwargs["yaxis"] = dict(
-            title="%",
+            title=y_title,
             range=[0, 100],
-            ticksuffix="%",
-            tickformat=".0f",  # ondalık yok
+            ticksuffix="%" if use_percent_suffix else "",
+            tickformat=y_tickformat,
             gridcolor="rgba(255,255,255,0.12)",
             zeroline=False,
         )
-        fig.update_layout(**layout_kwargs)
+
+    fig.update_layout(**layout_kwargs)
+
+    # Hover
+    if use_percent_suffix:
         for tr in fig.data:
             tr.update(
                 hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:.0f}%<extra></extra>"
             )
     else:
-        layout_kwargs["yaxis"] = dict(
-            title="GWh",
-            tickformat=",.0f",  # k yok, ondalık yok
-            gridcolor="rgba(255,255,255,0.12)",
-            zeroline=False,
-        )
-        fig.update_layout(**layout_kwargs)
         for tr in fig.data:
             tr.update(
-                hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:,.0f} GWh<extra></extra>"
+                hovertemplate="%{x}<br>" + f"{tr.name}: " + "%{y:,.0f}<extra></extra>"
             )
 
     return fig
 
 
-def _series_from_rows_with_labels(
+def _series_from_rows_with_rowlabels(
     mat: pd.DataFrame,
-    codes: List[str],
     excel_rows_1idx: List[int],
-    mapping: Dict[str, str],
+    row_label_map: Dict[int, str],
 ) -> Dict[str, List[float]]:
     """
-    Build series map from exact Excel rows.
-    Label comes from column A, translated with mapping.
-    mapping uses base code before '_' (e.g., FRRLS_ELE -> FRRLS).
+    Build series map from exact Excel rows, labels taken from row_label_map (row-index based).
     """
     out: Dict[str, List[float]] = {}
     for r in excel_rows_1idx:
         i = r - 1
-        if i < 0 or i >= len(codes) or i >= len(mat):
+        if i < 0 or i >= len(mat):
             continue
-
-        raw = (codes[i] or "").strip()
-        base = raw.split("_")[0] if raw else f"ROW_{r}"
-        label = mapping.get(base, raw if raw else base)
-
+        label = row_label_map.get(r, f"Satır {r}")
+        # avoid duplicates
         if label in out:
-            label = f"{label} ({base})"
-
+            label = f"{label} ({r})"
         out[label] = mat.iloc[i, :].tolist()
     return out
 
@@ -229,7 +229,7 @@ def _total_elc_from_B_filter(df_raw: pd.DataFrame, n_years: int) -> List[float]:
     if df_raw is None or df_raw.empty:
         return [0.0] * n_years
 
-    b = df_raw.iloc[:, 1].astype(str).str.strip().str.upper()  # column B
+    b = df_raw.iloc[:, 1].astype(str).str.strip().str.upper()
     mask = b.eq("ELC")
 
     mat_years = (
@@ -254,15 +254,15 @@ def _to_share_percent(numer: List[float], denom: List[float]) -> List[float]:
 st.title("Soğutma ve Veri Merkezleri Analizi")
 st.caption("Demand Excel dosyalarını (1–3 senaryo) yükle. Grafikler FINAL_ENERGY sekmesinden okunur.")
 
-STATE_KEY = "demand_files_v_final"
+STATE_KEY = "demand_files_v_final_fix"
 if STATE_KEY not in st.session_state:
-    st.session_state[STATE_KEY] = []  # list[{"name": str, "bytes": bytes}]
+    st.session_state[STATE_KEY] = []
 
 new_uploads = st.file_uploader(
     "Demand Excel dosyaları (en az 1, en fazla 3)",
     type=["xlsx", "xlsm", "xls"],
     accept_multiple_files=True,
-    key="demand_uploader_v_final",
+    key="demand_uploader_v_final_fix",
 )
 
 if new_uploads:
@@ -284,9 +284,9 @@ if not files:
     st.info("Devam etmek için en az 1 Demand Excel yükle.")
     st.stop()
 
-# Pre-read for year universe + matrices
+# Pre-read
 all_years: List[int] = []
-pre_read: List[Tuple[str, List[int], pd.DataFrame, List[str], pd.DataFrame, str]] = []  # (name, years, mat, codes, df_raw, err)
+pre_read: List[Tuple[str, List[int], pd.DataFrame, List[str], pd.DataFrame, str]] = []
 
 for item in files:
     try:
@@ -312,7 +312,6 @@ y0, y1 = st.sidebar.slider(
     step=1,
 )
 
-# Layout: always 2 columns (3. senaryo altta görünür)
 cols = st.columns(2, gap="large")
 PLOTLY_CONFIG = {"displayModeBar": False, "responsive": True}
 
@@ -328,8 +327,8 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
         n_years = len(years)
 
         # ----------------------------
-        # NEW SUMMARY: stacked % shares vs total electricity demand
-        # Denominator: sum of all rows where column B == ELC
+        # 1) SUMMARY (NOT 100% normalized)
+        # y values already percent contribution to total electricity
         # ----------------------------
         total_elc = _total_elc_from_B_filter(df_raw, n_years=n_years)
 
@@ -337,26 +336,31 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
         household_cooling_abs = _rows_sum(mat, [234])
         services_dc_abs = _rows_sum(mat, [578])
 
-        summary_pct = {
-            "Ulaştırma / Toplam Elektrik": _to_share_percent(transport_abs_total, total_elc),
-            "Konut Soğutma / Toplam Elektrik": _to_share_percent(household_cooling_abs, total_elc),
-            "Hizmet Veri Merkezleri / Toplam Elektrik": _to_share_percent(services_dc_abs, total_elc),
+        summary_pct_values = {
+            "Veri Merkezleri": _to_share_percent(services_dc_abs, total_elc),
+            "Soğutma": _to_share_percent(household_cooling_abs, total_elc),
+            "Elektrikli Araçlar": _to_share_percent(transport_abs_total, total_elc),
         }
-        years_sum, summary_pct_f = _filter_years(years, summary_pct, y0, y1)
+        years_sum, summary_pct_f = _filter_years(years, summary_pct_values, y0, y1)
 
         st.plotly_chart(
             _stacked_bar_iea_like(
                 years_sum,
                 summary_pct_f,
-                "Özet Paylar (% of Toplam Elektrik Talebi) – Yığılmış",
-                percent=True,
+                "Veri merkezi, Soğutma ve Elektrikli Araçların Nihai Elektrik Talebine Katkısı (%)",
+                y_title="%",
+                y_tickformat=".0f",
+                use_percent_suffix=True,
+                barnorm_percent=False,  # IMPORTANT: no 100% normalization
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
-            key=f"demand_{i}_summary_pct",
+            key=f"demand_{i}_summary_contrib_pct",
         )
 
-        # 1) Household
+        # ----------------------------
+        # 2) Household (abs + % normalized)
+        # ----------------------------
         hh_abs = _build_household_series(mat)
         years_hh, hh_abs_f = _filter_years(years, hh_abs, y0, y1)
 
@@ -364,7 +368,10 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
             _stacked_bar_iea_like(
                 years_hh, hh_abs_f,
                 "Konutlarda Elektrik Tüketimi (GWh) – Mutlak",
-                percent=False
+                y_title="GWh",
+                y_tickformat=",.0f",
+                use_percent_suffix=False,
+                barnorm_percent=False,
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
@@ -374,14 +381,19 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
             _stacked_bar_iea_like(
                 years_hh, hh_abs_f,
                 "Konutlarda Elektrik Tüketimi (%) – Dağılım",
-                percent=True
+                y_title="%",
+                y_tickformat=".0f",
+                use_percent_suffix=True,
+                barnorm_percent=True,  # 100% distribution
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
             key=f"demand_{i}_hh_pct",
         )
 
-        # 2) Services
+        # ----------------------------
+        # 3) Services (abs + % normalized)
+        # ----------------------------
         sv_abs = _build_services_series(mat)
         years_sv, sv_abs_f = _filter_years(years, sv_abs, y0, y1)
 
@@ -389,7 +401,10 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
             _stacked_bar_iea_like(
                 years_sv, sv_abs_f,
                 "Hizmet Sektörü Elektrik Tüketimi (GWh) – Mutlak",
-                percent=False
+                y_title="GWh",
+                y_tickformat=",.0f",
+                use_percent_suffix=False,
+                barnorm_percent=False,
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
@@ -399,22 +414,30 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
             _stacked_bar_iea_like(
                 years_sv, sv_abs_f,
                 "Hizmet Sektörü Elektrik Tüketimi (%) – Dağılım",
-                percent=True
+                y_title="%",
+                y_tickformat=".0f",
+                use_percent_suffix=True,
+                barnorm_percent=True,
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
             key=f"demand_{i}_sv_pct",
         )
 
-        # 3) Transport (rows) – abs and %
-        tr_abs = _series_from_rows_with_labels(mat, codes, TRANSPORT_ROWS_1IDX, TRANSPORT_TR)
+        # ----------------------------
+        # 4) Transport (ROW-labeled; abs + % normalized)
+        # ----------------------------
+        tr_abs = _series_from_rows_with_rowlabels(mat, TRANSPORT_ROWS_1IDX, TRANSPORT_ROW_LABEL_TR)
         years_tr, tr_abs_f = _filter_years(years, tr_abs, y0, y1)
 
         st.plotly_chart(
             _stacked_bar_iea_like(
                 years_tr, tr_abs_f,
                 "Ulaştırma Elektrik Tüketimi (GWh) – Mutlak",
-                percent=False
+                y_title="GWh",
+                y_tickformat=",.0f",
+                use_percent_suffix=False,
+                barnorm_percent=False,
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
@@ -424,7 +447,10 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
             _stacked_bar_iea_like(
                 years_tr, tr_abs_f,
                 "Ulaştırma Elektrik Tüketimi (%) – Dağılım",
-                percent=True
+                y_title="%",
+                y_tickformat=".0f",
+                use_percent_suffix=True,
+                barnorm_percent=True,
             ),
             use_container_width=True,
             config=PLOTLY_CONFIG,
@@ -433,8 +459,7 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
 
 st.divider()
 st.caption(
-    "Not: Yüklenen dosyalar sayfa geçişlerinde kaybolmaması için oturum hafızasında tutulur. "
-    "Senaryo adı dosya isminden `Demand_..._tria..` veya `FinalReport_..._tria..` kuralıyla çıkarılır; `b_` korunur. "
-    "Özet grafikte toplam elektrik talebi, FINAL_ENERGY içinde B sütunu 'ELC' olan tüm satırların toplamıdır. "
-    "Ulaştırma grafikleri FINAL_ENERGY içinde verilen satırlardan (220,224,229,230,541,546,551,558,560,563,564,565) okunur."
+    "Not: Özet grafikte yüzdeler normalize edilmez; her seri toplam nihai elektrik talebine katkı (%) olarak üst üste toplanır. "
+    "Toplam elektrik talebi, FINAL_ENERGY içinde B sütunu 'ELC' olan tüm satırların toplamıdır. "
+    "Ulaştırma grafikleri, belirtilen satırlardan okunur ve legend satır numarasına göre Türkçe isimlendirilir."
 )
