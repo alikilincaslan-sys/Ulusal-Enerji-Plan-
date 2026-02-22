@@ -3,6 +3,7 @@ from io import BytesIO
 from typing import Dict, List, Tuple
 
 import pandas as pd
+import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
 
@@ -82,6 +83,86 @@ def _filter_years(
     years_f = [years[i] for i in idx]
     out = {k: [v[i] for i in idx] for k, v in series_map.items()}
     return years_f, out
+
+
+
+def _fill_years_series(years: List[int], values: List[float], all_years: List[int], *, method: str, logistic_k: float) -> List[float]:
+    """Fill missing intermediate years between known points.
+
+    method:
+      - "Lineer"
+      - "Lojistik (S-curve)"
+    """
+    if not years or not all_years:
+        return [0.0] * len(all_years)
+
+    s = pd.Series(values, index=pd.Index(years, name="year")).sort_index()
+    s = s.reindex(all_years)
+
+    if method == "Lineer":
+        s = s.interpolate(method="linear", limit_direction="both")
+        return s.fillna(0.0).tolist()
+
+    anchors = s.dropna()
+    if len(anchors) < 2:
+        s = s.interpolate(method="linear", limit_direction="both")
+        return s.fillna(0.0).tolist()
+
+    out = s.copy()
+    anchor_years = anchors.index.to_list()
+    k = float(logistic_k)
+
+    def _scaled_sigmoid(t):
+        sig = 1.0 / (1.0 + np.exp(-k * (t - 0.5)))
+        sig0 = 1.0 / (1.0 + np.exp(-k * (0.0 - 0.5)))
+        sig1 = 1.0 / (1.0 + np.exp(-k * (1.0 - 0.5)))
+        return (sig - sig0) / (sig1 - sig0)
+
+    for i in range(len(anchor_years) - 1):
+        ya, yb = int(anchor_years[i]), int(anchor_years[i + 1])
+        va, vb = float(anchors.loc[ya]), float(anchors.loc[yb])
+        if yb <= ya:
+            continue
+
+        seg_years = [y for y in all_years if ya <= y <= yb]
+        if len(seg_years) <= 2:
+            continue
+
+        t = np.array([(y - ya) / (yb - ya) for y in seg_years], dtype=float)
+        vals = va + (vb - va) * _scaled_sigmoid(t)
+        out.loc[seg_years] = vals
+
+    out = out.interpolate(method="linear", limit_direction="both")
+    return out.fillna(0.0).tolist()
+
+
+def _fill_between_years(
+    years: List[int],
+    series_map: Dict[str, List[float]],
+    y0: int,
+    y1: int,
+    *,
+    enabled: bool,
+    method: str,
+    logistic_k: float,
+) -> Tuple[List[int], Dict[str, List[float]]]:
+    """Expand to full annual range [y0, y1] and fill series."""
+    if not enabled:
+        return years, series_map
+
+    if y1 < y0:
+        y0, y1 = y1, y0
+
+    all_years = list(range(int(y0), int(y1) + 1))
+    if not all_years:
+        return years, series_map
+
+    out: Dict[str, List[float]] = {}
+    for key, vals in series_map.items():
+        out[key] = _fill_years_series(years, vals, all_years, method=method, logistic_k=logistic_k)
+
+    return all_years, out
+
 
 
 def _stacked_bar(
@@ -367,6 +448,12 @@ y0, y1 = st.sidebar.select_slider(
     value=st.session_state[STATE_YR],
     key=STATE_YR,
 )
+# Ara yıl doldurma (opsiyonel)
+st.sidebar.markdown("#### Ara Yılları Doldur")
+fill_years_enabled = st.sidebar.checkbox("Ara yılları doldur", value=False)
+fill_method = st.sidebar.selectbox("Yöntem", ["Lineer", "Lojistik (S-curve)"], index=0)
+fill_logistic_k = st.sidebar.slider("Lojistik eğri keskinliği (k)", 0.5, 10.0, 3.0, 0.5)
+
 
 # --- FIX: Tek senaryoda boşluk kalmasın
 n_cards = len(pre_read)
@@ -400,7 +487,17 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
             "Soğutma": _to_share_percent(household_cooling_abs, total_elc),
             "Elektrikli Araçlar": _to_share_percent(transport_ele_total_abs, total_elc),
         }
+
         years_sum, summary_pct_f = _filter_years(years, summary_pct, y0, y1)
+        years_sum, summary_pct_f = _fill_between_years(
+            years_sum,
+            summary_pct_f,
+            y0,
+            y1,
+            enabled=fill_years_enabled,
+            method=fill_method,
+            logistic_k=fill_logistic_k,
+        )
 
         st.plotly_chart(
             _stacked_bar(
@@ -427,8 +524,32 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
             "Elektrikli Araçlar": transport_ele_total_abs,
         }
         years_abs, summary_abs_f = _filter_years(years, summary_abs, y0, y1)
-        years_tot, tot_map_f = _filter_years(years, {"Toplam": total_elc}, y0, y1)
-        total_elc_f = tot_map_f.get("Toplam", [0.0] * len(years_abs))
+        years_abs, summary_abs_f = _fill_between_years(
+            years_abs,
+            summary_abs_f,
+            y0,
+            y1,
+            enabled=fill_years_enabled,
+            method=fill_method,
+            logistic_k=fill_logistic_k,
+        )
+
+        tot_map = {"Toplam": total_elc}
+        years_tot, tot_map_f = _filter_years(years, tot_map, y0, y1)
+        years_tot, tot_map_f = _fill_between_years(
+            years_tot,
+            tot_map_f,
+            y0,
+            y1,
+            enabled=fill_years_enabled,
+            method=fill_method,
+            logistic_k=fill_logistic_k,
+        )
+        total_elc_f = tot_map_f.get("Toplam", [0.0] * len(years_tot))
+        if fill_years_enabled and years_abs:
+            # Align total line to bars' (possibly filled) year grid
+            total_elc_f = _fill_years_series(years_tot, total_elc_f, years_abs, method=fill_method, logistic_k=fill_logistic_k)
+            years_tot = years_abs
 
         st.plotly_chart(
             _stacked_bar_with_total_line(
@@ -449,6 +570,15 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
         # ============================================================
         hh_abs = _build_household_series(mat)
         years_hh, hh_abs_f = _filter_years(years, hh_abs, y0, y1)
+        years_hh, hh_abs_f = _fill_between_years(
+            years_hh,
+            hh_abs_f,
+            y0,
+            y1,
+            enabled=fill_years_enabled,
+            method=fill_method,
+            logistic_k=fill_logistic_k,
+        )
 
         st.plotly_chart(
             _stacked_bar(
@@ -482,6 +612,15 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
         # ============================================================
         sv_abs = _build_services_series(mat)
         years_sv, sv_abs_f = _filter_years(years, sv_abs, y0, y1)
+        years_sv, sv_abs_f = _fill_between_years(
+            years_sv,
+            sv_abs_f,
+            y0,
+            y1,
+            enabled=fill_years_enabled,
+            method=fill_method,
+            logistic_k=fill_logistic_k,
+        )
 
         st.plotly_chart(
             _stacked_bar(
@@ -514,6 +653,15 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
         # D) Transport ELECTRIC only (abs + % distribution)
         # ============================================================
         years_tr, tr_abs_f = _filter_years(years, tr_ele_map, y0, y1)
+        years_tr, tr_abs_f = _fill_between_years(
+            years_tr,
+            tr_abs_f,
+            y0,
+            y1,
+            enabled=fill_years_enabled,
+            method=fill_method,
+            logistic_k=fill_logistic_k,
+        )
 
         st.plotly_chart(
             _stacked_bar(
@@ -544,8 +692,5 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
 
 st.divider()
 st.caption(
-    "Not: Özet grafikte yüzdeler normalize edilmez; her seri toplam nihai elektrik talebine katkı (%) olarak üst üste toplanır. "
-    "Toplam elektrik talebi, FINAL_ENERGY içinde B sütunu 'ELC' olan tüm satırların toplamıdır. "
-    "Ulaştırma grafikleri A sütunundaki kodlardan (yalnız *_ELE) okunur; satır kayması sorun olmaz. "
-    "Zoom için grafik üstünde fare tekerleği (scroll) aktif; modebar açık."
+    "ETKB-EİGM"
 )
