@@ -6,7 +6,8 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="Soğutma ve Veri Merkezleri Analizi", layout="wide")
+st.set_page_config(page_title="Elektrik Talebinin Yeni Dinamikleri", layout="wide")
+st.caption("Soğutma • Veri Merkezleri • Elektrikli Araçlar")
 
 # ============================================================
 # TRANSPORT ELECTRIC CODE MAP (only *_ELE used)
