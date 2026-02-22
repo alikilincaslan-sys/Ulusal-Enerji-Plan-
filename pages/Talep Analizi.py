@@ -338,12 +338,34 @@ if not all_years:
 # Sidebar year range
 st.sidebar.markdown("### Ayarlar")
 ymin, ymax = int(all_years[0]), int(all_years[-1])
-y0, y1 = st.sidebar.slider(
+
+# 5 yıllık adım: mümkünse sadece 5'in katları (örn. 2025, 2030, 2035...)
+_year_opts = [y for y in all_years if int(y) % 5 == 0]
+if len(_year_opts) < 2:
+    _year_opts = all_years[:]  # fallback
+
+def _snap_year(target: int) -> int:
+    return min(_year_opts, key=lambda y: abs(int(y) - int(target)))
+
+STATE_YR = "demand_year_range"
+if STATE_YR not in st.session_state:
+    st.session_state[STATE_YR] = (_year_opts[0], _year_opts[-1])
+
+st.sidebar.markdown("#### Hızlı seçim")
+b1, b2 = st.sidebar.columns(2)
+if b1.button("Net Zero (2025–2050)", use_container_width=True):
+    st.session_state[STATE_YR] = (_snap_year(2025), _snap_year(2050))
+    st.rerun()
+if b2.button("TUEP (2025–2035)", use_container_width=True):
+    st.session_state[STATE_YR] = (_snap_year(2025), _snap_year(2035))
+    st.rerun()
+
+# Yıl aralığı (seçim değiştikçe dosyalar silinmez; dosyalar session_state'te tutuluyor)
+y0, y1 = st.sidebar.select_slider(
     "Senaryo yıl aralığı",
-    min_value=ymin,
-    max_value=ymax,
-    value=(ymin, ymax),
-    step=1,
+    options=_year_opts,
+    value=st.session_state[STATE_YR],
+    key=STATE_YR,
 )
 
 # --- FIX: Tek senaryoda boşluk kalmasın
