@@ -267,6 +267,86 @@ from io import BytesIO
 
 import base64
 st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
+
+# ===============================
+# Global Tooltip Styling (Sunum modu)
+# ===============================
+# Altair/Vega tooltips: CSS ile büyüt (tüm grafiklerde geçerli)
+st.markdown("""
+<style>
+/* ===============================
+   Vega Tooltip (Altair/Vega-Lite)
+   Sunum modu: genel okunabilirlik + SADECE ANA DEĞER (GW satırı) bordo
+   =============================== */
+
+/* Tooltips farklı class/id ile gelebiliyor: hepsini hedefle */
+div.vega-tooltip,
+div.vg-tooltip,
+#vg-tooltip-element {
+    font-size: 16px !important;
+    line-height: 1.25 !important;
+    padding: 10px 12px !important;
+    border-radius: 10px !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,0.18) !important;
+}
+
+/* Tablo hücreleri */
+div.vega-tooltip table td,
+div.vega-tooltip table th,
+div.vg-tooltip table td,
+div.vg-tooltip table th,
+#vg-tooltip-element table td,
+#vg-tooltip-element table th {
+    font-size: 16px !important;
+}
+
+/* Varsayılan: değerler siyah (kırmızı kaldır) */
+div.vega-tooltip table td:last-child,
+div.vg-tooltip table td:last-child,
+#vg-tooltip-element table td:last-child,
+div.vega-tooltip table td.value,
+div.vg-tooltip table td.value,
+#vg-tooltip-element table td.value {
+    color: rgba(0,0,0,0.90) !important;
+    font-weight: 600 !important;
+}
+
+/* Etiketler biraz daha sakin */
+div.vega-tooltip table td:first-child,
+div.vg-tooltip table td:first-child,
+#vg-tooltip-element table td:first-child {
+    color: rgba(0,0,0,0.70) !important;
+    font-weight: 500 !important;
+}
+
+/* SADECE ana değer satırı (genelde 3. satır: Yıl, Teknoloji, GW, Total) bordo */
+div.vega-tooltip table tr:nth-child(3) td:last-child,
+div.vg-tooltip table tr:nth-child(3) td:last-child,
+#vg-tooltip-element table tr:nth-child(3) td:last-child {
+    color: #7A1E2C !important; /* bordo */
+    font-weight: 800 !important;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+# Plotly tooltips: template üzerinden büyüt (fig.update_layout gerektirmeden çoğu fig'de geçerli)
+try:
+    import plotly.io as pio
+    # Mevcut default template'i baz alıp hoverlabel'ı büyüt
+    base = pio.templates[pio.templates.default]
+    t = base.layout.to_plotly_json() if hasattr(base, "layout") else {}
+    # Yeni template'i oluştur (mevcut template bozulmasın)
+    pio.templates["tuep_tooltip_big"] = base
+    pio.templates["tuep_tooltip_big"].layout.hoverlabel = dict(
+        bgcolor="white",
+        font=dict(size=16, color="black"),
+        bordercolor="rgba(0,0,0,0.10)"
+    )
+    pio.templates.default = "tuep_tooltip_big"
+except Exception:
+    pass
+
 st.markdown("""
 <style>
 .kpi-wrapper {
