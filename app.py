@@ -276,13 +276,19 @@ st.markdown("""
 <style>
 /* ===============================
    Vega Tooltip (Altair/Vega-Lite)
-   Sunum modu: genel okunabilirlik + SADECE ANA DEĞER (GW satırı) bordo
+   Executive sunum modu:
+   - Tema bağımsız: arka plan her zaman çok açık gri
+   - Genel metin: koyu (okunur)
+   - Ana değer: bordo (heuristic: genelde 2/3/4. satırdaki değer hücresi)
+   Not: Vega tooltip farklı class/id ile gelebilir; hepsini hedefliyoruz.
    =============================== */
 
-/* Tooltips farklı class/id ile gelebiliyor: hepsini hedefle */
+/* Tooltip konteyneri */
 div.vega-tooltip,
 div.vg-tooltip,
 #vg-tooltip-element {
+    background: #f2f2f2 !important;          /* çok açık gri */
+    color: #111111 !important;               /* koyu yazı */
     font-size: 16px !important;
     line-height: 1.25 !important;
     padding: 10px 12px !important;
@@ -290,41 +296,40 @@ div.vg-tooltip,
     box-shadow: 0 10px 26px rgba(0,0,0,0.18) !important;
 }
 
-/* Tablo hücreleri */
-div.vega-tooltip table td,
-div.vega-tooltip table th,
-div.vg-tooltip table td,
-div.vg-tooltip table th,
-#vg-tooltip-element table td,
-#vg-tooltip-element table th {
-    font-size: 16px !important;
+/* Tooltip içindeki tüm metinleri görünür yap (dark mode override dahil) */
+div.vega-tooltip *,
+div.vg-tooltip *,
+#vg-tooltip-element * {
+    color: #111111 !important;
 }
 
-/* Varsayılan: değerler siyah (kırmızı kaldır) */
-div.vega-tooltip table td:last-child,
-div.vg-tooltip table td:last-child,
-#vg-tooltip-element table td:last-child,
-div.vega-tooltip table td.value,
-div.vg-tooltip table td.value,
-#vg-tooltip-element table td.value {
-    color: rgba(0,0,0,0.90) !important;
+/* Tablo başlık/hücreler */
+div.vega-tooltip table th,
+div.vg-tooltip table th,
+#vg-tooltip-element table th {
     font-weight: 600 !important;
 }
 
-/* Etiketler biraz daha sakin */
-div.vega-tooltip table td:first-child,
-div.vg-tooltip table td:first-child,
-#vg-tooltip-element table td:first-child {
-    color: rgba(0,0,0,0.70) !important;
-    font-weight: 500 !important;
-}
+/* ------------------------------
+   ANA DEĞERİ BORDO YAP
+   Vega tooltip satır sayısı grafik tipine göre değişiyor:
+   - Çizgi grafik: genelde 3 satır (Senaryo, Yıl, Değer) -> 3. satır
+   - Stacked bar: genelde 4–5 satır (Senaryo, Yıl, Teknoloji, Değer, Total) -> 4. satır
+   - Basit tooltip: genelde 2 satır -> 2. satır
+   Heuristic: 2/3/4. satırların son hücresini bordo yap.
+   ------------------------------ */
 
-/* SADECE ana değer satırı (genelde 3. satır: Yıl, Teknoloji, GW, Total) bordo */
+div.vega-tooltip table tr:nth-child(2) td:last-child,
+div.vg-tooltip table tr:nth-child(2) td:last-child,
+#vg-tooltip-element table tr:nth-child(2) td:last-child,
 div.vega-tooltip table tr:nth-child(3) td:last-child,
 div.vg-tooltip table tr:nth-child(3) td:last-child,
-#vg-tooltip-element table tr:nth-child(3) td:last-child {
-    color: #7A1E2C !important; /* bordo */
-    font-weight: 800 !important;
+#vg-tooltip-element table tr:nth-child(3) td:last-child,
+div.vega-tooltip table tr:nth-child(4) td:last-child,
+div.vg-tooltip table tr:nth-child(4) td:last-child,
+#vg-tooltip-element table tr:nth-child(4) td:last-child {
+    color: #7a1e2a !important; /* bordo */
+    font-weight: 700 !important;
 }
 
 </style>
