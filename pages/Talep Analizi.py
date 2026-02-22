@@ -278,7 +278,7 @@ def _sum_series_map(series_map: Dict[str, List[float]]) -> List[float]:
 # ============================================================
 # UI
 # ============================================================
-st.title("Soğutma ve Veri Merkezleri Analizi")
+st.title("Elektrik Talebinin Yeni Dinamikleri")
 st.caption("Demand Excel dosyalarını (1–3 senaryo) yükle. Grafikler FINAL_ENERGY sekmesinden okunur.")
 
 STATE_KEY = "demand_files_v_codebased"
