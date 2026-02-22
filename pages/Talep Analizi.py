@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="Elektrikli Araçlar, Soğutma ve Veri Merkezleri Analizi", layout="wide")
+st.set_page_config(page_title="Soğutma ve Veri Merkezleri Analizi", layout="wide")
 
 # ============================================================
 # TRANSPORT ELECTRIC CODE MAP (only *_ELE used)
@@ -156,6 +156,42 @@ def _stacked_bar(
 
     return fig
 
+def _stacked_bar_with_total_line(
+    years: List[int],
+    series_map: Dict[str, List[float]],
+    total_line: List[float],
+    title: str,
+    *,
+    y_title: str,
+    y_tickformat: str,
+) -> go.Figure:
+    """Stacked bar (components) + total line on the same y-axis."""
+    fig = _stacked_bar(
+        years,
+        series_map,
+        title,
+        y_title=y_title,
+        y_tickformat=y_tickformat,
+        use_percent_suffix=False,
+        barnorm_percent=False,
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=total_line,
+            name="Toplam Nihai Elektrik Talebi",
+            mode="lines+markers",
+        )
+    )
+
+    # Hover: keep bars as-is; customize total line for clarity
+    fig.data[-1].update(hovertemplate="%{x}<br>Toplam: %{y:,.0f}<extra></extra>")
+
+    # Ensure the line appears on top
+    fig.update_layout(barmode="stack", hovermode="x unified")
+    return fig
+
 
 def _total_elc_from_B_filter(df_raw: pd.DataFrame, n_years: int) -> List[float]:
     if df_raw is None or df_raw.empty:
@@ -241,7 +277,7 @@ def _sum_series_map(series_map: Dict[str, List[float]]) -> List[float]:
 # ============================================================
 # UI
 # ============================================================
-st.title("Elektrikli Araçlar, Soğutma ve Veri Merkezleri Analizi")
+st.title("Soğutma ve Veri Merkezleri Analizi")
 st.caption("Demand Excel dosyalarını (1–3 senaryo) yükle. Grafikler FINAL_ENERGY sekmesinden okunur.")
 
 STATE_KEY = "demand_files_v_codebased"
@@ -358,7 +394,34 @@ for i, (fname, years, mat, codes, df_raw, err) in enumerate(pre_read):
             key=f"demand_{i}_summary_contrib_pct",
         )
 
+        
         # ============================================================
+        # A2) SUMMARY (ABS components + TOTAL as line)
+        # ============================================================
+        summary_abs = {
+            "Veri Merkezleri": services_dc_abs,
+            "Soğutma": household_cooling_abs,
+            "Elektrikli Araçlar": transport_ele_total_abs,
+        }
+        years_abs, summary_abs_f = _filter_years(years, summary_abs, y0, y1)
+        years_tot, tot_map_f = _filter_years(years, {"Toplam": total_elc}, y0, y1)
+        total_elc_f = tot_map_f.get("Toplam", [0.0] * len(years_abs))
+
+        st.plotly_chart(
+            _stacked_bar_with_total_line(
+                years_abs,
+                summary_abs_f,
+                total_elc_f,
+                "Veri Merkezi, Soğutma ve Elektrikli Araçlar (GWh) + Toplam Nihai Elektrik Talebi",
+                y_title="GWh",
+                y_tickformat=",.0f",
+            ),
+            use_container_width=True,
+            config=PLOTLY_CONFIG,
+            key=f"demand_{i}_summary_contrib_abs_total",
+        )
+
+# ============================================================
         # B) Household (abs + % distribution)
         # ============================================================
         hh_abs = _build_household_series(mat)
