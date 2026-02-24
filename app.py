@@ -2752,25 +2752,26 @@ if _selected_ordered:
     for i, scn in enumerate(_selected_ordered):
         scenario_color = SCENARIO_PALETTE[i % len(SCENARIO_PALETTE)]
         c1, c2, c3 = st.columns([14, 1, 1], vertical_alignment="center")
-      with c1:
-    st.markdown(
-        f"""
-        <div style="display:flex; align-items:center;">
-            <div style="
-                width:12px;
-                height:12px;
-                border-radius:50%;
-                background:{scenario_color};
-                margin-right:10px;
-                flex:0 0 auto;
+        with c1:
+           st.markdown(
+             f"""
+             <div style="display:flex; align-items:center;">
+                <div style="
+                   width:12px;
+                   height:12px;
+                   border-radius:50%;
+                   background:{scenario_color};
+                   margin-right:10px;
+                   flex:0 0 auto;
             "></div>
             <div style="font-weight:600;">
                 {i+1}. {scn}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+               </div>
+           </div>
+           """,
+           unsafe_allow_html=True
+       )
+       
         with c2:
             if st.button("▲", key=f"scn_up_{i}_{hash(scn)}", disabled=(i == 0)):
                 _selected_ordered[i-1], _selected_ordered[i] = _selected_ordered[i], _selected_ordered[i-1]
