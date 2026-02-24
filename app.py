@@ -405,6 +405,56 @@ st.markdown("""
     background: rgba(239,68,68,0.15);
     color: #EF4444;
 }
+
+/* ===============================
+   Sticky Scenario Header (Executive KPI)
+   =============================== */
+.sticky-scnbar{
+    position: sticky;
+    top: 3.25rem;              /* Streamlit top bar offset */
+    z-index: 999;
+    background: rgba(15, 23, 42, 0.92); /* slate-900 w/ alpha */
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 10px 12px;
+    margin: 8px 0 14px 0;
+    backdrop-filter: blur(6px);
+}
+.sticky-scnbar .sticky-title{
+    font-size: 12px;
+    letter-spacing: .02em;
+    color: rgba(229,231,235,0.85);
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+.sticky-scnbar .sticky-items{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.sticky-scnbar .sticky-item{
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    font-size: 13px;
+    color: rgba(255,255,255,0.92);
+    line-height: 1.1;
+    max-width: 100%;
+}
+.sticky-scnbar .sticky-dot{
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.40);
+}
+@media (max-width: 900px){
+    .sticky-scnbar{ top: 3.6rem; }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -2687,11 +2737,49 @@ scenario_to_file = dict(zip(scenario_names_unique, uploaded_files))
 default_n = 3 if len(scenario_names_unique) >= 3 else len(scenario_names_unique)
 default_selected = scenario_names_unique[:default_n]
 
-selected_scenarios = st.multiselect(
+selected_scenarios_raw = st.multiselect(
     "Karşılaştırılacak senaryolar",
     options=scenario_names_unique,
     default=default_selected,
+    key="scenario_multiselect",
 )
+
+# -------------------------
+# User-controlled scenario order (⬆️ / ⬇️)
+# -------------------------
+if "scenario_order" not in st.session_state:
+    st.session_state["scenario_order"] = list(default_selected)
+
+# keep only valid names (file list might change)
+st.session_state["scenario_order"] = [s for s in st.session_state["scenario_order"] if s in scenario_names_unique]
+
+# build ordered selection: existing order first, then any newly selected appended
+_selected_set = set(selected_scenarios_raw or [])
+_selected_ordered = [s for s in st.session_state["scenario_order"] if s in _selected_set]
+_selected_ordered += [s for s in (selected_scenarios_raw or []) if s not in _selected_ordered]
+
+# persist order for next rerun
+st.session_state["scenario_order"] = list(_selected_ordered)
+
+# show reorder controls (main area)
+if _selected_ordered:
+    st.caption("Seçili senaryoların sırası (⬆️/⬇️ ile değiştir):")
+    for i, scn in enumerate(_selected_ordered):
+        c1, c2, c3 = st.columns([14, 1, 1], vertical_alignment="center")
+        with c1:
+            st.markdown(f"**{i+1}.** {scn}")
+        with c2:
+            if st.button("⬆️", key=f"scn_up_{i}_{hash(scn)}", disabled=(i == 0)):
+                _selected_ordered[i-1], _selected_ordered[i] = _selected_ordered[i], _selected_ordered[i-1]
+                st.session_state["scenario_order"] = list(_selected_ordered)
+                st.rerun()
+        with c3:
+            if st.button("⬇️", key=f"scn_dn_{i}_{hash(scn)}", disabled=(i == len(_selected_ordered) - 1)):
+                _selected_ordered[i+1], _selected_ordered[i] = _selected_ordered[i], _selected_ordered[i+1]
+                st.session_state["scenario_order"] = list(_selected_ordered)
+                st.rerun()
+
+selected_scenarios = list(_selected_ordered)
 
 with st.sidebar:
     st.markdown("**Karşılaştırılan senaryolar (tam ad):**")
@@ -2705,6 +2793,7 @@ if not selected_scenarios:
 if len(selected_scenarios) >= 4:
     st.warning("4+ senaryoda okunabilirlik için en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
+    st.session_state["scenario_order"] = list(selected_scenarios)
 
 if len(selected_scenarios) == 2:
     def _on_diff_toggle():
@@ -3275,6 +3364,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
         ],
     )
     if style == "Çizgi":
+        # Hover: noktayı tutturma derdi olmadan "en yakın" noktayı seç
         hover = alt.selection_point(
             fields=["scenario"],
             on="mouseover",
@@ -3285,30 +3375,35 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 
         base_h = base.add_params(hover)
 
+        x_enc = alt.X(
+            "year:Q",
+            title="Yıl",
+            scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
+            axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
+        )
+
+        # Çizgi
         lines = base_h.mark_line(interpolate="monotone").encode(
-            x=alt.X(
-                "year:Q",
-                title="Yıl",
-                scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
-                axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
-            ),
+            x=x_enc,
             y=_y_enc(),
             opacity=alt.condition(hover, alt.value(1.0), alt.value(0.25)),
             strokeWidth=alt.condition(hover, alt.value(3), alt.value(2)),
         )
 
-        points = base_h.mark_circle(size=70).encode(
-            x=alt.X(
-                "year:Q",
-                title="Yıl",
-                scale=alt.Scale(domain=[min(year_vals), max(year_vals)]),
-                axis=alt.Axis(values=year_vals, format="d", labelAngle=0),
-            ),
+        # Geniş "yakalama alanı" (görünmez): tooltip noktaya değil daha geniş alana takılsın
+        hitbox = base_h.mark_circle(opacity=0, size=120).encode(
+            x=x_enc,
+            y=_y_enc(),
+        )
+
+        # Hover noktasını vurgula
+        points = base_h.mark_circle(size=90).encode(
+            x=x_enc,
             y=_y_enc(),
             opacity=alt.condition(hover, alt.value(1.0), alt.value(0.0)),
         ).transform_filter(hover)
 
-        chart = (lines + points).configure_axis(grid=True, gridOpacity=0.15)
+        chart = alt.layer(lines, hitbox, points).configure_axis(grid=True, gridOpacity=0.15)
 
     elif style == "Bar (Stack)":
         chart = base.mark_bar().encode(
@@ -3519,9 +3614,49 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
 
 
 # -----------------------------
+
+
+def _html_escape(s: str) -> str:
+    try:
+        return (str(s)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;"))
+    except Exception:
+        return str(s)
+
+def _render_sticky_scenario_bar(scenarios: list[str]):
+    """Sticky header that keeps scenario names visible while scrolling the KPI area."""
+    try:
+        if not scenarios:
+            return
+
+        # Color dots: reuse SCENARIO_PALETTE order (same as charts when selected_scenarios is set)
+        items_html = []
+        for i, scn in enumerate(scenarios):
+            dot = SCENARIO_PALETTE[i % len(SCENARIO_PALETTE)] if isinstance(SCENARIO_PALETTE, list) and len(SCENARIO_PALETTE) else "rgba(255,255,255,0.40)"
+            items_html.append(
+                f"<div class='sticky-item'><span class='sticky-dot' style='background:{dot}'></span><span>{i+1}. {_html_escape(scn)}</span></div>"
+            )
+
+        st.markdown(
+            "<div class='sticky-scnbar'>"
+            "<div class='sticky-title'>Seçili senaryolar (scroll boyunca görünür):</div>"
+            "<div class='sticky-items'>" + "".join(items_html) + "</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        st.caption("Seçili senaryolar: " + ", ".join([str(s) for s in scenarios]))
+
+
 # KPI row (per scenario)
 # -----------------------------
 st.subheader("Yönetici Özeti")
+try:
+    _render_sticky_scenario_bar(list(selected_scenarios) if isinstance(selected_scenarios, list) else [])
+except Exception:
+    pass
 ncols = _ncols_for_selected(len(selected_scenarios))
 cols = st.columns(ncols)
 
@@ -3581,6 +3716,7 @@ def _kpi_for_bundle(b):
     cap_total = b.get("cap_total")
     ye = b.get("ye_both")
     dep = b.get("dependency_ratio")
+    electr = b.get("electrification_ratio")
     co2 = b.get("co2")
 
     cap_mix = b.get("cap_mix")
@@ -3647,6 +3783,9 @@ def _kpi_for_bundle(b):
     dep_1 = _year_value(dep, y1) if y1 else np.nan
     dep_0 = _year_value(dep, y0) if y1 else np.nan
 
+    elec_1 = _year_value(electr, y1, series="Elektrifikasyon Oranı (%)") if y1 else np.nan
+    elec_0 = _year_value(electr, y0, series="Elektrifikasyon Oranı (%)") if y1 else np.nan
+
     co2_1 = _year_value(co2, y1, series="CO2 Emisyonları (ktn CO2)") if y1 else np.nan
     co2_0 = _year_value(co2, y0, series="CO2 Emisyonları (ktn CO2)") if y1 else np.nan
 
@@ -3699,6 +3838,8 @@ def _kpi_for_bundle(b):
         "ye_int_1": ye_int_1,
         "dep_0": dep_0,
         "dep_1": dep_1,
+        "elec_0": elec_0,
+        "elec_1": elec_1,
         "pc_0": pc_0,
         "pc_1": pc_1,
         "cp_0": cp_0,
@@ -3800,6 +3941,14 @@ for i, kpi in enumerate(kpis[:ncols]):
             delta_color="inverse",
         )
 
+        # 7b) Elektrifikasyon oranı
+        render_metric_card(
+            f"Elektrifikasyon Oranı (%, {yr})",
+            _fmt_range(kpi.get("elec_0", np.nan), kpi.get("elec_1", np.nan), ".1f", "%"),
+            delta=_metric_delta(kpi.get("elec_0", np.nan), kpi.get("elec_1", np.nan), kind="pp"),
+            delta_color="normal",
+        )
+
         # 8) Kişi başına elektrik
         render_metric_card(
             f"Kişi Başına Elektrik (kWh/kişi, {yr})",
@@ -3838,7 +3987,7 @@ if len(kpis) > ncols:
                 f"Toplam Arz: {((kpi.get('supply_1', np.nan)*GWH_TO_KTOE) if _energy_unit_is_ktoe() else kpi.get('supply_1', np.nan)):,.0f} {_energy_unit_label()} | "
                 f"Kurulu Güç: {kpi.get('cap_1', np.nan):,.0f} GW | "
                 f"YE: {kpi.get('ye_total_1', np.nan):.1f}% | Kesintili YE: {kpi.get('ye_int_1', np.nan):.1f}% | "
-                f"Dışa Bağımlılık: {kpi.get('dep_1', np.nan):.1f}% | "
+                f"Dışa Bağımlılık: {kpi.get('dep_1', np.nan):.1f}% | "f"Elektrifikasyon: {kpi.get('elec_1', np.nan):.1f}% | "
                 f"KB Elektrik: {kpi.get('pc_1', np.nan):,.0f} kWh/kişi | "
                 f"Karbon: {kpi.get('cp_1', np.nan):,.0f} $/tCO₂ | "
                 f"Elektrik Emisyonu: {kpi.get('co2_1', np.nan):,.0f} ktn CO₂"
