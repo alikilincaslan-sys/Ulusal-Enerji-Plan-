@@ -266,7 +266,9 @@ import altair as alt
 from io import BytesIO
 
 import base64
-st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
+st.set_page_config(page_title="TUEP Enerji Modeli Arayüzü", layout="wide")
+st.markdown("""
+<style>
 
 # ===============================
 # Global Tooltip Styling (Sunum modu)
@@ -3570,6 +3572,8 @@ st.subheader("Yönetici Özeti")
 ncols = _ncols_for_selected(len(selected_scenarios))
 cols = st.columns(ncols)
 
+
+    
 def _year_value(df: pd.DataFrame, year: int, series: str | None = None) -> float:
     """Return value for (year[, series]) from a 4-col long df: scenario, year, value, [series]."""
     if df is None or df.empty or year is None:
