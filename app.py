@@ -332,6 +332,16 @@ div.vg-tooltip table tr:nth-child(4) td:last-child,
     font-weight: 700 !important;
 }
 
+/* Scenario order color dot */
+.scenario-dot{
+  display:inline-block;
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  margin-right:8px;
+  position:relative;
+  top:-1px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -2740,6 +2750,7 @@ _selected_ordered = list(st.session_state.get("scenario_order", selected_scenari
 if _selected_ordered:
     st.caption("Seçili senaryoların sırası (▲/▼ ile değiştir):")
     for i, scn in enumerate(_selected_ordered):
+        scenario_color = SCENARIO_PALETTE[i % len(SCENARIO_PALETTE)]
         c1, c2, c3 = st.columns([14, 1, 1], vertical_alignment="center")
         with c1:
             st.markdown(f"**{i+1}.** {scn}")
