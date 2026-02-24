@@ -405,56 +405,6 @@ st.markdown("""
     background: rgba(239,68,68,0.15);
     color: #EF4444;
 }
-
-/* ===============================
-   Sticky Scenario Header (Executive KPI)
-   =============================== */
-.sticky-scnbar{
-    position: sticky;
-    top: 3.25rem;              /* Streamlit top bar offset */
-    z-index: 999;
-    background: rgba(15, 23, 42, 0.92); /* slate-900 w/ alpha */
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 14px;
-    padding: 10px 12px;
-    margin: 8px 0 14px 0;
-    backdrop-filter: blur(6px);
-}
-.sticky-scnbar .sticky-title{
-    font-size: 12px;
-    letter-spacing: .02em;
-    color: rgba(229,231,235,0.85);
-    margin-bottom: 6px;
-    font-weight: 600;
-}
-.sticky-scnbar .sticky-items{
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-}
-.sticky-scnbar .sticky-item{
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.08);
-    font-size: 13px;
-    color: rgba(255,255,255,0.92);
-    line-height: 1.1;
-    max-width: 100%;
-}
-.sticky-scnbar .sticky-dot{
-    width: 10px;
-    height: 10px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.40);
-}
-@media (max-width: 900px){
-    .sticky-scnbar{ top: 3.6rem; }
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -3614,49 +3564,9 @@ def _donut_chart(df: pd.DataFrame, category_col: str, value_col: str, title: str
 
 
 # -----------------------------
-
-
-def _html_escape(s: str) -> str:
-    try:
-        return (str(s)
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;"))
-    except Exception:
-        return str(s)
-
-def _render_sticky_scenario_bar(scenarios: list[str]):
-    """Sticky header that keeps scenario names visible while scrolling the KPI area."""
-    try:
-        if not scenarios:
-            return
-
-        # Color dots: reuse SCENARIO_PALETTE order (same as charts when selected_scenarios is set)
-        items_html = []
-        for i, scn in enumerate(scenarios):
-            dot = SCENARIO_PALETTE[i % len(SCENARIO_PALETTE)] if isinstance(SCENARIO_PALETTE, list) and len(SCENARIO_PALETTE) else "rgba(255,255,255,0.40)"
-            items_html.append(
-                f"<div class='sticky-item'><span class='sticky-dot' style='background:{dot}'></span><span>{i+1}. {_html_escape(scn)}</span></div>"
-            )
-
-        st.markdown(
-            "<div class='sticky-scnbar'>"
-            "<div class='sticky-title'>Seçili senaryolar (scroll boyunca görünür):</div>"
-            "<div class='sticky-items'>" + "".join(items_html) + "</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-    except Exception:
-        st.caption("Seçili senaryolar: " + ", ".join([str(s) for s in scenarios]))
-
-
 # KPI row (per scenario)
 # -----------------------------
 st.subheader("Yönetici Özeti")
-try:
-    _render_sticky_scenario_bar(list(selected_scenarios) if isinstance(selected_scenarios, list) else [])
-except Exception:
-    pass
 ncols = _ncols_for_selected(len(selected_scenarios))
 cols = st.columns(ncols)
 
