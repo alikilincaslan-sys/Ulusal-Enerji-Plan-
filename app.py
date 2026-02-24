@@ -266,9 +266,7 @@ import altair as alt
 from io import BytesIO
 
 import base64
-st.set_page_config(page_title="TUEP Enerji Modeli Arayüzü", layout="wide")
-st.markdown("""
-<style>
+st.set_page_config(page_title="Power Generation Dashboard", layout="wide")
 
 # ===============================
 # Global Tooltip Styling (Sunum modu)
@@ -361,13 +359,25 @@ st.markdown("""
 }
 
 .kpi-card {
+    position: relative;
     background: linear-gradient(145deg, #0f172a, #111827);
-    padding: 18px 20px 16px 20px;   /* daha kompakt */
+    padding: 18px 20px 16px 28px;   /* daha kompakt */
     border-radius: 16px;
     border: 1px solid rgba(255,255,255,0.06);
     box-shadow: 0 8px 22px rgba(0,0,0,0.35);
     transition: all 0.25s ease;
     min-height: 115px;             /* kart yüksekliği küçüldü */
+    overflow: hidden;
+}
+
+/* SOL SENARYO RENK ŞERİDİ (accent) */
+.kpi-accent {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    border-radius: 16px 0 0 16px;
 }
 
 .kpi-card:hover {
@@ -413,13 +423,19 @@ st.markdown("""
 # ===============================
 # Executive KPI Card Renderer (Power BI-like)
 # ===============================
-def render_metric_card(label, value, delta=None, delta_color="normal", help=None):
+def render_metric_card(label, value, delta=None, delta_color="normal", help=None, accent_color=None):
     """Drop-in replacement for st.metric with a more professional card look.
 
     - delta_color: 'normal' (default) or 'inverse' (where a decrease is good)
+    - accent_color: optional HEX color for a left accent bar (scenario color). If None, falls back to
+      st.session_state.get('_kpi_accent_color').
     - help is accepted for API compatibility (ignored visually).
     """
     try:
+        # default accent color from current scenario context (if set)
+        if not accent_color:
+            accent_color = st.session_state.get("_kpi_accent_color", None)
+
         delta_txt = None if delta is None else str(delta).strip()
         if not delta_txt or delta_txt in {"—", "None", "nan"}:
             delta_txt = None
@@ -446,10 +462,15 @@ def render_metric_card(label, value, delta=None, delta_color="normal", help=None
             cls = "kpi-up" if positive else "kpi-down"
             badge_html = f'<div class="kpi-badge {cls}">{arrow} {delta_txt}</div>'
 
+        accent_html = ""
+        if accent_color:
+            accent_html = f'<div class="kpi-accent" style="background:{accent_color};"></div>'
+
         st.markdown(
             f"""
             <div class="kpi-wrapper">
               <div class="kpi-card">
+                {accent_html}
                 <div class="kpi-title">{label}</div>
                 <div class="kpi-value">{value}</div>
                 {badge_html}
@@ -2689,49 +2710,11 @@ scenario_to_file = dict(zip(scenario_names_unique, uploaded_files))
 default_n = 3 if len(scenario_names_unique) >= 3 else len(scenario_names_unique)
 default_selected = scenario_names_unique[:default_n]
 
-selected_scenarios_raw = st.multiselect(
+selected_scenarios = st.multiselect(
     "Karşılaştırılacak senaryolar",
     options=scenario_names_unique,
     default=default_selected,
-    key="scenario_multiselect",
 )
-
-# -------------------------
-# User-controlled scenario order (⬆️ / ⬇️)
-# -------------------------
-if "scenario_order" not in st.session_state:
-    st.session_state["scenario_order"] = list(default_selected)
-
-# keep only valid names (file list might change)
-st.session_state["scenario_order"] = [s for s in st.session_state["scenario_order"] if s in scenario_names_unique]
-
-# build ordered selection: existing order first, then any newly selected appended
-_selected_set = set(selected_scenarios_raw or [])
-_selected_ordered = [s for s in st.session_state["scenario_order"] if s in _selected_set]
-_selected_ordered += [s for s in (selected_scenarios_raw or []) if s not in _selected_ordered]
-
-# persist order for next rerun
-st.session_state["scenario_order"] = list(_selected_ordered)
-
-# show reorder controls (main area)
-if _selected_ordered:
-    st.caption("Seçili senaryoların sırası (⬆️/⬇️ ile değiştir):")
-    for i, scn in enumerate(_selected_ordered):
-        c1, c2, c3 = st.columns([14, 1, 1], vertical_alignment="center")
-        with c1:
-            st.markdown(f"**{i+1}.** {scn}")
-        with c2:
-            if st.button("⬆️", key=f"scn_up_{i}_{hash(scn)}", disabled=(i == 0)):
-                _selected_ordered[i-1], _selected_ordered[i] = _selected_ordered[i], _selected_ordered[i-1]
-                st.session_state["scenario_order"] = list(_selected_ordered)
-                st.rerun()
-        with c3:
-            if st.button("⬇️", key=f"scn_dn_{i}_{hash(scn)}", disabled=(i == len(_selected_ordered) - 1)):
-                _selected_ordered[i+1], _selected_ordered[i] = _selected_ordered[i], _selected_ordered[i+1]
-                st.session_state["scenario_order"] = list(_selected_ordered)
-                st.rerun()
-
-selected_scenarios = list(_selected_ordered)
 
 with st.sidebar:
     st.markdown("**Karşılaştırılan senaryolar (tam ad):**")
@@ -2745,7 +2728,6 @@ if not selected_scenarios:
 if len(selected_scenarios) >= 4:
     st.warning("4+ senaryoda okunabilirlik için en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
-    st.session_state["scenario_order"] = list(selected_scenarios)
 
 if len(selected_scenarios) == 2:
     def _on_diff_toggle():
@@ -3572,8 +3554,6 @@ st.subheader("Yönetici Özeti")
 ncols = _ncols_for_selected(len(selected_scenarios))
 cols = st.columns(ncols)
 
-
-    
 def _year_value(df: pd.DataFrame, year: int, series: str | None = None) -> float:
     """Return value for (year[, series]) from a 4-col long df: scenario, year, value, [series]."""
     if df is None or df.empty or year is None:
@@ -3765,6 +3745,8 @@ def _kpi_for_bundle(b):
 kpis = [_kpi_for_bundle(b) for b in bundles]
 
 for i, kpi in enumerate(kpis[:ncols]):
+    # scenario accent color for KPI cards (matches scenario palette bar)
+    st.session_state["_kpi_accent_color"] = SCENARIO_PALETTE[i % len(SCENARIO_PALETTE)]
     with cols[i]:
         st.markdown(f"**{kpi['scenario']}**")
 
