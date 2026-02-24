@@ -4216,7 +4216,20 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
             _stacked_small_multiples(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map, show_legend=show_legend)
         else:
             _stacked_clustered(df_use, title_use, x_field, stack_field, y_title_use, category_title, value_format_use, order=order, is_percent=is_percent, color_map=color_map, show_legend=show_legend)
+
     _render_main()
+
+    # --- Scenario order hint (under stacked charts) ---
+    try:
+        _order = st.session_state.get("scenario_order") or globals().get("selected_scenarios") or []
+    except Exception:
+        _order = globals().get("selected_scenarios") or []
+    if isinstance(_order, (tuple, set)):
+        _order = list(_order)
+    if _order and len(_order) >= 2:
+        _parts = [f"{i}. {s}" for i, s in enumerate(_order, 1)]
+        st.caption("Senaryo sırası: " + "  |  ".join(_parts))
+
 # =========================
 # Waterfall helpers (unchanged)
 # =========================
