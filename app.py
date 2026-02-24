@@ -2716,10 +2716,7 @@ selected_scenarios = st.multiselect(
     default=default_selected,
 )
 
-with st.sidebar:
-    st.markdown("**Karşılaştırılan senaryolar (tam ad):**")
-    for i, scn in enumerate(selected_scenarios, 1):
-        st.markdown(f"{i}. {scn}")
+# (sidebar scenario list rendered after ordering)
 
 if not selected_scenarios:
     st.info("En az 1 senaryo seçin.")
@@ -2728,6 +2725,43 @@ if not selected_scenarios:
 if len(selected_scenarios) >= 4:
     st.warning("4+ senaryoda okunabilirlik için en fazla 3 senaryo gösterilecek.")
     selected_scenarios = selected_scenarios[:3]
+
+
+# =========================
+# Senaryo sıralama (▲/▼)
+# =========================
+# Seçim değiştiyse sırayı yeniden başlat
+if ("scenario_order" not in st.session_state) or (set(st.session_state["scenario_order"]) != set(selected_scenarios)):
+    st.session_state["scenario_order"] = list(selected_scenarios)
+
+_selected_ordered = list(st.session_state.get("scenario_order", selected_scenarios))
+
+# show reorder controls (main area)
+if _selected_ordered:
+    st.caption("Seçili senaryoların sırası (▲/▼ ile değiştir):")
+    for i, scn in enumerate(_selected_ordered):
+        c1, c2, c3 = st.columns([14, 1, 1], vertical_alignment="center")
+        with c1:
+            st.markdown(f"**{i+1}.** {scn}")
+        with c2:
+            if st.button("▲", key=f"scn_up_{i}_{hash(scn)}", disabled=(i == 0)):
+                _selected_ordered[i-1], _selected_ordered[i] = _selected_ordered[i], _selected_ordered[i-1]
+                st.session_state["scenario_order"] = list(_selected_ordered)
+                st.rerun()
+        with c3:
+            if st.button("▼", key=f"scn_dn_{i}_{hash(scn)}", disabled=(i == len(_selected_ordered) - 1)):
+                _selected_ordered[i+1], _selected_ordered[i] = _selected_ordered[i], _selected_ordered[i+1]
+                st.session_state["scenario_order"] = list(_selected_ordered)
+                st.rerun()
+
+# Sidebar'da tam adları sıralı göster
+with st.sidebar:
+    st.markdown("**Karşılaştırılan senaryolar (tam ad):**")
+    for i, scn in enumerate(st.session_state.get("scenario_order", selected_scenarios), 1):
+        st.markdown(f"{i}. {scn}")
+
+# Bundan sonra her yerde sıralı listeyi kullan
+selected_scenarios = list(st.session_state.get("scenario_order", selected_scenarios))
 
 if len(selected_scenarios) == 2:
     def _on_diff_toggle():
