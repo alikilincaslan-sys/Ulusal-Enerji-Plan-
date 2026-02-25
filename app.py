@@ -101,28 +101,72 @@ SCENARIO_PALETTE = [
 # Sentinel for optional legend argument in encodings
 _LEGEND_DEFAULT = object()
 
-def _scenario_color_encoding(df, field: str = "scenario", title: str = "Senaryo", legend=None):
-    """Scenario renklerini tüm çizgi grafiklerde sabit ve ayrışır yap."""
+# -----------------------------
+# Scenario display-name mapping (UI relabel, does NOT change data)
+# -----------------------------
+def _get_scenario_label_map() -> dict:
     try:
+        m = st.session_state.get("scenario_label_map", {}) or {}
+        if isinstance(m, dict):
+            return {str(k): str(v) for k, v in m.items() if k is not None and v is not None}
+        return {}
+    except Exception:
+        return {}
+
+def _ensure_scenario_disp(df: pd.DataFrame, field: str = "scenario", out_field: str = "scenario_disp") -> pd.DataFrame:
+    """Ensure df has a scenario display column (scenario_disp) based on UI mapping.
+    Always creates out_field (identity mapping if no custom labels).
+    """
+    if df is None or df.empty:
+        return df
+    if field not in df.columns:
+        return df
+    m = _get_scenario_label_map()
+    try:
+        if m:
+            df[out_field] = df[field].astype(str).map(m).fillna(df[field].astype(str))
+        else:
+            df[out_field] = df[field].astype(str)
+    except Exception:
+        df[out_field] = df[field].astype(str)
+    return df
+
+def _scenario_order_disp(order_list):
+    """Map scenario order list to display labels."""
+    if not order_list:
+        return []
+    m = _get_scenario_label_map()
+    return [m.get(str(x), str(x)) for x in order_list]
+
+
+def _scenario_color_encoding(df, field: str = "scenario", title: str = "Senaryo", legend=None):
+    """Scenario renklerini sabit ve ayrışır yap. UI'da verilen etiketleri (scenario_disp) otomatik kullanır."""
+    try:
+        # Ensure display column exists
+        _ensure_scenario_disp(df, field=field, out_field="scenario_disp")
+        use_field = "scenario_disp" if ("scenario_disp" in df.columns) else field
+
         domain = []
         sel = globals().get("selected_scenarios", None)
         if isinstance(sel, list) and len(sel) > 0:
-            domain = [str(s) for s in sel if s is not None]
+            # preserve user's comparison order (mapped to display)
+            domain_raw = [str(s) for s in sel if s is not None]
+            domain = _scenario_order_disp(domain_raw)
         if not domain:
-            domain = [str(x) for x in df[field].dropna().unique().tolist()]
+            domain = [str(x) for x in df[use_field].dropna().unique().tolist()]
 
-        # benzersiz + sırayı koru
+        # unique preserve order
         seen = set()
         domain_u = []
         for d in domain:
             if d not in seen:
-                seen.add(d); domain_u.append(d)
+                seen.add(d)
+                domain_u.append(d)
         domain = domain_u
 
-        # palette assign (cycle)
         rng = [SCENARIO_PALETTE[i % len(SCENARIO_PALETTE)] for i in range(len(domain))]
         return alt.Color(
-            f"{field}:N",
+            f"{use_field}:N",
             title=title,
             sort=domain,
             scale=alt.Scale(domain=domain, range=rng),
@@ -131,29 +175,34 @@ def _scenario_color_encoding(df, field: str = "scenario", title: str = "Senaryo"
     except Exception:
         return alt.Color(f"{field}:N", title=title, legend=legend)
 
-
-
-
 def _scenario_offset_encoding(field: str = "scenario"):
     """Ensure scenario bars are ordered consistently left→right within each year.
 
-    Uses global 'selected_scenarios' if available (preserves the user's comparison order).
+    If the user provided UI display labels, we offset/sort by 'scenario_disp'.
+    Uses global 'selected_scenarios' to preserve comparison order.
     """
     try:
+        m = _get_scenario_label_map()
+        use_field = "scenario_disp" if (m and field == "scenario") else field
+
         sel = globals().get("selected_scenarios", None)
         if isinstance(sel, list) and len(sel) > 0:
-            domain = [str(s) for s in sel if s is not None]
-            # unique preserve order
+            domain_raw = [str(s) for s in sel if s is not None]
+            domain = _scenario_order_disp(domain_raw) if use_field == "scenario_disp" else domain_raw
+
             seen = set()
             dom_u = []
             for d in domain:
                 if d not in seen:
-                    seen.add(d); dom_u.append(d)
+                    seen.add(d)
+                    dom_u.append(d)
             domain = dom_u
-            return alt.XOffset(f"{field}:N", sort=domain)
-        return alt.XOffset(f"{field}:N")
+            return alt.XOffset(f"{use_field}:N", sort=domain)
+
+        return alt.XOffset(f"{use_field}:N")
     except Exception:
         return alt.XOffset(f"{field}:N")
+
 def get_source_color(name):
     if isinstance(name, str):
         for key, val in SOURCE_COLOR_MAP.items():
@@ -2802,6 +2851,29 @@ with st.sidebar:
 # Bundan sonra her yerde sıralı listeyi kullan
 selected_scenarios = list(st.session_state.get("scenario_order", selected_scenarios))
 
+# =========================
+# Senaryo etiketleri (sadece görüntü)
+# =========================
+with st.sidebar:
+    st.divider()
+    st.markdown("### Senaryo İsimleri (Görüntü)")
+    st.caption("Excel'deki orijinal senaryo adları aynı kalır; burada yalnızca ekranda görünen isimleri değiştirirsin.")
+    use_custom_labels = st.checkbox("Özel etiketleri kullan", value=True, key="use_custom_scenario_labels")
+
+    if "scenario_label_map" not in st.session_state:
+        st.session_state["scenario_label_map"] = {}
+
+    if use_custom_labels and selected_scenarios:
+        with st.expander("Etiketleri düzenle", expanded=False):
+            for i, scn in enumerate(selected_scenarios, 1):
+                default_lbl = str(st.session_state["scenario_label_map"].get(str(scn), str(scn)))
+                new_lbl = st.text_input(f"{i}. senaryo etiketi", value=default_lbl, key=f"scn_lbl_{i}_{hash(str(scn))}")
+                st.session_state["scenario_label_map"][str(scn)] = str(new_lbl).strip() if str(new_lbl).strip() else str(scn)
+    else:
+        # Disable mapping
+        st.session_state["scenario_label_map"] = {}
+
+
 if len(selected_scenarios) == 2:
     def _on_diff_toggle():
         if st.session_state.get("diff_mode_enabled", False):
@@ -3247,6 +3319,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
         return
 
     dfp = df.copy()
+    _ensure_scenario_disp(dfp, field="scenario", out_field="scenario_disp")
     dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
     dfp["value"] = pd.to_numeric(dfp["value"], errors="coerce")
     dfp = dfp.dropna(subset=["year", "value", "scenario"])
@@ -3365,7 +3438,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
     base = alt.Chart(dfp).encode(
         color=_scenario_color_encoding(dfp, "scenario", title="Senaryo", legend=alt.Legend(orient='right', direction='vertical', labelLimit=180, titleLimit=0)),
         tooltip=[
-            alt.Tooltip("scenario:N", title="Senaryo"),
+            alt.Tooltip("scenario_disp:N", title="Senaryo"),
             alt.Tooltip("year:O", title="Yıl"),
             alt.Tooltip("value:Q", title=y_title, format=value_format),
         ],
@@ -3526,7 +3599,7 @@ def _sparkline_chart(
     base = alt.Chart(dfp).encode(
         color=_scenario_color_encoding(dfp, "scenario", title="Senaryo", legend=None),
         tooltip=[
-            alt.Tooltip("scenario:N", title="Senaryo"),
+            alt.Tooltip("scenario_disp:N", title="Senaryo"),
             alt.Tooltip("year:O", title="Yıl"),
             alt.Tooltip("value:Q", title=y_title or label, format=value_format),
         ],
@@ -3992,6 +4065,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         return
 
     dfp = df.copy()
+    _ensure_scenario_disp(dfp, field="scenario", out_field="scenario_disp")
     dfp["year"] = dfp["year"].astype(int)
     year_vals = sorted(pd.to_numeric(dfp[x_field], errors="coerce").dropna().astype(int).unique().tolist())
 
@@ -4075,13 +4149,14 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
         return
 
     dfp = df.copy()
+    _ensure_scenario_disp(dfp, field="scenario", out_field="scenario_disp")
     dfp["year"] = pd.to_numeric(dfp["year"], errors="coerce")
     dfp = dfp.dropna(subset=["year"])
     dfp["year"] = dfp["year"].astype(int)
     year_vals = sorted(pd.to_numeric(dfp[x_field], errors="coerce").dropna().astype(int).unique().tolist())
     if order is not None:
         dfp[stack_field] = pd.Categorical(dfp[stack_field], categories=order, ordered=True)
-        dfp = dfp.sort_values(["year", "scenario", stack_field])
+        dfp = dfp.sort_values(["year", "scenario_disp", stack_field])
 
     if is_percent:
         yscale = alt.Scale(domain=[0, 100])
@@ -4114,7 +4189,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
 
     bars_src = alt.Chart(dfp)
     if not is_percent:
-        bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
+        bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario_disp", x_field])
 
     bars = (
         bars_src.mark_bar()
@@ -4125,7 +4200,7 @@ def _stacked_clustered(df, title: str, x_field: str, stack_field: str, y_title: 
             color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map, legend=(None if not show_legend else _LEGEND_DEFAULT)),
             opacity=(alt.condition(sel, alt.value(1), alt.value(0.15)) if sel is not None else alt.value(1)),
             tooltip=[
-                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip("scenario_disp:N", title="Senaryo"),
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
@@ -4163,7 +4238,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
 
     bars_src = alt.Chart(dfp)
     if not is_percent:
-        bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario", x_field])
+        bars_src = bars_src.transform_joinaggregate(total="sum(value)", groupby=["scenario_disp", x_field])
 
     bars = (
         bars_src.mark_bar()
@@ -4174,7 +4249,7 @@ def _stacked_snapshot(df, title: str, x_field: str, stack_field: str, y_title: s
             color=_source_color_encoding(dfp, stack_field, category_title, order=order, color_map=color_map),
             opacity=alt.condition(sel, alt.value(1), alt.value(0.15)),
             tooltip=[
-                alt.Tooltip("scenario:N", title="Senaryo"),
+                alt.Tooltip("scenario_disp:N", title="Senaryo"),
                 alt.Tooltip(f"{x_field}:O", title="Yıl"),
                 alt.Tooltip(f"{stack_field}:N", title=category_title),
                 alt.Tooltip("value:Q", title=y_title, format=value_format),
@@ -4236,7 +4311,8 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
     if isinstance(_order, (tuple, set)):
         _order = list(_order)
     if _order and len(_order) >= 2:
-        _parts = [f"{i}. {s}" for i, s in enumerate(_order, 1)]
+        _disp = _scenario_order_disp(_order)
+        _parts = [f"{i}. {s}" for i, s in enumerate(_disp, 1)]
         st.caption("Senaryo sırası: " + "  |  ".join(_parts))
 
 # =========================
