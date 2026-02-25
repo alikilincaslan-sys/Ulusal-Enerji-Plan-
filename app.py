@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+import json
+from pathlib import Path
 
 PLOTLY_CONFIG = {
     "displayModeBar": True,
@@ -104,6 +106,34 @@ _LEGEND_DEFAULT = object()
 # -----------------------------
 # Scenario display-name mapping (UI relabel, does NOT change data)
 # -----------------------------
+
+_SCN_LABELS_FILE = Path(".scenario_labels.json")
+
+def _load_scenario_labels_from_disk() -> dict:
+    try:
+        if _SCN_LABELS_FILE.exists():
+            data = json.loads(_SCN_LABELS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {str(k): str(v) for k, v in data.items() if k is not None and v is not None}
+    except Exception:
+        pass
+    return {}
+
+def _save_scenario_labels_to_disk(m: dict) -> None:
+    try:
+        if not isinstance(m, dict):
+            return
+        _SCN_LABELS_FILE.write_text(json.dumps(m, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+def _ensure_scenario_labels_loaded() -> None:
+    # Load once per session (helps multipage: same session_state shared across pages)
+    if not st.session_state.get("_scenario_labels_loaded_once", False):
+        if "scenario_label_map" not in st.session_state or not isinstance(st.session_state.get("scenario_label_map"), dict):
+            st.session_state["scenario_label_map"] = _load_scenario_labels_from_disk()
+        st.session_state["_scenario_labels_loaded_once"] = True
+
 def _get_scenario_label_map() -> dict:
     try:
         m = st.session_state.get("scenario_label_map", {}) or {}
