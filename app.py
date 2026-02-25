@@ -2918,9 +2918,18 @@ with st.sidebar:
                 default_lbl = str(st.session_state["scenario_label_map"].get(str(scn), str(scn)))
                 new_lbl = st.text_input(f"{i}. senaryo etiketi", value=default_lbl, key=f"scn_lbl_{i}_{hash(str(scn))}")
                 st.session_state["scenario_label_map"][str(scn)] = str(new_lbl).strip() if str(new_lbl).strip() else str(scn)
+
+            # Değişiklikleri uygula / kaydet
+            if st.button("Etiketleri uygula", key="apply_scn_labels"):
+                try:
+                    st.cache_data.clear()
+                except Exception:
+                    pass
+                _save_scenario_labels_to_disk(st.session_state.get("scenario_label_map", {}))
+                st.rerun()
     else:
-        # Disable mapping
-        st.session_state["scenario_label_map"] = {}
+        # Etiketleri devre dışı bırakınca map’i silmiyoruz; sadece görüntüde kullanmıyoruz.
+        pass
 
 
 if len(selected_scenarios) == 2:
