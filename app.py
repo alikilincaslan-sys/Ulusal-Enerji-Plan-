@@ -1,4 +1,15 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import plotly.express as px
+
+PLOTLY_CONFIG = {
+    "displayModeBar": True,
+    "responsive": True,
+    "scrollZoom": False,   # wheel zoom istiyorsan True
+    "displaylogo": False,
+}
 
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
@@ -3444,7 +3455,6 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
 
 
 
-
 # -----------------------------
 # Donut charts (KPI mini-pies)
 # -----------------------------
@@ -3867,8 +3877,8 @@ for i, kpi in enumerate(kpis[:ncols]):
         if np.isfinite(solar_avg) or np.isfinite(wind_avg):
             render_metric_card(
                 "Yıllık GES/RES KG artışı (Ort.)",
-                f"{solar_avg:.0f} GW / {wind_avg:.0f} GW" if (np.isfinite(solar_avg) and np.isfinite(wind_avg)) else (
-                    f"{solar_avg:.0f} GW / —" if np.isfinite(solar_avg) else f"— / {wind_avg:.0f} GW"
+                f"{solar_avg:.1f} GW / {wind_avg:.1f} GW" if (np.isfinite(solar_avg) and np.isfinite(wind_avg)) else (
+                    f"{solar_avg:.1f} GW / —" if np.isfinite(solar_avg) else f"— / {wind_avg:.1f} GW"
                 ),
             )
         else:
@@ -4284,6 +4294,236 @@ def prepare_yearly_transition_waterfall(df_mix: pd.DataFrame, scenario: str, sta
 
 
 
+def _render_iea_delta_year(
+    mix_df: pd.DataFrame,
+    title: str,
+    unit_label: str,
+    year: int,
+    scenarios: list[str],
+    order: list[str] | None = None,
+    color_map: dict | None = None,
+):
+    """IEA-style single-year decomposition (baseline-at-reference).
+
+    - Bar 1: Reference scenario (S1) stacked absolute levels
+    - Bar 2: Scenario 2 shown as *(S2 − S1)* stacked **starting from S1 total**
+    - Bar 3: Scenario 3 shown as *(S3 − S1)* stacked **starting from S1 total**
+
+    Notes:
+    - Positive deltas are stacked upward from S1 total; negative deltas are stacked downward from S1 total.
+    - Tooltip is intentionally minimal: it shows only the hovered fuel/technology value (with unit).
+    """
+    if mix_df is None or mix_df.empty:
+        st.info("Bu grafik için veri bulunamadı.")
+        return
+
+    if not scenarios:
+        st.info("Senaryo seçimi yok.")
+        return
+
+    s1 = scenarios[0]
+    s2 = scenarios[1] if len(scenarios) > 1 else None
+    s3 = scenarios[2] if len(scenarios) > 2 else None
+
+    d = mix_df.copy()
+
+    # expected columns: year, group (or category), value, scenario
+    if "group" not in d.columns:
+        if "category" in d.columns:
+            d = d.rename(columns={"category": "group"})
+        else:
+            st.warning("Beklenen kolon bulunamadı: 'group' / 'category'.")
+            return
+
+    for c in ("year", "value"):
+        if c in d.columns:
+            d[c] = pd.to_numeric(d[c], errors="coerce")
+    d = d.dropna(subset=["year", "value", "scenario", "group"])
+    d["year"] = d["year"].astype(int)
+
+    d = d[d["year"] == int(year)]
+    if d.empty:
+        st.info("Seçilen yıl için veri bulunamadı.")
+        return
+
+    # Pivot: group x scenario
+    p = (
+        d.groupby(["group", "scenario"], dropna=False)["value"]
+        .sum()
+        .reset_index()
+        .pivot(index="group", columns="scenario", values="value")
+        .fillna(0.0)
+    )
+
+    # Ensure required scenarios exist (missing -> 0)
+    for sc in [s1, s2, s3]:
+        if sc and sc not in p.columns:
+            p[sc] = 0.0
+
+    p["S1"] = p[s1].astype(float) if s1 in p.columns else 0.0
+    p["S2"] = p[s2].astype(float) if (s2 and s2 in p.columns) else 0.0
+    p["S3"] = p[s3].astype(float) if (s3 and s3 in p.columns) else 0.0
+    p["dS2"] = p["S2"] - p["S1"]
+    p["dS3"] = p["S3"] - p["S1"]
+
+    # Ordering
+    p = p.reset_index().rename(columns={"index": "group"})
+    if order:
+        order_index = {k: i for i, k in enumerate(order)}
+        p["_ord"] = p["group"].map(order_index).fillna(9999).astype(int)
+        p = p.sort_values(["_ord", "group"]).drop(columns=["_ord"])
+    else:
+        p = p.sort_values("group")
+
+    # Plot labels
+    labels = [
+        f"{s1}<br>(Referans)",
+        (f"{s2}<br>(Δ vs {s1})" if s2 else None),
+        (f"{s3}<br>(Δ vs {s1})" if s3 else None),
+    ]
+    labels = [x for x in labels if x]
+
+    # Formatting
+    _is_gw = str(unit_label).strip().upper() == "GW"
+    _hover_fmt_ref = "%{y:,.2f}" if _is_gw else "%{y" + (":" + _energy_value_format().lstrip(":")) + "}"
+    _hover_fmt_delta = "%{y:+,.2f}" if _is_gw else "%{y:+,.0f}"
+    _unit_txt = str(unit_label).strip()
+
+    cmap = (color_map or SOURCE_COLOR_MAP or {})
+    # case-insensitive mapping fallback
+    cmap_lower = {str(k).strip().lower(): v for k, v in cmap.items()} if isinstance(cmap, dict) else {}
+
+    def _pick_color(gname: str):
+        if not isinstance(gname, str):
+            gname = str(gname)
+        c = cmap.get(gname)
+        if not c:
+            c = cmap_lower.get(gname.strip().lower())
+        if not c:
+            c = get_source_color(gname)
+        return c
+
+    ref_total = float(p["S1"].sum())
+
+    fig = go.Figure()
+
+    # --- Bar 1: S1 absolute stacked (manual base, works with overlay) ---
+    s1_total = float(p["S1"].sum())
+    s2_total = float(p["S2"].sum()) if "S2" in p.columns else float("nan")
+    s3_total = float(p["S3"].sum()) if "S3" in p.columns else float("nan")
+
+    cum_ref = 0.0
+    for _, r in p.iterrows():
+        g = r["group"]
+        v = float(r["S1"])
+        if not np.isfinite(v) or v == 0:
+            continue
+
+        v_str = f"{v:,.2f}" if _is_gw else f"{v:,.0f}"
+        t1_str = f"{s1_total:,.2f}" if _is_gw else f"{s1_total:,.0f}"
+
+        fig.add_trace(
+            go.Bar(
+                x=[labels[0]],
+                y=[v],
+                base=[cum_ref],
+                name=g,
+                marker_color=_pick_color(g),
+                showlegend=True,
+                hovertemplate=(
+                    f"Teknoloji <b>{g}</b><br>"
+                    f"{_unit_txt} {v_str}<br>"
+                    "<extra></extra>"
+                ),
+            )
+        )
+        cum_ref += v
+
+    # --- Helper: add delta stacks around S1 total (bars show delta; tooltip shows absolute value + scenario total) ---
+    def _add_delta_column(x_label: str, delta_col: str, scen_col: str, scen_total: float):
+        cum_pos = 0.0
+        cum_neg = 0.0
+        for _, r in p.iterrows():
+            g = r["group"]
+            dv = float(r[delta_col])
+            if not np.isfinite(dv) or dv == 0:
+                continue
+
+            if dv >= 0:
+                base = ref_total + cum_pos
+                cum_pos += dv
+            else:
+                base = ref_total + cum_neg
+                cum_neg += dv  # dv is negative
+
+            delta_str = f"{dv:+,.2f}" if _is_gw else f"{dv:+,.0f}"
+            total_delta = float(scen_total) - float(s1_total)
+            total_delta_str = f"{total_delta:+,.2f}" if _is_gw else f"{total_delta:+,.0f}"
+            fig.add_trace(
+                go.Bar(
+                    x=[x_label],
+                    y=[dv],
+                    base=[base],
+                    name=g,
+                    marker_color=_pick_color(g),
+                    showlegend=False,  # legend already shown in S1
+                    hovertemplate=(
+                        f"<b>{g}</b><br>"
+                        f"{_unit_txt} {delta_str}<br>"
+                        f"Total {total_delta_str}"
+                        "<extra></extra>"
+                    ),
+                )
+            )
+
+    if s2:
+        _add_delta_column(labels[1], "dS2", "S2", s2_total)
+    if s3:
+        _add_delta_column(labels[2 if s2 else 1], "dS3", "S3", s3_total)
+
+    # Baseline line at S1 total (IEA look)
+    fig.add_hline(
+        y=ref_total,
+        line_dash="dash",
+        line_width=1,
+        line_color="rgba(255,255,255,0.55)",
+        annotation_text=f"Referans toplam ({ref_total:,.0f} {_unit_txt})",
+        annotation_position="top left",
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        hovermode="closest",
+        hoverlabel=dict(
+            font_size=16,
+            font_family="Arial",
+            bgcolor="rgba(20,20,20,0.95)",
+            bordercolor="rgba(255,255,255,0.25)",
+        ),
+        title=dict(text=f"{title} — IEA Fark Analizi ({year})", x=0.0, xanchor="left"),
+        barmode="overlay",
+        bargap=0.45,
+        bargroupgap=0.15,
+        legend=dict(
+            title="Kaynak / Teknoloji",
+            orientation="v",
+            x=1.02,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+        ),
+        margin=dict(l=50, r=210, t=60, b=55),
+        xaxis=dict(type="category", showgrid=False),
+        yaxis=dict(
+            title=unit_label,
+            gridcolor="rgba(255,255,255,0.12)",
+            zeroline=True,
+            zerolinecolor="rgba(255,255,255,0.25)",
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key=f"iea_delta_{title}_{year}")
+
 def _commentary_transition_waterfall(df_wf: pd.DataFrame, subject: str, unit: str, start_year: int, end_year: int, max_items: int = 2) -> str:
     """Minimal, deterministic commentary for transformation waterfall charts (NOT diff mode).
     Uses 'dönüşüm' wording to make the chart easier to read."""
@@ -4425,6 +4665,88 @@ if "Elektrik" in selected_panels:
         kind="capacity",
         unit_label="GW",
     )
+
+    st.divider()
+
+    # =========================
+    # IEA Fark Analizi (Seçili Yıl)
+    # =========================
+    st.markdown("### Senaryo Analizi (Dönüşüm Politakalarının Etkisi)")
+
+    # year selector (common years across electricity blocks)
+    _years_gen = sorted(pd.to_numeric(df_genmix["year"], errors="coerce").dropna().astype(int).unique().tolist()) if not df_genmix.empty else []
+    _years_cap = sorted(pd.to_numeric(df_capmix["year"], errors="coerce").dropna().astype(int).unique().tolist()) if not df_capmix.empty else []
+    _years_common = sorted(set(_years_gen).intersection(set(_years_cap))) if (_years_gen and _years_cap) else (_years_gen or _years_cap)
+
+    if _years_common:
+        _default_year = _years_common[-1]
+        iea_year = st.selectbox(
+            "Analiz yılı seçin",
+            options=_years_common,
+            index=_years_common.index(_default_year),
+            key="iea_delta_year_select",
+        )
+
+        # Use current scenario order: S1=first, S2=second, S3=third
+        _scns = list(selected_scenarios)[:3]
+        if len(_scns) < 2:
+            st.info("IEA fark analizi için en az 2 senaryo seçmelisin (S1 referans + S2).")
+        else:
+            cols_iea = st.columns(2)
+            with cols_iea[0]:
+                _render_iea_delta_year(
+                    _convert_energy_df(df_genmix),
+                    title="Kaynaklarına Göre Elektrik Üretimi",
+                    unit_label=_energy_unit_label(),
+                    year=int(iea_year),
+                    scenarios=_scns,
+                    order=order_gen,
+                    color_map=SOURCE_COLOR_MAP,
+                )
+            with cols_iea[1]:
+                _render_iea_delta_year(
+                    df_capmix,
+                    title="Elektrik Kurulu Gücü – Depolama & PTX Hariç",
+                    unit_label="GW",
+                    year=int(iea_year),
+                    scenarios=_scns,
+                    order=order_cap,
+                    color_map=SOURCE_COLOR_MAP,
+                )
+
+            # --- IEA Fark Analizi (Seçili Yıl) – Ek Grafikler ---
+            cols_iea2 = st.columns(2)
+            with cols_iea2[0]:
+                if "df_storage_ptx" in globals() and df_storage_ptx is not None and not df_storage_ptx.empty:
+                    _render_iea_delta_year(
+                        df_storage_ptx,
+                        title="Depolama & PTX Kurulu Gücü",
+                        unit_label="GW",
+                        year=int(iea_year),
+                        scenarios=_scns,
+                        order=["Total Storage", "Power to X"],
+                        color_map=STORAGE_PTX_COLOR_MAP,
+                    )
+                else:
+                    st.info("Depolama & PTX kurulu güç verisi bulunamadı.")
+
+            with cols_iea2[1]:
+                if "df_sector_el" in globals() and df_sector_el is not None and not df_sector_el.empty:
+                    _df_sec = _convert_energy_df(df_sector_el).rename(columns={"sector": "group"})
+                    _df_sec = _df_sec[_df_sec["group"].isin(["Industry", "Residential", "Tertiary", "Transport"])]
+                    _render_iea_delta_year(
+                        _df_sec,
+                        title="Sektörlere Göre Elektrik Tüketimi",
+                        unit_label=_energy_unit_label(),
+                        year=int(iea_year),
+                        scenarios=_scns,
+                        order=["Industry", "Residential", "Tertiary", "Transport"],
+                        color_map=SECTOR_COLOR_MAP,
+                    )
+                else:
+                    st.info("Sektörlere göre elektrik tüketimi verisi bulunamadı.")
+    else:
+        st.info("IEA fark analizi için uygun yıl verisi bulunamadı.")
 
     st.divider()
 
@@ -4664,14 +4986,6 @@ if "Sera Gazı Emisyonları" in selected_panels:
         kind="emissions",
         unit_label="ktn CO₂e",
     )
-
-st.divider()
-
-
-with st.expander("Çalıştırma"):
-    st.code("pip install streamlit pandas openpyxl altair numpy\nstreamlit run app.py", language="bash")
-
-
 
 # ============================================================
 # Plotly Bar Chart Race – Elektrik Üretimi (Kaynaklara Göre)
