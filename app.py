@@ -138,6 +138,24 @@ def _scenario_order_disp(order_list):
     m = _get_scenario_label_map()
     return [m.get(str(x), str(x)) for x in order_list]
 
+def _use_custom_scenario_labels() -> bool:
+    try:
+        return bool(st.session_state.get("use_custom_scenario_labels", False))
+    except Exception:
+        return False
+
+def _scn_disp(scn: object) -> str:
+    """Return display label for a scenario key (respects UI toggle)."""
+    s = str(scn) if scn is not None else ""
+    if not _use_custom_scenario_labels():
+        return s
+    m = _get_scenario_label_map()
+    return m.get(s, s)
+
+def _scn_disp_list(lst):
+    return [_scn_disp(x) for x in (lst or [])]
+
+
 
 def _scenario_color_encoding(df, field: str = "scenario", title: str = "Senaryo", legend=None):
     """Scenario renklerini sabit ve ayrışır yap. UI'da verilen etiketleri (scenario_disp) otomatik kullanır."""
@@ -2251,7 +2269,7 @@ def _render_ai_commentary_block(df_long: pd.DataFrame, title: str, kind: str, un
         bullets = _ai_commentary_power_mix_diff(df_long, kind=kind, unit_label=unit_label, scn_a=scn_a, scn_b=scn_b)
         if not bullets:
             return
-        with st.expander(f"Yapay Zekâ Yorumu (offline) (Fark: {scn_a} − {scn_b})", expanded=False):
+        with st.expander(f"Yapay Zekâ Yorumu (offline) (Fark: {_scn_disp(scn_a)} − {_scn_disp(scn_b)})", expanded=False):
             for b in bullets:
                 st.markdown(f"- {b}")
         return
@@ -2269,7 +2287,7 @@ def _render_ai_commentary_block(df_long: pd.DataFrame, title: str, kind: str, un
         if n <= 1:
             for scn, bullets in items:
                 if scn and scn != "Tek Senaryo":
-                    st.markdown(f"**{scn}**")
+                    st.markdown(f"**{_scn_disp(scn)}**")
                 for b in bullets:
                     st.markdown(f"- {b}")
             return
@@ -2285,7 +2303,7 @@ def _render_ai_commentary_block(df_long: pd.DataFrame, title: str, kind: str, un
                     )
 
                 if scn and scn != "Tek Senaryo":
-                    st.markdown(f"**{scn}**")
+                    st.markdown(f"**{_scn_disp(scn)}**")
 
                 for b in bullets:
                     st.markdown(f"- {b}")
@@ -2354,7 +2372,7 @@ def _render_ai_commentary_line_block(df: pd.DataFrame, title: str, unit_label: s
     bullets = _ai_commentary_line_diff(df, unit_label=unit_label, scn_a=scn_a, scn_b=scn_b)
     if not bullets:
         return
-    with st.expander(f"Yapay Zekâ Yorumu (offline) (Fark: {scn_a} − {scn_b})", expanded=False):
+    with st.expander(f"Yapay Zekâ Yorumu (offline) (Fark: {_scn_disp(scn_a)} − {_scn_disp(scn_b)})", expanded=False):
         for b in bullets:
             st.markdown(f"- {b}")
 # -----------------------------
@@ -2511,7 +2529,7 @@ def _render_ai_commentary_custom(df_long: pd.DataFrame, title: str, fn, unit_lab
         if n <= 1:
             for scn, bullets in items:
                 if scn and scn != "Tek Senaryo":
-                    st.markdown(f"**{scn}**")
+                    st.markdown(f"**{_scn_disp(scn)}**")
                 for b in bullets:
                     st.markdown(f"- {b}")
             return
@@ -2526,7 +2544,7 @@ def _render_ai_commentary_custom(df_long: pd.DataFrame, title: str, fn, unit_lab
                     )
 
                 if scn and scn != "Tek Senaryo":
-                    st.markdown(f"**{scn}**")
+                    st.markdown(f"**{_scn_disp(scn)}**")
 
                 for b in bullets:
                     st.markdown(f"- {b}")
@@ -2825,7 +2843,7 @@ if _selected_ordered:
                    flex:0 0 auto;
             "></div>
             <div style="font-weight:600;">
-                {i+1}. {scn}
+                {i+1}. {_scn_disp(scn)}
                </div>
            </div>
            """,
@@ -2847,7 +2865,7 @@ if _selected_ordered:
 with st.sidebar:
     st.markdown("**Karşılaştırılan senaryolar (tam ad):**")
     for i, scn in enumerate(st.session_state.get("scenario_order", selected_scenarios), 1):
-        st.markdown(f"{i}. {scn}")
+        st.markdown(f"{i}. {_scn_disp(scn)}")
 
 # Bundan sonra her yerde sıralı listeyi kullan
 selected_scenarios = list(st.session_state.get("scenario_order", selected_scenarios))
@@ -3523,7 +3541,7 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
         if comm:
             with st.expander("Kısa Yorum (büyüme ve dönem analizi)", expanded=False):
                 for scn, bullets in comm.items():
-                    st.markdown(f"**{scn}**")
+                    st.markdown(f"**{_scn_disp(scn)}**")
                     for b in bullets:
                         st.markdown(f"- {b}")
 
@@ -4136,7 +4154,7 @@ def _stacked_small_multiples(df, title: str, x_field: str, stack_field: str, y_t
         )
 
         with cols[idx % ncols]:
-            st.markdown(f"**{scn}**")
+            st.markdown(f"**{_scn_disp(scn)}**")
             if sel is not None:
                 bars = bars.add_params(sel)
 
@@ -5125,7 +5143,7 @@ st.divider()
 st.subheader(" Elektrik Üretimi – Kaynaklara Göre Zaman İçinde Değişim ")
 
 for scn in selected_scenarios:
-    st.markdown(f"**Senaryo: {scn}**")
+    st.markdown(f"**Senaryo: {_scn_disp(scn)}**")
     d_plotly = _prepare_genmix_for_plotly(df_genmix, scn)
 
     if d_plotly.empty:
