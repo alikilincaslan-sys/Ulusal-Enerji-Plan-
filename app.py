@@ -2783,6 +2783,7 @@ selected_scenarios = st.multiselect(
     "Karşılaştırılacak senaryolar",
     options=scenario_names_unique,
     default=default_selected,
+    format_func=lambda s: (_get_scenario_label_map().get(str(s), str(s)) if st.session_state.get("use_custom_scenario_labels", True) else str(s)),
 )
 
 # (sidebar scenario list rendered after ordering)
@@ -2868,7 +2869,7 @@ with st.sidebar:
             for i, scn in enumerate(selected_scenarios, 1):
                 default_lbl = str(st.session_state["scenario_label_map"].get(str(scn), str(scn)))
                 new_lbl = st.text_input(f"{i}. senaryo etiketi", value=default_lbl, key=f"scn_lbl_{i}_{hash(str(scn))}")
-                st.session_state["scenario_label_map"][str(scn)] = str(new_lbl).strip() if str(new_lbl).strip() else str(scn)
+                st.session_state["scenario_label_map"][str(scn)] = str(new_lbl).strip()ip() if str(new_lbl).strip() else str(scn)
     else:
         # Disable mapping
         st.session_state["scenario_label_map"] = {}
