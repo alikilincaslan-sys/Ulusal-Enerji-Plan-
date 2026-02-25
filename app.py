@@ -4475,7 +4475,7 @@ def _render_iea_delta_year(
         f"{_scn_disp(s1)}<br>(Referans)",
         (f"{_scn_disp(s2)}<br>(Δ vs {_scn_disp(s1)})" if s2 else None),
         (f"{_scn_disp(s3)}<br>(Δ vs {_scn_disp(s1)})" if s3 else None),
-    ]labels = [x for x in labels if x]
+    labels = [x for x in labels if x]
 
     # Formatting
     _is_gw = str(unit_label).strip().upper() == "GW"
