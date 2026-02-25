@@ -1,6 +1,5 @@
 import streamlit as st
 
-   
 # =======================
 # Sabit Kaynak Renk Haritası (Energy Source Color Map)
 # =======================
