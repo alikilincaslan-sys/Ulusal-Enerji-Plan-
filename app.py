@@ -2869,7 +2869,7 @@ with st.sidebar:
             for i, scn in enumerate(selected_scenarios, 1):
                 default_lbl = str(st.session_state["scenario_label_map"].get(str(scn), str(scn)))
                 new_lbl = st.text_input(f"{i}. senaryo etiketi", value=default_lbl, key=f"scn_lbl_{i}_{hash(str(scn))}")
-                st.session_state["scenario_label_map"][str(scn)] = str(new_lbl).strip()ip() if str(new_lbl).strip() else str(scn)
+                st.session_state["scenario_label_map"][str(scn)] = str(new_lbl).strip() if str(new_lbl).strip() else str(scn)
     else:
         # Disable mapping
         st.session_state["scenario_label_map"] = {}
@@ -5117,7 +5117,6 @@ def _plot_generation_bar_race(df, unit_label):
     )
 
     return fig
-
 
 # -----------------------------
 # Plotly panel (render)
