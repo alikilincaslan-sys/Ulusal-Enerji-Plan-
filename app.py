@@ -3355,9 +3355,9 @@ def _line_chart(df, title: str, y_title: str, value_format: str = ",.2f", chart_
                 wide = wide[[a, b]].copy()
                 wide["value"] = wide[a] - wide[b]
                 out = wide.reset_index()[["year", "value"]]
-                out["scenario"] = f"Fark: {a} - {b}"
+                out["scenario"] = f"Fark: {_scn_disp(a)} - {_scn_disp(b)}"
                 dfp = out
-                title = f"{title} — Fark ({a} - {b})"
+                title = f"{title} — Fark ({_scn_disp(a)} - {_scn_disp(b)})"
 
     st.subheader(title)
     year_vals = sorted(dfp["year"].unique().tolist())
@@ -3586,7 +3586,7 @@ def _sparkline_chart(
                 wide = wide[[a, b]].copy()
                 wide["value"] = wide[a] - wide[b]
                 out = wide.reset_index()[["year", "value"]]
-                out["scenario"] = f"Fark: {a} - {b}"
+                out["scenario"] = f"Fark: {_scn_disp(a)} - {_scn_disp(b)}"
                 dfp = out
 
     year_vals = sorted(dfp["year"].unique().tolist())
@@ -3912,7 +3912,7 @@ for i, kpi in enumerate(kpis[:ncols]):
     # scenario accent color for KPI cards (matches scenario palette bar)
     st.session_state["_kpi_accent_color"] = SCENARIO_PALETTE[i % len(SCENARIO_PALETTE)]
     with cols[i]:
-        st.markdown(f"**{kpi['scenario']}**")
+        st.markdown(f"**{_scn_disp(kpi['scenario'])}**")
 
         y0 = kpi.get("y0")
         y1 = kpi.get("y1")
@@ -4303,9 +4303,9 @@ def _render_stacked(df, title, x_field, stack_field, y_title, category_title, va
                     wide = wide[[a, b]].copy().fillna(0.0)
                     wide["value"] = wide[a] - wide[b]
                     out = wide.reset_index()[[x_field, stack_field, "value"]]
-                    out["scenario"] = f"Fark: {a} - {b}"
+                    out["scenario"] = f"Fark: {_scn_disp(a)} - {_scn_disp(b)}"
                     df_use = out
-                    title = f"{title} — Fark ({a} - {b})"
+                    title = f"{title} — Fark ({_scn_disp(a)} - {_scn_disp(b)})"
 
     if stacked_value_mode == "Pay (%)":
         df_use = _normalize_stacked_to_percent(df_use, stack_field=stack_field)
@@ -4472,11 +4472,10 @@ def _render_iea_delta_year(
 
     # Plot labels
     labels = [
-        f"{s1}<br>(Referans)",
-        (f"{s2}<br>(Δ vs {s1})" if s2 else None),
-        (f"{s3}<br>(Δ vs {s1})" if s3 else None),
-    ]
-    labels = [x for x in labels if x]
+        f"{_scn_disp(s1)}<br>(Referans)",
+        (f"{_scn_disp(s2)}<br>(Δ vs {_scn_disp(s1)})" if s2 else None),
+        (f"{_scn_disp(s3)}<br>(Δ vs {_scn_disp(s1)})" if s3 else None),
+    ]labels = [x for x in labels if x]
 
     # Formatting
     _is_gw = str(unit_label).strip().upper() == "GW"
@@ -4922,7 +4921,7 @@ if "Elektrik" in selected_panels:
         if len(selected_scenarios) == 1:
             scn_tr = selected_scenarios[0]
         else:
-            scn_tr = st.selectbox("Dönüşüm analizi için senaryo seçin", options=selected_scenarios, index=0, key="transition_scn_select")
+            scn_tr = st.selectbox("Dönüşüm analizi için senaryo seçin", options=selected_scenarios, index=0, key="transition_scn_select", format_func=_scn_disp)
 
         gen_for_wf = df_genmix.rename(columns={"group": "category"}).copy()
         cap_for_wf = df_capmix.rename(columns={"group": "category"}).copy()
