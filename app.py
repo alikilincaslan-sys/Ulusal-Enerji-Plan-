@@ -1157,13 +1157,13 @@ def get_series_from_block(block_df: pd.DataFrame, label: str) -> pd.DataFrame:
 
 
 def _strict_match_group(item: str) -> str:
-    s = (item or "").lower().strip()
+    s = (item or "").lower().strip() 
+
     for grp, pats in TECH_GROUPS.items():
         for p in pats:
             if re.search(p, s, flags=re.IGNORECASE):
                 return grp
     return "Other"
-
 
 def _is_natural_gas_item(item: str) -> bool:
     it = (item or "").strip()
@@ -1712,7 +1712,7 @@ def read_local_content_ratio(xlsx_file) -> pd.DataFrame:
         if df.empty:
             return pd.DataFrame(columns=["year", "value", "series", "sheet"])
         df = df.sort_values("year")
-        df["series"] = "Enerjide Dışa Bağımlılık Yüzdesi (%) — Yerli DG dahil değildir"
+        df["series"] = "Enerjide Dışa Bağımlılık Yüzdesi (%)"
         df["sheet"] = "Summary&Indicators"
         return df
 
@@ -2906,7 +2906,7 @@ selected_scenarios = list(st.session_state.get("scenario_order", selected_scenar
 with st.sidebar:
     st.divider()
     st.markdown("### Senaryo İsimleri (Görüntü)")
-    st.caption("Excel'deki orijinal senaryo adları aynı kalır; burada yalnızca ekranda görünen isimleri değiştirirsin.")
+    st.caption("Senaryo isimlerini düzenleyip Etiketleri uygula yapınız")
     use_custom_labels = st.checkbox("Özel etiketleri kullan", value=True, key="use_custom_scenario_labels")
 
     if "scenario_label_map" not in st.session_state:
@@ -4469,6 +4469,25 @@ def _render_iea_delta_year(
             st.warning("Beklenen kolon bulunamadı: 'group' / 'category'.")
             return
 
+
+    # Optional: merge selected bio/geothermal capacity items under "Other Renewables"
+    # (Only for the Scenario Analysis capacity chart: "Depolama & PTX Hariç")
+    if (
+        isinstance(title, str)
+        and "Kurulu Gücü" in title
+        and "Depolama" in title
+        and "PTX" in title
+        and "Hariç" in title
+        and "group" in d.columns
+    ):
+        d["group"] = d["group"].replace(
+            {
+                "Biomass without CCS": "Other Renewables",
+                "Geothermal": "Other Renewables",
+                "Industrial CHP plants Biomass": "Other Renewables",
+            }
+        )
+
     for c in ("year", "value"):
         if c in d.columns:
             d[c] = pd.to_numeric(d[c], errors="coerce")
@@ -4753,7 +4772,7 @@ if "Sistem Göstergeleri" in selected_panels:
     df_pc = _concat("per_capita_el")
     _line_chart(df_pc, "Kişi Başına Elektrik Tüketimi (kWh/kişi)", "kWh/kişi", value_format=",.0f")
     _line_chart(df_electrification, "Nihai Enerjide Elektrifikasyon Oranı (%)", "%", value_format=",.1f")
-    _line_chart(df_local_content, "Enerjide Dışa Bağımlılık Yüzdesi (%) — Yerli DG dahil değildir", "%", value_format=",.1f")
+    _line_chart(df_local_content, "Enerjide Dışa Bağımlılık (%)", "%", value_format=",.1f")
     st.divider()
 
 if "Elektrik" in selected_panels:
@@ -4797,6 +4816,73 @@ if "Elektrik" in selected_panels:
         title="Elektrik Kurulu Gücü – Depolama & PTX Hariç",
         kind="capacity",
         unit_label="GW",
+    )
+
+
+
+    # --- Yeni Kapasite (GW) – Depolama & PTX Hariç (Kaynak bazında) ---
+    # Not: Bu grafik, hemen üstteki "Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç" serisinden türetilir.
+    # Yeni kapasite = KG(t) - KG(t-1). Ara yılları doldurma (Lineer/CAGR/Logistic) seçimi açıksa, yıllık seri üzerinden hesaplanır.
+    if df_capmix is not None and not df_capmix.empty:
+        df_new_cap = df_capmix.copy()
+        df_new_cap = df_new_cap.sort_values(["scenario", "group", "year"])
+        df_new_cap["value"] = df_new_cap.groupby(["scenario", "group"])["value"].diff()
+        df_new_cap = df_new_cap.dropna(subset=["value"])
+
+        _render_stacked(
+            df_new_cap.rename(columns={"group": "category"}),
+            title="Yeni Kapasite (GW) – Depolama & PTX Hariç",
+            x_field="year",
+            stack_field="category",
+            y_title="GW",
+            category_title="Teknoloji",
+            value_format=",.2f",
+            order=order_cap,
+        )
+
+        _render_ai_commentary_custom(
+            df_new_cap.rename(columns={"group": "category"}),
+            title="Yeni Kapasite – Depolama & PTX Hariç",
+            fn=_ai_commentary_new_capacity,
+            unit_label="GW",
+        )
+
+    st.divider()
+
+    order_storage_ptx = ["Total Storage", "Power to X"]
+    _render_stacked(
+        df_storage_ptx.rename(columns={"group": "category"}),
+        title="Depolama & PTX Kurulu Gücü (GW)",
+        x_field="year",
+        stack_field="category",
+        y_title="GW",
+        category_title="Kategori",
+        value_format=",.3f",
+        order=order_storage_ptx,
+        color_map=STORAGE_PTX_COLOR_MAP,
+    )
+
+    _render_ai_commentary_custom(
+        df_storage_ptx.rename(columns={"group": "category"}),
+        title="Depolama & PTX Kurulu Gücü",
+        fn=_ai_commentary_storage_ptx,
+        unit_label="GW",
+    )
+
+    st.divider()
+
+
+    _render_stacked(
+        _convert_energy_df(df_sector_el).rename(columns={"sector": "category"}).query("category in ['Industry', 'Residential', 'Tertiary', 'Transport']"),
+        title=f"Sektörlere Göre Elektrik Tüketimi ({_energy_unit_label()})",
+        x_field="year",
+        stack_field="category",
+        y_title=_energy_unit_label(),
+        category_title="Sektör",
+        value_format=_energy_value_format(),
+        order=["Industry", "Residential", "Tertiary", "Transport"],
+        color_map=SECTOR_COLOR_MAP,
+        show_legend=True,
     )
 
     st.divider()
@@ -4883,73 +4969,6 @@ if "Elektrik" in selected_panels:
 
     st.divider()
 
-
-    # --- Yeni Kapasite (GW) – Depolama & PTX Hariç (Kaynak bazında) ---
-    # Not: Bu grafik, hemen üstteki "Elektrik Kurulu Gücü (GW) – Depolama & PTX Hariç" serisinden türetilir.
-    # Yeni kapasite = KG(t) - KG(t-1). Ara yılları doldurma (Lineer/CAGR/Logistic) seçimi açıksa, yıllık seri üzerinden hesaplanır.
-    if df_capmix is not None and not df_capmix.empty:
-        df_new_cap = df_capmix.copy()
-        df_new_cap = df_new_cap.sort_values(["scenario", "group", "year"])
-        df_new_cap["value"] = df_new_cap.groupby(["scenario", "group"])["value"].diff()
-        df_new_cap = df_new_cap.dropna(subset=["value"])
-
-        _render_stacked(
-            df_new_cap.rename(columns={"group": "category"}),
-            title="Yeni Kapasite (GW) – Depolama & PTX Hariç",
-            x_field="year",
-            stack_field="category",
-            y_title="GW",
-            category_title="Teknoloji",
-            value_format=",.2f",
-            order=order_cap,
-        )
-
-        _render_ai_commentary_custom(
-            df_new_cap.rename(columns={"group": "category"}),
-            title="Yeni Kapasite – Depolama & PTX Hariç",
-            fn=_ai_commentary_new_capacity,
-            unit_label="GW",
-        )
-
-    st.divider()
-
-    order_storage_ptx = ["Total Storage", "Power to X"]
-    _render_stacked(
-        df_storage_ptx.rename(columns={"group": "category"}),
-        title="Depolama & PTX Kurulu Gücü (GW)",
-        x_field="year",
-        stack_field="category",
-        y_title="GW",
-        category_title="Kategori",
-        value_format=",.3f",
-        order=order_storage_ptx,
-        color_map=STORAGE_PTX_COLOR_MAP,
-    )
-
-    _render_ai_commentary_custom(
-        df_storage_ptx.rename(columns={"group": "category"}),
-        title="Depolama & PTX Kurulu Gücü",
-        fn=_ai_commentary_storage_ptx,
-        unit_label="GW",
-    )
-
-    st.divider()
-
-
-    _render_stacked(
-        _convert_energy_df(df_sector_el).rename(columns={"sector": "category"}).query("category in ['Industry', 'Residential', 'Tertiary', 'Transport']"),
-        title=f"Sektörlere Göre Elektrik Tüketimi ({_energy_unit_label()})",
-        x_field="year",
-        stack_field="category",
-        y_title=_energy_unit_label(),
-        category_title="Sektör",
-        value_format=_energy_value_format(),
-        order=["Industry", "Residential", "Tertiary", "Transport"],
-        color_map=SECTOR_COLOR_MAP,
-        show_legend=True,
-    )
-
-    st.divider()
 
     if stacked_value_mode != "Pay (%)":
         st.markdown("### Yakıt/Teknoloji Bazlı Enerji Dönüşümü (Δ)")
@@ -5178,7 +5197,7 @@ def _plot_generation_bar_race(df, unit_label):
 # Plotly panel (render)
 # -----------------------------
 st.divider()
-st.subheader(" Elektrik Üretimi – Kaynaklara Göre Zaman İçinde Değişim ")
+st.subheader(" Elektrik Üretimi Dönüşümü ")
 
 for scn in selected_scenarios:
     st.markdown(f"**Senaryo: {_scn_disp(scn)}**")
