@@ -10,11 +10,49 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data" / "processed"
 
 st.title("PyPSA Dispatch (Türkiye Tek-Node, 8760)")
-
 st.markdown("""
 Bu sayfa, DataPrep'ten üretilen `profiles_YYYY.parquet` dosyasını okuyup
 tek node dispatch optimizasyonu yapar (HiGHS).
+Maliyetler sabittir ve **model içinde hesaplanır**: yakıt/verim + VOM + CO₂.
 """)
+
+# -----------------------------
+# Cost block (from your table, with sensible defaults)
+# Units:
+# - Fuel Cost: $/MWh_th (thermal)  -> converted to $/MWh_e by dividing by efficiency
+# - VOM: $/kWh -> converted to $/MWh by * 1000
+# - CO2 price: $/tCO2
+# - Emission factor: tCO2/MWh_e
+# -----------------------------
+COSTS = pd.DataFrame([
+    # Tech, FuelCost, Efficiency, VOM($/kWh), EmFactor (tCO2/MWh_e)
+    ("Coal",        16.77, 0.43, 0.00400, 0.90),
+    ("Lignite",     13.00, 0.33, 0.00400, 1.10),
+    ("Natural gas", 27.00, 0.60, 0.00200, 0.40),
+    ("Nuclear",      0.00, 0.38, 0.00900, 0.00),
+    ("Hydro",        0.00, 1.00, 0.00032,0.00),
+    ("Wind (RES)",   0.00, 1.00, 0.00043,0.00),
+    ("Solar (GES)",  0.00, 1.00, 0.00000,0.00),
+    # Filled defaults for Other (adjust anytime)
+    ("Other",       35.00, 0.40, 0.00400, 0.70),
+], columns=["tech", "fuel_cost_usd_per_mwh_th", "eff", "vom_usd_per_kwh", "ef_tco2_per_mwh_e"]).set_index("tech")
+
+def compute_marginal_costs(co2_price_usd_per_t: float) -> pd.Series:
+    dfc = COSTS.copy()
+    # Fuel component ($/MWh_e)
+    fuel = dfc["fuel_cost_usd_per_mwh_th"].fillna(0)
+    eff = dfc["eff"].replace(0, np.nan)
+    fuel_mc = (fuel / eff).replace([np.inf, -np.inf], np.nan).fillna(0)
+
+    # VOM ($/MWh_e)
+    vom = dfc["vom_usd_per_kwh"].fillna(0) * 1000.0
+
+    # CO2 ($/MWh_e)
+    ef = dfc["ef_tco2_per_mwh_e"].fillna(0)
+    co2 = ef * float(co2_price_usd_per_t)
+
+    mc = fuel_mc + vom + co2
+    return mc
 
 # -----------------------------
 # Load profiles
@@ -26,12 +64,7 @@ if not available:
     st.error("profiles_YYYY.parquet bulunamadı. Önce DataPrep sayfasını çalıştır.")
     st.stop()
 
-profile_file = st.selectbox(
-    "Profiles dosyası",
-    options=available,
-    format_func=lambda p: p.name
-)
-
+profile_file = st.selectbox("Profiles dosyası", options=available, format_func=lambda p: p.name)
 df = pd.read_parquet(profile_file)
 
 # timestamp -> index
@@ -39,14 +72,7 @@ if "timestamp" in df.columns:
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
     df = df.dropna(subset=["timestamp"]).set_index("timestamp")
 
-# -----------------------------
 # Compatibility layer (DataPrep versions)
-# -----------------------------
-# Some DataPrep versions produce:
-# - load_base / net_load_base
-# - load_gross_mwh / load_net_mwh
-# Dispatch expects:
-# - load_gross / load_net
 rename_map = {
     "load_base": "load_gross",
     "net_load_base": "load_net",
@@ -57,35 +83,15 @@ for src, dst in rename_map.items():
     if src in df.columns and dst not in df.columns:
         df[dst] = df[src]
 
-def _safe_shape_from(series: pd.Series) -> pd.Series:
-    s = pd.to_numeric(series, errors="coerce").fillna(0).clip(lower=0)
-    mx = float(s.max()) if len(s) else 0.0
-    if mx <= 0:
-        return s * 0.0
-    return (s / mx).clip(0, 1)
-
-# If shapes not present but gen_* columns exist (older "history-like" outputs)
-if "solar_shape" not in df.columns and "gen_solar_mwh" in df.columns:
-    df["solar_shape"] = _safe_shape_from(df["gen_solar_mwh"])
-if "wind_shape" not in df.columns and "gen_wind_mwh" in df.columns:
-    df["wind_shape"] = _safe_shape_from(df["gen_wind_mwh"])
-if "hydro_shape" not in df.columns and "gen_hydro_mwh" in df.columns:
-    df["hydro_shape"] = _safe_shape_from(df["gen_hydro_mwh"])
-
 required_cols = {"load_gross", "load_net", "solar_shape", "wind_shape", "hydro_shape"}
 missing = required_cols - set(df.columns)
 if missing:
-    st.error(
-        "Profiles içinde eksik kolonlar var: "
-        f"{sorted(missing)}\n\n"
-        "Beklenen kolonlar: load_gross, load_net, solar_shape, wind_shape, hydro_shape.\n"
-        "DataPrep sayfasını tekrar çalıştırıp profiles üretmeyi deneyebilirsin."
-    )
+    st.error(f"Profiles içinde eksik kolonlar var: {sorted(missing)}")
     st.stop()
 
 load_mode = st.radio("Load modu", ["Gross load", "Net load"], horizontal=True, index=0)
-
 load = df["load_gross"] if load_mode == "Gross load" else df["load_net"]
+
 solar_shape = pd.to_numeric(df["solar_shape"], errors="coerce").fillna(0).clip(0, 1)
 wind_shape  = pd.to_numeric(df["wind_shape"], errors="coerce").fillna(0).clip(0, 1)
 hydro_shape = pd.to_numeric(df["hydro_shape"], errors="coerce").fillna(0).clip(0, 1)
@@ -93,45 +99,36 @@ hydro_shape = pd.to_numeric(df["hydro_shape"], errors="coerce").fillna(0).clip(0
 st.caption(f"Seçili dosya: {profile_file.name} | Saat sayısı: {len(df):,}")
 
 # -----------------------------
-# Scenario inputs (manual for now)
+# Scenario inputs
 # -----------------------------
-st.subheader("2) Senaryo girdileri (şimdilik manuel)")
+st.subheader("2) Senaryo girdileri")
 
-with st.expander("Kurulu güçler (MW) ve marjinal maliyetler", expanded=True):
-    c1, c2, c3 = st.columns(3)
+cA, cB, cC = st.columns([1.2, 1.2, 1.0])
 
-    with c1:
-        cap_coal = st.number_input("Coal kapasite (MW)", min_value=0.0, value=20000.0, step=500.0)
-        cap_lignite = st.number_input("Lignite kapasite (MW)", min_value=0.0, value=10000.0, step=500.0)
-        cap_gas = st.number_input("Natural gas kapasite (MW)", min_value=0.0, value=25000.0, step=500.0)
+with cA:
+    cap_coal = st.number_input("Coal kapasite (MW)", min_value=0.0, value=20000.0, step=500.0)
+    cap_lignite = st.number_input("Lignite kapasite (MW)", min_value=0.0, value=10000.0, step=500.0)
+    cap_gas = st.number_input("Natural gas kapasite (MW)", min_value=0.0, value=25000.0, step=500.0)
 
-    with c2:
-        cap_hydro = st.number_input("Hydro kapasite (MW)", min_value=0.0, value=30000.0, step=500.0)
-        cap_wind  = st.number_input("Wind (RES) kapasite (MW)", min_value=0.0, value=12000.0, step=500.0)
-        cap_solar = st.number_input("Solar (GES) kapasite (MW)", min_value=0.0, value=15000.0, step=500.0)
+with cB:
+    cap_hydro = st.number_input("Hydro kapasite (MW)", min_value=0.0, value=30000.0, step=500.0)
+    cap_wind  = st.number_input("Wind (RES) kapasite (MW)", min_value=0.0, value=12000.0, step=500.0)
+    cap_solar = st.number_input("Solar (GES) kapasite (MW)", min_value=0.0, value=15000.0, step=500.0)
 
-    with c3:
-        cap_nuclear = st.number_input("Nuclear kapasite (MW)", min_value=0.0, value=0.0, step=500.0)
-        cap_other = st.number_input("Other (dispatchable) kapasite (MW)", min_value=0.0, value=0.0, step=500.0)
+with cC:
+    cap_nuclear = st.number_input("Nuclear kapasite (MW)", min_value=0.0, value=0.0, step=500.0)
+    cap_other = st.number_input("Other kapasite (MW)", min_value=0.0, value=0.0, step=500.0)
 
-    st.markdown("**Marjinal maliyetler** (ör. TL/MWh veya €/MWh — hangisini seçersen tutarlı kal)")
-    d1, d2, d3, d4 = st.columns(4)
-    with d1:
-        mc_coal = st.number_input("Coal MC", min_value=0.0, value=55.0, step=1.0)
-        mc_lignite = st.number_input("Lignite MC", min_value=0.0, value=45.0, step=1.0)
-    with d2:
-        mc_gas = st.number_input("Natural gas MC", min_value=0.0, value=75.0, step=1.0)
-        mc_other = st.number_input("Other MC", min_value=0.0, value=90.0, step=1.0)
-    with d3:
-        mc_nuclear = st.number_input("Nuclear MC", min_value=0.0, value=10.0, step=1.0)
-        mc_hydro = st.number_input("Hydro MC (opsiyonel)", min_value=0.0, value=5.0, step=1.0)
-    with d4:
-        mc_wind = st.number_input("Wind MC", min_value=0.0, value=0.0, step=1.0)
-        mc_solar = st.number_input("Solar MC", min_value=0.0, value=0.0, step=1.0)
+st.subheader("3) ETS / CO₂")
+co2_price = st.slider("CO₂ fiyatı ($/tCO₂)", min_value=0.0, max_value=250.0, value=50.0, step=5.0)
 
 with st.expander("Güvenlik: Load shedding (VOLL)", expanded=False):
     use_voll = st.checkbox("Load shedding kullan (önerilir)", value=True)
-    voll = st.number_input("VOLL (çok yüksek maliyet)", min_value=0.0, value=10000.0, step=100.0)
+    voll = st.number_input("VOLL ($/MWh)", min_value=0.0, value=10000.0, step=100.0)
+
+mc = compute_marginal_costs(co2_price)
+st.write("Hesaplanan marjinal maliyetler ($/MWh_e)")
+st.dataframe(mc.rename("MC").to_frame())
 
 run = st.button("Optimize et (8760)", type="primary")
 
@@ -142,35 +139,31 @@ if run:
     with st.spinner("Network kuruluyor..."):
         n = pypsa.Network()
         n.set_snapshots(df.index)
-
         n.add("Bus", "TR")
-
-        # Load (MWh/hour ~= average MW for that hour)
         n.add("Load", "Load", bus="TR", p_set=load.values)
 
-        # Dispatchable thermal
+        # Dispatchable
         if cap_coal > 0:
-            n.add("Generator", "Coal", bus="TR", p_nom=cap_coal, marginal_cost=mc_coal)
+            n.add("Generator", "Coal", bus="TR", p_nom=cap_coal, marginal_cost=float(mc["Coal"]))
         if cap_lignite > 0:
-            n.add("Generator", "Lignite", bus="TR", p_nom=cap_lignite, marginal_cost=mc_lignite)
+            n.add("Generator", "Lignite", bus="TR", p_nom=cap_lignite, marginal_cost=float(mc["Lignite"]))
         if cap_gas > 0:
-            n.add("Generator", "Natural gas", bus="TR", p_nom=cap_gas, marginal_cost=mc_gas)
+            n.add("Generator", "Natural gas", bus="TR", p_nom=cap_gas, marginal_cost=float(mc["Natural gas"]))
         if cap_nuclear > 0:
-            n.add("Generator", "Nuclear", bus="TR", p_nom=cap_nuclear, marginal_cost=mc_nuclear)
+            n.add("Generator", "Nuclear", bus="TR", p_nom=cap_nuclear, marginal_cost=float(mc["Nuclear"]))
         if cap_other > 0:
-            n.add("Generator", "Other", bus="TR", p_nom=cap_other, marginal_cost=mc_other)
+            n.add("Generator", "Other", bus="TR", p_nom=cap_other, marginal_cost=float(mc["Other"]))
 
-        # VRE (availability shapes)
+        # VRE
         if cap_wind > 0:
-            n.add("Generator", "Wind (RES)", bus="TR", p_nom=cap_wind, marginal_cost=mc_wind, p_max_pu=wind_shape.values)
+            n.add("Generator", "Wind (RES)", bus="TR", p_nom=cap_wind, marginal_cost=float(mc["Wind (RES)"]), p_max_pu=wind_shape.values)
         if cap_solar > 0:
-            n.add("Generator", "Solar (GES)", bus="TR", p_nom=cap_solar, marginal_cost=mc_solar, p_max_pu=solar_shape.values)
+            n.add("Generator", "Solar (GES)", bus="TR", p_nom=cap_solar, marginal_cost=float(mc["Solar (GES)"]), p_max_pu=solar_shape.values)
 
-        # Hydro: profile-limited (run-of-river style for now)
+        # Hydro: profile-limited (for now)
         if cap_hydro > 0:
-            n.add("Generator", "Hydro", bus="TR", p_nom=cap_hydro, marginal_cost=mc_hydro, p_max_pu=hydro_shape.values)
+            n.add("Generator", "Hydro", bus="TR", p_nom=cap_hydro, marginal_cost=float(mc["Hydro"]), p_max_pu=hydro_shape.values)
 
-        # Load shedding (ensures feasibility)
         if use_voll:
             n.add("Generator", "Load shedding", bus="TR", p_nom=1e9, marginal_cost=voll)
 
@@ -179,9 +172,6 @@ if run:
 
     st.success("Çözüm tamam!")
 
-    # -----------------------------
-    # Results
-    # -----------------------------
     st.subheader("Sonuçlar")
 
     gen = n.generators_t.p.copy()
@@ -201,16 +191,16 @@ if run:
     st.write("Yıllık toplam üretim (teknoloji bazında)")
     st.dataframe(totals)
 
-    # Curtailment for VRE
+    # Curtailment
     cur = []
     if "Wind (RES)" in n.generators.index:
-        pot = (cap_wind * wind_shape).sum()
-        act = gen["Wind (RES)"].sum()
-        cur.append(("Wind (RES)", float(pot - act)))
+        pot = float((cap_wind * wind_shape).sum())
+        act = float(gen["Wind (RES)"].sum())
+        cur.append(("Wind (RES)", pot - act))
     if "Solar (GES)" in n.generators.index:
-        pot = (cap_solar * solar_shape).sum()
-        act = gen["Solar (GES)"].sum()
-        cur.append(("Solar (GES)", float(pot - act)))
+        pot = float((cap_solar * solar_shape).sum())
+        act = float(gen["Solar (GES)"].sum())
+        cur.append(("Solar (GES)", pot - act))
     if cur:
         st.write("Curtailment (potansiyel - gerçekleşen) [MWh]")
         st.dataframe(pd.DataFrame(cur, columns=["tech", "curtailment_mwh"]))
