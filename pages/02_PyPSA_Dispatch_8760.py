@@ -39,6 +39,20 @@ if "timestamp" in df.columns:
     df = df.set_index("timestamp")
 
 required_cols = {"load_gross", "load_net", "solar_shape", "wind_shape", "hydro_shape"}
+
+# Eğer DataPrep yeni isimle kaydettiyse düzelt
+if "load_gross_mwh" in df.columns:
+    df["load_gross"] = df["load_gross_mwh"]
+if "load_net_mwh" in df.columns:
+    df["load_net"] = df["load_net_mwh"]
+if "gen_solar_mwh" in df.columns and "solar_shape" not in df.columns:
+    df["solar_shape"] = df["gen_solar_mwh"] / df["gen_solar_mwh"].max()
+if "gen_wind_mwh" in df.columns and "wind_shape" not in df.columns:
+    df["wind_shape"] = df["gen_wind_mwh"] / df["gen_wind_mwh"].max()
+if "gen_hydro_mwh" in df.columns and "hydro_shape" not in df.columns:
+    df["hydro_shape"] = df["gen_hydro_mwh"] / df["gen_hydro_mwh"].max()
+
+
 missing = required_cols - set(df.columns)
 if missing:
     st.error(f"Profiles içinde eksik kolonlar var: {sorted(missing)}")
