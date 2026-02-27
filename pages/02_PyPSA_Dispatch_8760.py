@@ -2,7 +2,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import streamlit as st
-
 import pypsa
 
 st.set_page_config(page_title="PyPSA Dispatch 8760", layout="wide")
@@ -34,36 +33,62 @@ profile_file = st.selectbox(
 )
 
 df = pd.read_parquet(profile_file)
+
+# timestamp -> index
 if "timestamp" in df.columns:
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.set_index("timestamp")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df = df.dropna(subset=["timestamp"]).set_index("timestamp")
+
+# -----------------------------
+# Compatibility layer (DataPrep versions)
+# -----------------------------
+# Some DataPrep versions produce:
+# - load_base / net_load_base
+# - load_gross_mwh / load_net_mwh
+# Dispatch expects:
+# - load_gross / load_net
+rename_map = {
+    "load_base": "load_gross",
+    "net_load_base": "load_net",
+    "load_gross_mwh": "load_gross",
+    "load_net_mwh": "load_net",
+}
+for src, dst in rename_map.items():
+    if src in df.columns and dst not in df.columns:
+        df[dst] = df[src]
+
+def _safe_shape_from(series: pd.Series) -> pd.Series:
+    s = pd.to_numeric(series, errors="coerce").fillna(0).clip(lower=0)
+    mx = float(s.max()) if len(s) else 0.0
+    if mx <= 0:
+        return s * 0.0
+    return (s / mx).clip(0, 1)
+
+# If shapes not present but gen_* columns exist (older "history-like" outputs)
+if "solar_shape" not in df.columns and "gen_solar_mwh" in df.columns:
+    df["solar_shape"] = _safe_shape_from(df["gen_solar_mwh"])
+if "wind_shape" not in df.columns and "gen_wind_mwh" in df.columns:
+    df["wind_shape"] = _safe_shape_from(df["gen_wind_mwh"])
+if "hydro_shape" not in df.columns and "gen_hydro_mwh" in df.columns:
+    df["hydro_shape"] = _safe_shape_from(df["gen_hydro_mwh"])
 
 required_cols = {"load_gross", "load_net", "solar_shape", "wind_shape", "hydro_shape"}
-
-# Eğer DataPrep yeni isimle kaydettiyse düzelt
-if "load_gross_mwh" in df.columns:
-    df["load_gross"] = df["load_gross_mwh"]
-if "load_net_mwh" in df.columns:
-    df["load_net"] = df["load_net_mwh"]
-if "gen_solar_mwh" in df.columns and "solar_shape" not in df.columns:
-    df["solar_shape"] = df["gen_solar_mwh"] / df["gen_solar_mwh"].max()
-if "gen_wind_mwh" in df.columns and "wind_shape" not in df.columns:
-    df["wind_shape"] = df["gen_wind_mwh"] / df["gen_wind_mwh"].max()
-if "gen_hydro_mwh" in df.columns and "hydro_shape" not in df.columns:
-    df["hydro_shape"] = df["gen_hydro_mwh"] / df["gen_hydro_mwh"].max()
-
-
 missing = required_cols - set(df.columns)
 if missing:
-    st.error(f"Profiles içinde eksik kolonlar var: {sorted(missing)}")
+    st.error(
+        "Profiles içinde eksik kolonlar var: "
+        f"{sorted(missing)}\n\n"
+        "Beklenen kolonlar: load_gross, load_net, solar_shape, wind_shape, hydro_shape.\n"
+        "DataPrep sayfasını tekrar çalıştırıp profiles üretmeyi deneyebilirsin."
+    )
     st.stop()
 
 load_mode = st.radio("Load modu", ["Gross load", "Net load"], horizontal=True, index=0)
 
 load = df["load_gross"] if load_mode == "Gross load" else df["load_net"]
-solar_shape = df["solar_shape"].clip(0, 1)
-wind_shape  = df["wind_shape"].clip(0, 1)
-hydro_shape = df["hydro_shape"].clip(0, 1)
+solar_shape = pd.to_numeric(df["solar_shape"], errors="coerce").fillna(0).clip(0, 1)
+wind_shape  = pd.to_numeric(df["wind_shape"], errors="coerce").fillna(0).clip(0, 1)
+hydro_shape = pd.to_numeric(df["hydro_shape"], errors="coerce").fillna(0).clip(0, 1)
 
 st.caption(f"Seçili dosya: {profile_file.name} | Saat sayısı: {len(df):,}")
 
@@ -120,7 +145,7 @@ if run:
 
         n.add("Bus", "TR")
 
-        # Load (MWh/hour = MW average for that hour)
+        # Load (MWh/hour ~= average MW for that hour)
         n.add("Load", "Load", bus="TR", p_set=load.values)
 
         # Dispatchable thermal
@@ -141,7 +166,7 @@ if run:
         if cap_solar > 0:
             n.add("Generator", "Solar (GES)", bus="TR", p_nom=cap_solar, marginal_cost=mc_solar, p_max_pu=solar_shape.values)
 
-        # Hydro: for now treat as "profile-limited" generator (like run-of-river)
+        # Hydro: profile-limited (run-of-river style for now)
         if cap_hydro > 0:
             n.add("Generator", "Hydro", bus="TR", p_nom=cap_hydro, marginal_cost=mc_hydro, p_max_pu=hydro_shape.values)
 
@@ -160,7 +185,6 @@ if run:
     st.subheader("Sonuçlar")
 
     gen = n.generators_t.p.copy()
-    # Remove load shedding from main stack unless it's used
     cols = [c for c in gen.columns if c != "Load shedding"]
     gen_main = gen[cols]
 
@@ -173,7 +197,6 @@ if run:
         if "Load shedding" in gen.columns:
             st.metric("Unserved energy (MWh)", f"{gen['Load shedding'].sum():,.0f}")
 
-    # Annual totals by tech
     totals = gen.sum().sort_values(ascending=False).rename("MWh").to_frame()
     st.write("Yıllık toplam üretim (teknoloji bazında)")
     st.dataframe(totals)
@@ -192,11 +215,9 @@ if run:
         st.write("Curtailment (potansiyel - gerçekleşen) [MWh]")
         st.dataframe(pd.DataFrame(cur, columns=["tech", "curtailment_mwh"]))
 
-    # Quick chart (stacked area)
     st.write("Saatlik üretim (ilk 168 saat örnek)")
     st.area_chart(gen_main.head(168))
 
-    # Export
     st.download_button(
         "Saatlik üretimi CSV indir",
         data=gen.reset_index().to_csv(index=False).encode("utf-8"),
