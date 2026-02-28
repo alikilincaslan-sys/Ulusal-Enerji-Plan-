@@ -67,6 +67,7 @@ COSTS = pd.DataFrame([
     ("Coal",        16.77, 0.43, 0.00400, 0.90),
     ("Lignite",     13.00, 0.33, 0.00400, 1.10),
     ("Natural gas", 27.00, 0.60, 0.00200, 0.40),
+    ("Nuclear",      0.00, 0.38, 0.00900, 0.00),
     ("Hydro_Res",    0.00, 1.00, 0.00032,0.00),
     ("Hydro_RoR",    0.00, 1.00, 0.00032,0.00),
     ("Wind (RES)",   0.00, 1.00, 0.00043,0.00),
@@ -166,6 +167,7 @@ with cA:
     cap_coal_gw    = st.number_input("Coal (GW)", min_value=0.0, value=20.0, step=0.5)
     cap_lignite_gw = st.number_input("Lignite (GW)", min_value=0.0, value=10.0, step=0.5)
     cap_gas_gw     = st.number_input("Natural gas (GW)", min_value=0.0, value=25.0, step=0.5)
+    cap_nuclear_gw = st.number_input("Nuclear (GW)", min_value=0.0, value=0.0, step=0.5)
 with cB:
     cap_hres_gw = st.number_input("Hydro_Res (Barajlı) (GW)", min_value=0.0, value=23.0, step=0.5)
     cap_hror_gw = st.number_input("Hydro_RoR (Akarsu) (GW)", min_value=0.0, value=12.0, step=0.5)
@@ -174,7 +176,7 @@ with cC:
     cap_solar_gw = st.number_input("Solar (GES) (GW)", min_value=0.0, value=15.0, step=0.5)
     cap_other_gw = st.number_input("Other (GW)", min_value=0.0, value=0.0, step=0.5)
 
-total_cap_gw = float(cap_coal_gw + cap_lignite_gw + cap_gas_gw + cap_hres_gw + cap_hror_gw + cap_wind_gw + cap_solar_gw + cap_other_gw)
+total_cap_gw = float(cap_coal_gw + cap_lignite_gw + cap_gas_gw + cap_hres_gw + cap_hror_gw + cap_wind_gw + cap_solar_gw + cap_other_gw + cap_nuclear_gw)
 peak_load_gw = float(load_s.max()) / 1000.0
 
 k1, k2, k3 = st.columns(3)
@@ -190,6 +192,34 @@ cap_hror    = gw_to_mw(cap_hror_gw)
 cap_wind    = gw_to_mw(cap_wind_gw)
 cap_solar   = gw_to_mw(cap_solar_gw)
 cap_other   = gw_to_mw(cap_other_gw)
+
+# -----------------------------
+# 3b) Minimum / Maximum Load (pu)
+# -----------------------------
+st.subheader("3b) Minimum / Maximum Load (pu)")
+st.caption("p_min_pu: minimum yük (0-1) | p_max_pu: maksimum yük (0-1). VRE/Hidro için p_max_pu = shape × max_pu kullanılır.")
+
+cM1, cM2, cM3, cM4 = st.columns(4)
+with cM1:
+    coal_min = st.number_input("Coal min load (pu)", 0.0, 1.0, 0.30, 0.05)
+    coal_max = st.number_input("Coal max (pu)",      0.0, 1.0, 1.00, 0.05)
+    lignite_min = st.number_input("Lignite min load (pu)", 0.0, 1.0, 0.40, 0.05)
+    lignite_max = st.number_input("Lignite max (pu)",      0.0, 1.0, 1.00, 0.05)
+with cM2:
+    gas_min = st.number_input("Natural gas min load (pu)", 0.0, 1.0, 0.10, 0.05)
+    gas_max = st.number_input("Natural gas max (pu)",      0.0, 1.0, 1.00, 0.05)
+    nuclear_min = st.number_input("Nuclear min load (pu)", 0.0, 1.0, 0.80, 0.05)
+    nuclear_max = st.number_input("Nuclear max (pu)",      0.0, 1.0, 1.00, 0.05)
+with cM3:
+    other_min = st.number_input("Other min load (pu)", 0.0, 1.0, 0.20, 0.05)
+    other_max = st.number_input("Other max (pu)",      0.0, 1.0, 1.00, 0.05)
+    hydro_res_min = st.number_input("Hydro_Res min (pu)", 0.0, 1.0, 0.00, 0.05)
+    hydro_res_max = st.number_input("Hydro_Res max (pu)", 0.0, 1.0, 1.00, 0.05)
+with cM4:
+    hydro_ror_min = st.number_input("Hydro_RoR min (pu)", 0.0, 1.0, 0.00, 0.05)
+    hydro_ror_max = st.number_input("Hydro_RoR max (pu)", 0.0, 1.0, 1.00, 0.05)
+    wind_max = st.number_input("Wind max multiplier (pu)", 0.0, 1.0, 1.00, 0.05)
+    solar_max = st.number_input("Solar max multiplier (pu)", 0.0, 1.0, 1.00, 0.05)
 
 # -----------------------------
 # CO2
@@ -258,32 +288,77 @@ if run:
 
         # Dispatchables
         if cap_coal > 0:
-            n.add("Generator", "Coal", bus="TR", p_nom=cap_coal, marginal_cost=safe_num(mc.get("Coal", 0)),
-                  ramp_limit_up=RAMP_LIMITS["Coal"], ramp_limit_down=RAMP_LIMITS["Coal"])
+            n.add(
+                "Generator", "Coal", bus="TR",
+                p_nom=cap_coal,
+                marginal_cost=safe_num(mc.get("Coal", 0)),
+                ramp_limit_up=RAMP_LIMITS["Coal"], ramp_limit_down=RAMP_LIMITS["Coal"],
+                p_min_pu=float(coal_min), p_max_pu=float(coal_max),
+            )
         if cap_lignite > 0:
-            n.add("Generator", "Lignite", bus="TR", p_nom=cap_lignite, marginal_cost=safe_num(mc.get("Lignite", 0)),
-                  ramp_limit_up=RAMP_LIMITS["Lignite"], ramp_limit_down=RAMP_LIMITS["Lignite"])
+            n.add(
+                "Generator", "Lignite", bus="TR",
+                p_nom=cap_lignite,
+                marginal_cost=safe_num(mc.get("Lignite", 0)),
+                ramp_limit_up=RAMP_LIMITS["Lignite"], ramp_limit_down=RAMP_LIMITS["Lignite"],
+                p_min_pu=float(lignite_min), p_max_pu=float(lignite_max),
+            )
         if cap_gas > 0:
-            n.add("Generator", "Natural gas", bus="TR", p_nom=cap_gas, marginal_cost=safe_num(mc.get("Natural gas", 0)),
-                  ramp_limit_up=RAMP_LIMITS["Natural gas"], ramp_limit_down=RAMP_LIMITS["Natural gas"])
+            n.add(
+                "Generator", "Natural gas", bus="TR",
+                p_nom=cap_gas,
+                marginal_cost=safe_num(mc.get("Natural gas", 0)),
+                ramp_limit_up=RAMP_LIMITS["Natural gas"], ramp_limit_down=RAMP_LIMITS["Natural gas"],
+                p_min_pu=float(gas_min), p_max_pu=float(gas_max),
+            )
+        if cap_nuclear > 0:
+            n.add(
+                "Generator", "Nuclear", bus="TR",
+                p_nom=cap_nuclear,
+                marginal_cost=safe_num(mc.get("Nuclear", 0)),
+                p_min_pu=float(nuclear_min), p_max_pu=float(nuclear_max),
+            )
         if cap_other > 0:
-            n.add("Generator", "Other", bus="TR", p_nom=cap_other, marginal_cost=safe_num(mc.get("Other", 0)))
+            n.add(
+                "Generator", "Other", bus="TR",
+                p_nom=cap_other,
+                marginal_cost=safe_num(mc.get("Other", 0)),
+                p_min_pu=float(other_min), p_max_pu=float(other_max),
+            )
 
         # VRE
         if cap_wind > 0:
-            n.add("Generator", "Wind (RES)", bus="TR", p_nom=cap_wind, marginal_cost=safe_num(mc.get("Wind (RES)", 0)),
-                  p_max_pu=wind_pmax.values)
+            n.add(
+                "Generator", "Wind (RES)", bus="TR",
+                p_nom=cap_wind,
+                marginal_cost=safe_num(mc.get("Wind (RES)", 0)),
+                p_max_pu=(wind_pmax.values * float(wind_max)),
+            )
         if cap_solar > 0:
-            n.add("Generator", "Solar (GES)", bus="TR", p_nom=cap_solar, marginal_cost=safe_num(mc.get("Solar (GES)", 0)),
-                  p_max_pu=solar_pmax.values)
+            n.add(
+                "Generator", "Solar (GES)", bus="TR",
+                p_nom=cap_solar,
+                marginal_cost=safe_num(mc.get("Solar (GES)", 0)),
+                p_max_pu=(solar_pmax.values * float(solar_max)),
+            )
 
         # Hydro split
         if cap_hres > 0:
-            n.add("Generator", "Hydro_Res", bus="TR", p_nom=cap_hres, marginal_cost=safe_num(mc.get("Hydro_Res", 0)),
-                  p_max_pu=hydro_res_pmax.values)
+            n.add(
+                "Generator", "Hydro_Res", bus="TR",
+                p_nom=cap_hres,
+                marginal_cost=safe_num(mc.get("Hydro_Res", 0)),
+                p_min_pu=float(hydro_res_min),
+                p_max_pu=(hydro_res_pmax.values * float(hydro_res_max)),
+            )
         if cap_hror > 0:
-            n.add("Generator", "Hydro_RoR", bus="TR", p_nom=cap_hror, marginal_cost=safe_num(mc.get("Hydro_RoR", 0)),
-                  p_max_pu=hydro_ror_pmax.values)
+            n.add(
+                "Generator", "Hydro_RoR", bus="TR",
+                p_nom=cap_hror,
+                marginal_cost=safe_num(mc.get("Hydro_RoR", 0)),
+                p_min_pu=float(hydro_ror_min),
+                p_max_pu=(hydro_ror_pmax.values * float(hydro_ror_max)),
+            )
 
         # Storage
         if enable_storage and storage_p_nom_max_mw > 0:
