@@ -192,6 +192,7 @@ cap_hror    = gw_to_mw(cap_hror_gw)
 cap_wind    = gw_to_mw(cap_wind_gw)
 cap_solar   = gw_to_mw(cap_solar_gw)
 cap_other   = gw_to_mw(cap_other_gw)
+cap_nuclear = gw_to_mw(cap_nuclear_gw)
 
 # -----------------------------
 # 3b) Minimum / Maximum Load (pu)
