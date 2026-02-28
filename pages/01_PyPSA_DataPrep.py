@@ -22,7 +22,7 @@ Bu sayfa ham Excel'leri okur, **29 Şubat'ı düşürür**, lisanslı+lisanssız
 kaynakları gruplar, sonra **parquet** üretir.
 
 ✅ Bu sürümde hidro ikiye ayrılır:
-- **Hydro (Hidro)** → rezervuarlı/barajlı gibi düşüneceğiz (kolon adı: `Hidro`)
+- **Hydro (Hidro)** → rezervuarlı/barajlı gibi düşüneceğiz (kolon adı: `Barajlı`)
 - **RoR (Akarsu)** → run-of-river (kolon adı: `Akarsu`)
 ve `profiles_YYYY.parquet` içine:
 - `hydro_res_shape`
@@ -182,8 +182,8 @@ if run_btn:
         out["solar_lic_mwh"] = pd.to_numeric(lic.get("Güneş", 0), errors="coerce").fillna(0)
         out["wind_lic_mwh"] = pd.to_numeric(lic.get("Rüzgar", 0), errors="coerce").fillna(0)
 
-        # ✅ Hydro split (user confirmed: columns are "Hidro" and "Akarsu")
-        out["hydro_res_mwh"] = pd.to_numeric(lic.get("Hidro", 0), errors="coerce").fillna(0)  # reservoir-like
+        # ✅ Hydro split (user confirmed: columns are "Barajlı" and "Akarsu")
+        out["hydro_res_mwh"] = pd.to_numeric(lic.get("Barajlı", 0), errors="coerce").fillna(0)  # reservoir-like
         out["hydro_ror_mwh"] = pd.to_numeric(lic.get("Akarsu", 0), errors="coerce").fillna(0) # run-of-river
         out["hydro_mwh"] = out["hydro_res_mwh"] + out["hydro_ror_mwh"]  # keep total for compatibility
 
@@ -229,7 +229,7 @@ if run_btn:
         prof["wind_shape"]  = normalize_shape(base["wind_total_mwh"])
 
         # ✅ Hydro split shapes
-        prof["hydro_res_shape"] = normalize_shape(base["hydro_res_mwh"])  # Hidro
+        prof["hydro_res_shape"] = normalize_shape(base["hydro_res_mwh"])  # Barajlı
         prof["hydro_ror_shape"] = normalize_shape(base["hydro_ror_mwh"])  # Akarsu
 
         # keep old total hydro shape for backward compatibility
