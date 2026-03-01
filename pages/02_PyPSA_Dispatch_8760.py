@@ -294,24 +294,32 @@ if "dispatch_results" not in st.session_state:
 # To force re-run if inputs change, we track a simple signature
 def _input_signature():
     # Input signature used to decide whether cached results are still valid after rerun.
-    # Keep it limited to key inputs that change the optimization outcome.
-    load_scale = (float(target_twh) / float(base_twh)) if float(base_twh) > 0 else 0.0
+    # Pull from globals if available; otherwise fall back to st.session_state defaults.
+    def _g(name, default=None):
+        return globals().get(name, st.session_state.get(name, default))
+
+    _profile_year = int(_g('profile_year', 2024))
+    _load_mode = str(_g('load_mode', 'Gross'))
+    _target_twh = float(_g('target_twh', 0.0))
+    _base_twh = float(_g('base_twh', 0.0))
+    _load_scale = (_target_twh / _base_twh) if _base_twh > 0 else 0.0
+
     return (
-        int(profile_year),
-        str(load_mode),
-        float(target_twh), float(base_twh), float(load_scale),
-        float(cap_coal), float(cap_lignite), float(cap_gas), float(cap_nuclear),
-        float(cap_hres), float(cap_hror), float(cap_wind), float(cap_solar), float(cap_other),
-        float(coal_min), float(coal_max), float(lignite_min), float(lignite_max),
-        float(gas_min), float(gas_max), float(nuclear_min), float(nuclear_max),
-        float(other_min), float(other_max),
-        float(hydro_res_min), float(hydro_res_max), float(hydro_ror_min), float(hydro_ror_max),
-        float(wind_max), float(solar_max),
-        bool(use_storage), bool(storage_optimize_size),
-        float(storage_p_nom_fixed_mw), float(storage_p_nom_min_mw), float(storage_p_nom_max_mw), float(storage_max_hours),
-        float(storage_eff_roundtrip), float(storage_standing_loss), float(storage_marginal_cost),
-        bool(use_voll), float(voll),
-        float(co2_price),
+        _profile_year,
+        _load_mode,
+        _target_twh, _base_twh, _load_scale,
+        float(_g('cap_coal', 0.0)), float(_g('cap_lignite', 0.0)), float(_g('cap_gas', 0.0)), float(_g('cap_nuclear', 0.0)),
+        float(_g('cap_hres', 0.0)), float(_g('cap_hror', 0.0)), float(_g('cap_wind', 0.0)), float(_g('cap_solar', 0.0)), float(_g('cap_other', 0.0)),
+        float(_g('coal_min', 0.0)), float(_g('coal_max', 1.0)), float(_g('lignite_min', 0.0)), float(_g('lignite_max', 1.0)),
+        float(_g('gas_min', 0.0)), float(_g('gas_max', 1.0)), float(_g('nuclear_min', 0.0)), float(_g('nuclear_max', 1.0)),
+        float(_g('other_min', 0.0)), float(_g('other_max', 1.0)),
+        float(_g('hydro_res_min', 0.0)), float(_g('hydro_res_max', 1.0)), float(_g('hydro_ror_min', 0.0)), float(_g('hydro_ror_max', 1.0)),
+        float(_g('wind_max', 1.0)), float(_g('solar_max', 1.0)),
+        bool(_g('use_storage', False)), bool(_g('storage_optimize_size', False)),
+        float(_g('storage_p_nom_fixed_mw', 0.0)), float(_g('storage_p_nom_min_mw', 0.0)), float(_g('storage_p_nom_max_mw', 0.0)), float(_g('storage_max_hours', 4.0)),
+        float(_g('storage_eff_roundtrip', 0.9)), float(_g('storage_standing_loss', 0.0)), float(_g('storage_marginal_cost', 0.0)),
+        bool(_g('use_voll', True)), float(_g('voll', 10000.0)),
+        float(_g('co2_price', 0.0)),
     )
 if run:
     with st.spinner("Network kuruluyor..."):
