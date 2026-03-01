@@ -95,6 +95,12 @@ if not available:
 
 profile_file = st.selectbox("Profiles dosyası", options=available, format_func=lambda p: p.name)
 
+# Yıl bilgisini dosya adından çek (profiles_YYYY.parquet)
+try:
+    profile_year = int(Path(profile_file).stem.split("_")[1])
+except Exception:
+    profile_year = 0
+
 prof = pd.read_parquet(profile_file)
 if "timestamp" in prof.columns:
     prof["timestamp"] = pd.to_datetime(prof["timestamp"], errors="coerce")
@@ -287,14 +293,23 @@ if "dispatch_results" not in st.session_state:
 
 # To force re-run if inputs change, we track a simple signature
 def _input_signature():
+    # Input signature used to decide whether cached results are still valid after rerun.
+    # Keep it limited to key inputs that change the optimization outcome.
+    load_scale = (float(target_twh) / float(base_twh)) if float(base_twh) > 0 else 0.0
     return (
-        year, float(load_scale), float(load_target_twh),
-        float(cap_coal), float(cap_lignite), float(cap_gas), float(cap_nuclear), float(cap_hres), float(cap_hror), float(cap_wind), float(cap_solar), float(cap_other),
-        float(coal_min), float(coal_max), float(lignite_min), float(lignite_max), float(gas_min), float(gas_max), float(nuclear_min), float(nuclear_max), float(other_min), float(other_max),
+        int(profile_year),
+        str(load_mode),
+        float(target_twh), float(base_twh), float(load_scale),
+        float(cap_coal), float(cap_lignite), float(cap_gas), float(cap_nuclear),
+        float(cap_hres), float(cap_hror), float(cap_wind), float(cap_solar), float(cap_other),
+        float(coal_min), float(coal_max), float(lignite_min), float(lignite_max),
+        float(gas_min), float(gas_max), float(nuclear_min), float(nuclear_max),
+        float(other_min), float(other_max),
         float(hydro_res_min), float(hydro_res_max), float(hydro_ror_min), float(hydro_ror_max),
         float(wind_max), float(solar_max),
-        bool(use_storage), bool(storage_optimize_size), float(storage_p_nom_fixed_mw), float(storage_p_nom_max_mw), float(storage_p_nom_min_mw), float(storage_max_hours),
-        float(storage_eff_roundtrip), float(storage_standing_loss), float(storage_capital_cost_per_mw_yr), float(storage_marginal_cost),
+        bool(use_storage), bool(storage_optimize_size),
+        float(storage_p_nom_fixed_mw), float(storage_p_nom_min_mw), float(storage_p_nom_max_mw), float(storage_max_hours),
+        float(storage_eff_roundtrip), float(storage_standing_loss), float(storage_marginal_cost),
         bool(use_voll), float(voll),
         float(co2_price),
     )
