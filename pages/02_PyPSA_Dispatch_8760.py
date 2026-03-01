@@ -14,6 +14,7 @@ import pandas as pd
 import streamlit as st
 import pypsa
 import altair as alt
+alt.renderers.set_embed_options(actions=False)
 
 st.set_page_config(page_title="PyPSA Dispatch 8760", layout="wide")
 
@@ -280,6 +281,23 @@ with st.expander("6) Güvenlik: Load shedding (önerilir)", expanded=False):
 # -----------------------------
 run = st.button("Optimize et (8760)", type="primary")
 
+# Persist results across reruns (so sliders / tabs won't wipe the optimized solution)
+if "dispatch_results" not in st.session_state:
+    st.session_state["dispatch_results"] = None
+
+# To force re-run if inputs change, we track a simple signature
+def _input_signature():
+    return (
+        year, float(load_scale), float(load_target_twh),
+        float(cap_coal), float(cap_lignite), float(cap_gas), float(cap_nuclear), float(cap_hres), float(cap_hror), float(cap_wind), float(cap_solar), float(cap_other),
+        float(coal_min), float(coal_max), float(lignite_min), float(lignite_max), float(gas_min), float(gas_max), float(nuclear_min), float(nuclear_max), float(other_min), float(other_max),
+        float(hydro_res_min), float(hydro_res_max), float(hydro_ror_min), float(hydro_ror_max),
+        float(wind_max), float(solar_max),
+        bool(use_storage), bool(storage_optimize_size), float(storage_p_nom_fixed_mw), float(storage_p_nom_max_mw), float(storage_p_nom_min_mw), float(storage_max_hours),
+        float(storage_eff_roundtrip), float(storage_standing_loss), float(storage_capital_cost_per_mw_yr), float(storage_marginal_cost),
+        bool(use_voll), float(voll),
+        float(co2_price),
+    )
 if run:
     with st.spinner("Network kuruluyor..."):
         n = pypsa.Network()
@@ -401,293 +419,319 @@ if run:
     with st.spinner("Optimize ediliyor (HiGHS)..."):
         n.optimize(solver_name="highs")
 
-    st.success("Çözüm tamam!")
+        # Store optimized network and key series in session_state (for stable UI)
+        st.session_state["dispatch_results"] = {
+            "sig": _input_signature(),
+            "network": n,
+            "snapshots": snapshots,
+            "load_s": load_s,
+        }
 
-    # -----------------------------
-    # Results
-    # -----------------------------
-    st.subheader("Sonuçlar")
+# -----------------------------
+# Results (persisted)
+# -----------------------------
+res = st.session_state.get("dispatch_results")
+if res is None:
+    st.info("Henüz optimizasyon çalıştırılmadı. Yukarıdan 'Optimize et (8760)' butonuna bas.")
+    st.stop()
 
-    gen = n.generators_t.p.copy()  # MW time series
-    gen.index = pd.to_datetime(gen.index)
+# If inputs changed since last run, warn user (without wiping results)
+if res.get("sig") != _input_signature():
+    st.warning("Girdi ayarları değişti. Sonuçlar önceki çalıştırmaya ait; güncellemek için tekrar 'Optimize et (8760)' bas.")
 
-    # Key metrics
-    total_twh = float(gen.sum().sum()) / 1e6
-    shed_twh = float(gen["Load shedding"].sum()) / 1e6 if "Load shedding" in gen.columns else 0.0
-    shed_hours = int((gen["Load shedding"] > 1e-6).sum()) if "Load shedding" in gen.columns else 0
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Objective", f"{n.objective:,.0f}")
-    c2.metric("Toplam üretim (TWh)", f"{total_twh:,.1f}")
-    c3.metric("Load shedding (TWh)", f"{shed_twh:,.3f}")
-    c4.metric("Load shedding saat", f"{shed_hours:,}")
-
-    # -----------------------------
-    # Annual table: TWh + CF
-    # -----------------------------
-    annual_mwh = gen.sum()  # by generator name
-    twh = (annual_mwh / 1e6).rename("TWh")
-
-    cap_mw = n.generators["p_nom"].copy()
-    cap_mw = cap_mw.reindex(twh.index)
-
-    cf = (annual_mwh / (cap_mw * len(snapshots))).rename("CF").replace([np.inf, -np.inf], np.nan)
-
-    annual_tbl = pd.concat([twh, cf], axis=1).sort_values("TWh", ascending=False)
-
-    st.subheader("Yıllık üretim ve kapasite faktörü")
-    st.dataframe(annual_tbl.style.format({"TWh": "{:.2f}", "CF": "{:.2%}"}))
-
-    # -----------------------------
-    # Curtailment KPIs (Solar/Wind)
-    # -----------------------------
-    st.subheader("Curtailment (Solar/Wind)")
-    solar_potential = pd.Series(0.0, index=snapshots)
-    wind_potential = pd.Series(0.0, index=snapshots)
-    if cap_solar > 0:
-        solar_potential = pd.Series(solar_pmax.values, index=snapshots) * float(cap_solar)
-    if cap_wind > 0:
-        wind_potential = pd.Series(wind_pmax.values, index=snapshots) * float(cap_wind)
-    solar_actual = gen["Solar (GES)"] if "Solar (GES)" in gen.columns else pd.Series(0.0, index=snapshots)
-    wind_actual = gen["Wind (RES)"] if "Wind (RES)" in gen.columns else pd.Series(0.0, index=snapshots)
-    solar_curt = (solar_potential - solar_actual).clip(lower=0)
-    wind_curt  = (wind_potential - wind_actual).clip(lower=0)
-    solar_pot = float(solar_potential.sum())
-    wind_pot  = float(wind_potential.sum())
-    solar_cur = float(solar_curt.sum())
-    wind_cur  = float(wind_curt.sum())
-    solar_pct = (solar_cur/solar_pot) if solar_pot>0 else 0.0
-    wind_pct  = (wind_cur/wind_pot) if wind_pot>0 else 0.0
-    cc1, cc2, cc3, cc4 = st.columns(4)
-    cc1.metric("Solar curtailment (TWh)", f"{solar_cur/1e6:,.2f}")
-    cc2.metric("Solar curtailment (%)", f"{solar_pct*100:,.1f}%")
-    cc3.metric("Wind curtailment (TWh)", f"{wind_cur/1e6:,.2f}")
-    cc4.metric("Wind curtailment (%)", f"{wind_pct*100:,.1f}%")
-    with st.expander("Curtailment time series", expanded=False):
-        st.line_chart(pd.DataFrame({"Solar_curt_MW": solar_curt, "Wind_curt_MW": wind_curt}))
+n = res["network"]
+snapshots = res["snapshots"]
+load_s = res["load_s"]
 
 
-    # Storage summary
-    if hasattr(n, "storage_units") and "Battery" in n.storage_units.index:
-        st.subheader("Depolama özeti")
-        p_nom_inst = float(n.storage_units.loc["Battery", "p_nom"])
-        max_h_inst = float(n.storage_units.loc["Battery", "max_hours"])
-        e_cap = p_nom_inst * max_h_inst
-        s1, s2, s3 = st.columns(3)
-        s1.metric("Battery power (MW)", f"{p_nom_inst:,.0f}")
-        s2.metric("max_hours (h)", f"{max_h_inst:,.1f}")
-        s3.metric("Energy cap (MWh)", f"{e_cap:,.0f}")
 
-        # Battery usage KPIs (annual)
-        try:
-            p_batt = n.storage_units_t.p["Battery"].copy()
-            soc = n.storage_units_t.state_of_charge["Battery"].copy()
-            charge_mwh = float((-p_batt.clip(upper=0)).sum())
-            discharge_mwh = float((p_batt.clip(lower=0)).sum())
-            throughput_mwh = charge_mwh + discharge_mwh
-            soc_min = float(soc.min()) if len(soc) else 0.0
-            soc_max = float(soc.max()) if len(soc) else 0.0
-            cycles = (discharge_mwh / e_cap) if e_cap > 0 else 0.0
-            u1, u2, u3, u4 = st.columns(4)
-            u1.metric("Charge (GWh)", f"{charge_mwh/1000:,.1f}")
-            u2.metric("Discharge (GWh)", f"{discharge_mwh/1000:,.1f}")
-            u3.metric("Throughput (GWh)", f"{throughput_mwh/1000:,.1f}")
-            u4.metric("Approx cycles", f"{cycles:,.2f}")
-            v1, v2 = st.columns(2)
-            v1.metric("SOC min (MWh)", f"{soc_min:,.0f}")
-            v2.metric("SOC max (MWh)", f"{soc_max:,.0f}")
-            with st.expander("Battery time series (p ve SOC)", expanded=False):
-                st.line_chart(pd.DataFrame({"Battery_p_MW": p_batt, "SOC_MWh": soc}))
-        except Exception:
-            st.caption("Batarya zaman serileri okunamadı (StorageUnit yok veya sürüm farkı).")
+st.success("Çözüm tamam!")
+
+# -----------------------------
+# Results
+# -----------------------------
+st.subheader("Sonuçlar")
+
+gen = n.generators_t.p.copy()  # MW time series
+gen.index = pd.to_datetime(gen.index)
+
+# Key metrics
+total_twh = float(gen.sum().sum()) / 1e6
+shed_twh = float(gen["Load shedding"].sum()) / 1e6 if "Load shedding" in gen.columns else 0.0
+shed_hours = int((gen["Load shedding"] > 1e-6).sum()) if "Load shedding" in gen.columns else 0
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Objective", f"{n.objective:,.0f}")
+c2.metric("Toplam üretim (TWh)", f"{total_twh:,.1f}")
+c3.metric("Load shedding (TWh)", f"{shed_twh:,.3f}")
+c4.metric("Load shedding saat", f"{shed_hours:,}")
+
+# -----------------------------
+# Annual table: TWh + CF
+# -----------------------------
+annual_mwh = gen.sum()  # by generator name
+twh = (annual_mwh / 1e6).rename("TWh")
+
+cap_mw = n.generators["p_nom"].copy()
+cap_mw = cap_mw.reindex(twh.index)
+
+cf = (annual_mwh / (cap_mw * len(snapshots))).rename("CF").replace([np.inf, -np.inf], np.nan)
+
+annual_tbl = pd.concat([twh, cf], axis=1).sort_values("TWh", ascending=False)
+
+st.subheader("Yıllık üretim ve kapasite faktörü")
+st.dataframe(annual_tbl.style.format({"TWh": "{:.2f}", "CF": "{:.2%}"}))
+
+# -----------------------------
+# Curtailment KPIs (Solar/Wind)
+# -----------------------------
+st.subheader("Curtailment (Solar/Wind)")
+solar_potential = pd.Series(0.0, index=snapshots)
+wind_potential = pd.Series(0.0, index=snapshots)
+if cap_solar > 0:
+    solar_potential = pd.Series(solar_pmax.values, index=snapshots) * float(cap_solar)
+if cap_wind > 0:
+    wind_potential = pd.Series(wind_pmax.values, index=snapshots) * float(cap_wind)
+solar_actual = gen["Solar (GES)"] if "Solar (GES)" in gen.columns else pd.Series(0.0, index=snapshots)
+wind_actual = gen["Wind (RES)"] if "Wind (RES)" in gen.columns else pd.Series(0.0, index=snapshots)
+solar_curt = (solar_potential - solar_actual).clip(lower=0)
+wind_curt  = (wind_potential - wind_actual).clip(lower=0)
+solar_pot = float(solar_potential.sum())
+wind_pot  = float(wind_potential.sum())
+solar_cur = float(solar_curt.sum())
+wind_cur  = float(wind_curt.sum())
+solar_pct = (solar_cur/solar_pot) if solar_pot>0 else 0.0
+wind_pct  = (wind_cur/wind_pot) if wind_pot>0 else 0.0
+cc1, cc2, cc3, cc4 = st.columns(4)
+cc1.metric("Solar curtailment (TWh)", f"{solar_cur/1e6:,.2f}")
+cc2.metric("Solar curtailment (%)", f"{solar_pct*100:,.1f}%")
+cc3.metric("Wind curtailment (TWh)", f"{wind_cur/1e6:,.2f}")
+cc4.metric("Wind curtailment (%)", f"{wind_pct*100:,.1f}%")
+with st.expander("Curtailment time series", expanded=False):
+    st.line_chart(pd.DataFrame({"Solar_curt_MW": solar_curt, "Wind_curt_MW": wind_curt}))
 
 
-    # -----------------------------
-    # 8760 diagnostics
-    # -----------------------------
-    st.subheader("8760 Tanı Paneli (mevsimsellik + sorun tespiti)")
+# Storage summary
+if hasattr(n, "storage_units") and "Battery" in n.storage_units.index:
+    st.subheader("Depolama özeti")
+    p_nom_inst = float(n.storage_units.loc["Battery", "p_nom"])
+    max_h_inst = float(n.storage_units.loc["Battery", "max_hours"])
+    e_cap = p_nom_inst * max_h_inst
+    s1, s2, s3 = st.columns(3)
+    s1.metric("Battery power (MW)", f"{p_nom_inst:,.0f}")
+    s2.metric("max_hours (h)", f"{max_h_inst:,.1f}")
+    s3.metric("Energy cap (MWh)", f"{e_cap:,.0f}")
 
-    # A) Monthly energy (TWh)
-    show_cols = [c for c in gen.columns if c != "Load shedding"]
-    monthly_twh = (gen[show_cols].resample("M").sum() / 1e6)
-
-    st.markdown("**Aylık üretim (TWh) – mevsimsellik**")
-    st.bar_chart(monthly_twh)
-
-    # B) Load duration curve (8760)
-    ldc = load_s.sort_values(ascending=False).reset_index(drop=True)
-    st.markdown("**Load Duration Curve (8760)**")
-    st.line_chart(ldc)
-
-    # C) Balance (TotalGen - Load)
-    total_gen = gen[show_cols].sum(axis=1)
-    balance = (total_gen - load_s).rename("Balance_MW")
-    st.markdown("**Arz - Talep (MW)** (negatif saat varsa -> ya load shedding ya da kısıt)")
-    st.line_chart(balance)
-
-    # D) Heatmap: choose series
-    st.markdown("**Heatmap (Ay × Saat)**")
-    hm_mode = st.selectbox("Heatmap metriği", ["Load shedding (MW)", "Balance (MW)", "Marginal price ($/MWh)"], index=0)
-
-    if hm_mode == "Load shedding (MW)":
-        if "Load shedding" in gen.columns:
-            hm_s = gen["Load shedding"].copy()
-        else:
-            hm_s = pd.Series(0.0, index=gen.index)
-    elif hm_mode == "Balance (MW)":
-        hm_s = balance.copy()
-    else:
-        # Marginal price
-        try:
-            hm_s = n.buses_t.marginal_price["TR"].copy()
-            hm_s.index = pd.to_datetime(hm_s.index)
-        except Exception:
-            hm_s = pd.Series(0.0, index=gen.index)
-
-    df_hm = pd.DataFrame({
-        "ts": hm_s.index,
-        "month": hm_s.index.month,
-        "hour": hm_s.index.hour,
-        "value": pd.to_numeric(hm_s.values, errors="coerce")
-    }).dropna()
-
-    hm = alt.Chart(df_hm).mark_rect().encode(
-        x=alt.X("hour:O", title="Saat"),
-        y=alt.Y("month:O", title="Ay"),
-        color=alt.Color("value:Q", title=hm_mode),
-        tooltip=["month:O", "hour:O", alt.Tooltip("value:Q", title=hm_mode)]
-    ).properties(height=300)
-
-    st.altair_chart(hm, use_container_width=True)
-
-    # Worst hours table: by load shedding then by price
-    
-    # -----------------------------
-    # Minimum storage suggestion (Adequacy scan)
-    # -----------------------------
-    st.subheader("Minimum gerekli depolama (Adequacy taraması)")
-    st.caption("Amaç: Load shedding = 0 olacak şekilde en küçük (GW, GWh) depolamayı önermek. "
-               "Bu tarama maliyet-optimum değil; minimum yeterlilik içindir.")
-    do_scan = st.button("Adequacy taramasını çalıştır (minimum depolama öner)", type="secondary")
-    if do_scan:
-        P_list_gw = [0, 1, 2, 3, 4, 6, 8, 10, 15, 20, 25, 35]
-        H_list = [1, 2, 4, 6, 8]
-        rows = []
-        found = None
-        with st.spinner("Tarama çalışıyor..."):
-            for h in H_list:
-                for p_gw in P_list_gw:
-                    # Basit yaklaşım: optimize kapalı, sabit batarya ile tekrar çöz
-                    nn = pypsa.Network()
-                    nn.set_snapshots(snapshots)
-                    nn.add("Bus", "TR")
-                    nn.add("Load", "Load", bus="TR", p_set=load_s.values)
-                    # Aynı jeneratör seti
-                    if cap_coal > 0:
-                        nn.add("Generator","Coal",bus="TR",p_nom=cap_coal,marginal_cost=safe_num(mc.get("Coal",0)),
-                               ramp_limit_up=RAMP_LIMITS["Coal"],ramp_limit_down=RAMP_LIMITS["Coal"],
-                               p_min_pu=float(coal_min),p_max_pu=float(coal_max))
-                    if cap_lignite > 0:
-                        nn.add("Generator","Lignite",bus="TR",p_nom=cap_lignite,marginal_cost=safe_num(mc.get("Lignite",0)),
-                               ramp_limit_up=RAMP_LIMITS["Lignite"],ramp_limit_down=RAMP_LIMITS["Lignite"],
-                               p_min_pu=float(lignite_min),p_max_pu=float(lignite_max))
-                    if cap_gas > 0:
-                        nn.add("Generator","Natural gas",bus="TR",p_nom=cap_gas,marginal_cost=safe_num(mc.get("Natural gas",0)),
-                               ramp_limit_up=RAMP_LIMITS["Natural gas"],ramp_limit_down=RAMP_LIMITS["Natural gas"],
-                               p_min_pu=float(gas_min),p_max_pu=float(gas_max))
-                    if cap_nuclear > 0:
-                        nn.add("Generator","Nuclear",bus="TR",p_nom=cap_nuclear,marginal_cost=safe_num(mc.get("Nuclear",0)),
-                               p_min_pu=float(nuclear_min),p_max_pu=float(nuclear_max))
-                    if cap_other > 0:
-                        nn.add("Generator","Other",bus="TR",p_nom=cap_other,marginal_cost=safe_num(mc.get("Other",0)),
-                               p_min_pu=float(other_min),p_max_pu=float(other_max))
-                    if cap_wind > 0:
-                        nn.add("Generator","Wind (RES)",bus="TR",p_nom=cap_wind,marginal_cost=safe_num(mc.get("Wind (RES)",0)),
-                               p_max_pu=(wind_pmax.values * float(wind_max)))
-                    if cap_solar > 0:
-                        nn.add("Generator","Solar (GES)",bus="TR",p_nom=cap_solar,marginal_cost=safe_num(mc.get("Solar (GES)",0)),
-                               p_max_pu=(solar_pmax.values * float(solar_max)))
-                    if cap_hres > 0:
-                        nn.add("Generator","Hydro_Res",bus="TR",p_nom=cap_hres,marginal_cost=safe_num(mc.get("Hydro_Res",0)),
-                               p_min_pu=float(hydro_res_min),p_max_pu=(hydro_res_pmax.values * float(hydro_res_max)))
-                    if cap_hror > 0:
-                        nn.add("Generator","Hydro_RoR",bus="TR",p_nom=cap_hror,marginal_cost=safe_num(mc.get("Hydro_RoR",0)),
-                               p_min_pu=float(hydro_ror_min),p_max_pu=(hydro_ror_pmax.values * float(hydro_ror_max)))
-                    if p_gw > 0:
-                        eff_sd = float(np.sqrt(storage_eff_roundtrip))
-                        nn.add("StorageUnit","Battery",bus="TR",p_nom=p_gw*1000.0,max_hours=float(h),
-                               efficiency_store=eff_sd,efficiency_dispatch=eff_sd,
-                               standing_loss=float(storage_standing_loss),marginal_cost=float(storage_marginal_cost),
-                               cyclic_state_of_charge=True)
-                    if use_voll:
-                        nn.add("Generator","Load shedding",bus="TR",p_nom=1e9,marginal_cost=float(voll))
-                    nn.optimize(solver_name="highs")
-                    shed = float(nn.generators_t.p["Load shedding"].sum()) if (use_voll and "Load shedding" in nn.generators_t.p.columns) else 0.0
-                    rows.append({"P_GW": p_gw, "Hours": h, "E_GWh": p_gw*h, "Shed_MWh": shed})
-                    if shed <= 1e-3 and found is None:
-                        found = (p_gw, h, p_gw*h)
-        df_scan = pd.DataFrame(rows)
-        st.dataframe(df_scan, use_container_width=True)
-        if found is None:
-            st.error("Tarama aralığında shedding=0 sağlayan depolama bulunamadı. P üst sınırını artırmayı deneyin.")
-        else:
-            p_gw, h, e_gwh = found
-            st.success(f"✅ Minimum depolama (Adequacy): {p_gw:.0f} GW / {e_gwh:.0f} GWh  (≈ {h} saat)")
-
-    st.subheader("En kötü saatler (otomatik tespit)")
-    if "Load shedding" in gen.columns and (gen["Load shedding"] > 1e-6).any():
-        worst_shed = gen["Load shedding"].sort_values(ascending=False).head(50).rename("unserved_MW").to_frame()
-        st.write("Load shedding en yüksek 50 saat")
-        st.dataframe(worst_shed)
-    else:
-        st.info("Load shedding yok (veya sıfıra yakın). Fiyat/balance ile kontrol edebilirsin.")
-
+    # Battery usage KPIs (annual)
     try:
-        price = n.buses_t.marginal_price["TR"].copy()
-        price.index = pd.to_datetime(price.index)
-        worst_price = price.sort_values(ascending=False).head(50).rename("price_$perMWh").to_frame()
-        st.write("Marjinal fiyat en yüksek 50 saat")
-        st.dataframe(worst_price)
+        p_batt = n.storage_units_t.p["Battery"].copy()
+        soc = n.storage_units_t.state_of_charge["Battery"].copy()
+        charge_mwh = float((-p_batt.clip(upper=0)).sum())
+        discharge_mwh = float((p_batt.clip(lower=0)).sum())
+        throughput_mwh = charge_mwh + discharge_mwh
+        soc_min = float(soc.min()) if len(soc) else 0.0
+        soc_max = float(soc.max()) if len(soc) else 0.0
+        cycles = (discharge_mwh / e_cap) if e_cap > 0 else 0.0
+        u1, u2, u3, u4 = st.columns(4)
+        u1.metric("Charge (GWh)", f"{charge_mwh/1000:,.1f}")
+        u2.metric("Discharge (GWh)", f"{discharge_mwh/1000:,.1f}")
+        u3.metric("Throughput (GWh)", f"{throughput_mwh/1000:,.1f}")
+        u4.metric("Approx cycles", f"{cycles:,.2f}")
+        v1, v2 = st.columns(2)
+        v1.metric("SOC min (MWh)", f"{soc_min:,.0f}")
+        v2.metric("SOC max (MWh)", f"{soc_max:,.0f}")
+        with st.expander("Battery time series (p ve SOC)", expanded=False):
+            st.line_chart(pd.DataFrame({"Battery_p_MW": p_batt, "SOC_MWh": soc}))
     except Exception:
-        st.caption("Marjinal fiyat serisi okunamadı (PyPSA sürüm farkı olabilir).")
+        st.caption("Batarya zaman serileri okunamadı (StorageUnit yok veya sürüm farkı).")
 
-    # -----------------------------
-    # Window chart: stacked generation + load line (Altair)
-    # -----------------------------
-    st.subheader("Saatlik pencere: üretim stack + Load çizgisi")
 
-    start_idx = st.slider("Başlangıç saati", 0, len(snapshots) - 168, 0, step=24)
-    win = pd.to_datetime(snapshots[start_idx:start_idx + 168])
+# -----------------------------
+# 8760 diagnostics
+# -----------------------------
+st.subheader("8760 Tanı Paneli (mevsimsellik + sorun tespiti)")
 
-    gen_w = gen.loc[win, show_cols].copy()
+# A) Monthly energy (TWh)
+show_cols = [c for c in gen.columns if c != "Load shedding"]
+monthly_twh = (gen[show_cols].resample("M").sum() / 1e6)
 
-    df_area = gen_w.reset_index().rename(columns={"index": "timestamp"})
-    df_area = df_area.melt(id_vars=["timestamp"], var_name="tech", value_name="mw")
+st.markdown("**Aylık üretim (TWh) – mevsimsellik**")
+st.bar_chart(monthly_twh)
 
-    df_line = pd.DataFrame({"timestamp": win, "mw": load_s.loc[win].values})
+# B) Load duration curve (8760)
+ldc = load_s.sort_values(ascending=False).reset_index(drop=True)
+st.markdown("**Load Duration Curve (8760)**")
+st.line_chart(ldc)
 
-    area = alt.Chart(df_area).mark_area().encode(
-        x=alt.X("timestamp:T", title="Zaman"),
-        y=alt.Y("mw:Q", stack=True, title="MW"),
-        color=alt.Color("tech:N", title="Üretim"),
-        tooltip=["timestamp:T", "tech:N", alt.Tooltip("mw:Q", format=",.0f")]
-    )
+# C) Balance (TotalGen - Load)
+total_gen = gen[show_cols].sum(axis=1)
+balance = (total_gen - load_s).rename("Balance_MW")
+st.markdown("**Arz - Talep (MW)** (negatif saat varsa -> ya load shedding ya da kısıt)")
+st.line_chart(balance)
 
-    line = alt.Chart(df_line).mark_line(strokeWidth=2).encode(
-        x="timestamp:T",
-        y=alt.Y("mw:Q", title=""),
-        tooltip=["timestamp:T", alt.Tooltip("mw:Q", title="Load (MW)", format=",.0f")]
-    )
+# D) Heatmap: choose series
+st.markdown("**Heatmap (Ay × Saat)**")
+hm_mode = st.selectbox("Heatmap metriği", ["Load shedding (MW)", "Balance (MW)", "Marginal price ($/MWh)"], index=0)
 
-    st.altair_chart(area + line, use_container_width=True)
+if hm_mode == "Load shedding (MW)":
+    if "Load shedding" in gen.columns:
+        hm_s = gen["Load shedding"].copy()
+    else:
+        hm_s = pd.Series(0.0, index=gen.index)
+elif hm_mode == "Balance (MW)":
+    hm_s = balance.copy()
+else:
+    # Marginal price
+    try:
+        hm_s = n.buses_t.marginal_price["TR"].copy()
+        hm_s.index = pd.to_datetime(hm_s.index)
+    except Exception:
+        hm_s = pd.Series(0.0, index=gen.index)
 
-    # -----------------------------
-    # Export
-    # -----------------------------
-    st.subheader("Çıktı indir")
-    st.download_button(
-        "dispatch_hourly.csv indir",
-        data=gen.reset_index().rename(columns={"index": "timestamp"}).to_csv(index=False).encode("utf-8"),
-        file_name="dispatch_hourly.csv",
-        mime="text/csv"
-    )
+df_hm = pd.DataFrame({
+    "ts": hm_s.index,
+    "month": hm_s.index.month,
+    "hour": hm_s.index.hour,
+    "value": pd.to_numeric(hm_s.values, errors="coerce")
+}).dropna()
+
+hm = alt.Chart(df_hm).mark_rect().encode(
+    x=alt.X("hour:O", title="Saat"),
+    y=alt.Y("month:O", title="Ay"),
+    color=alt.Color("value:Q", title=hm_mode),
+    tooltip=["month:O", "hour:O", alt.Tooltip("value:Q", title=hm_mode)]
+).properties(height=300)
+
+st.altair_chart(hm, use_container_width=True)
+
+# Worst hours table: by load shedding then by price
+
+# -----------------------------
+# Minimum storage suggestion (Adequacy scan)
+# -----------------------------
+st.subheader("Minimum gerekli depolama (Adequacy taraması)")
+st.caption("Amaç: Load shedding = 0 olacak şekilde en küçük (GW, GWh) depolamayı önermek. "
+           "Bu tarama maliyet-optimum değil; minimum yeterlilik içindir.")
+do_scan = st.button("Adequacy taramasını çalıştır (minimum depolama öner)", type="secondary")
+if do_scan:
+    P_list_gw = [0, 1, 2, 3, 4, 6, 8, 10, 15, 20, 25, 35]
+    H_list = [1, 2, 4, 6, 8]
+    rows = []
+    found = None
+    with st.spinner("Tarama çalışıyor..."):
+        for h in H_list:
+            for p_gw in P_list_gw:
+                # Basit yaklaşım: optimize kapalı, sabit batarya ile tekrar çöz
+                nn = pypsa.Network()
+                nn.set_snapshots(snapshots)
+                nn.add("Bus", "TR")
+                nn.add("Load", "Load", bus="TR", p_set=load_s.values)
+                # Aynı jeneratör seti
+                if cap_coal > 0:
+                    nn.add("Generator","Coal",bus="TR",p_nom=cap_coal,marginal_cost=safe_num(mc.get("Coal",0)),
+                           ramp_limit_up=RAMP_LIMITS["Coal"],ramp_limit_down=RAMP_LIMITS["Coal"],
+                           p_min_pu=float(coal_min),p_max_pu=float(coal_max))
+                if cap_lignite > 0:
+                    nn.add("Generator","Lignite",bus="TR",p_nom=cap_lignite,marginal_cost=safe_num(mc.get("Lignite",0)),
+                           ramp_limit_up=RAMP_LIMITS["Lignite"],ramp_limit_down=RAMP_LIMITS["Lignite"],
+                           p_min_pu=float(lignite_min),p_max_pu=float(lignite_max))
+                if cap_gas > 0:
+                    nn.add("Generator","Natural gas",bus="TR",p_nom=cap_gas,marginal_cost=safe_num(mc.get("Natural gas",0)),
+                           ramp_limit_up=RAMP_LIMITS["Natural gas"],ramp_limit_down=RAMP_LIMITS["Natural gas"],
+                           p_min_pu=float(gas_min),p_max_pu=float(gas_max))
+                if cap_nuclear > 0:
+                    nn.add("Generator","Nuclear",bus="TR",p_nom=cap_nuclear,marginal_cost=safe_num(mc.get("Nuclear",0)),
+                           p_min_pu=float(nuclear_min),p_max_pu=float(nuclear_max))
+                if cap_other > 0:
+                    nn.add("Generator","Other",bus="TR",p_nom=cap_other,marginal_cost=safe_num(mc.get("Other",0)),
+                           p_min_pu=float(other_min),p_max_pu=float(other_max))
+                if cap_wind > 0:
+                    nn.add("Generator","Wind (RES)",bus="TR",p_nom=cap_wind,marginal_cost=safe_num(mc.get("Wind (RES)",0)),
+                           p_max_pu=(wind_pmax.values * float(wind_max)))
+                if cap_solar > 0:
+                    nn.add("Generator","Solar (GES)",bus="TR",p_nom=cap_solar,marginal_cost=safe_num(mc.get("Solar (GES)",0)),
+                           p_max_pu=(solar_pmax.values * float(solar_max)))
+                if cap_hres > 0:
+                    nn.add("Generator","Hydro_Res",bus="TR",p_nom=cap_hres,marginal_cost=safe_num(mc.get("Hydro_Res",0)),
+                           p_min_pu=float(hydro_res_min),p_max_pu=(hydro_res_pmax.values * float(hydro_res_max)))
+                if cap_hror > 0:
+                    nn.add("Generator","Hydro_RoR",bus="TR",p_nom=cap_hror,marginal_cost=safe_num(mc.get("Hydro_RoR",0)),
+                           p_min_pu=float(hydro_ror_min),p_max_pu=(hydro_ror_pmax.values * float(hydro_ror_max)))
+                if p_gw > 0:
+                    eff_sd = float(np.sqrt(storage_eff_roundtrip))
+                    nn.add("StorageUnit","Battery",bus="TR",p_nom=p_gw*1000.0,max_hours=float(h),
+                           efficiency_store=eff_sd,efficiency_dispatch=eff_sd,
+                           standing_loss=float(storage_standing_loss),marginal_cost=float(storage_marginal_cost),
+                           cyclic_state_of_charge=True)
+                if use_voll:
+                    nn.add("Generator","Load shedding",bus="TR",p_nom=1e9,marginal_cost=float(voll))
+                nn.optimize(solver_name="highs")
+                shed = float(nn.generators_t.p["Load shedding"].sum()) if (use_voll and "Load shedding" in nn.generators_t.p.columns) else 0.0
+                rows.append({"P_GW": p_gw, "Hours": h, "E_GWh": p_gw*h, "Shed_MWh": shed})
+                if shed <= 1e-3 and found is None:
+                    found = (p_gw, h, p_gw*h)
+    df_scan = pd.DataFrame(rows)
+    st.dataframe(df_scan, use_container_width=True)
+    if found is None:
+        st.error("Tarama aralığında shedding=0 sağlayan depolama bulunamadı. P üst sınırını artırmayı deneyin.")
+    else:
+        p_gw, h, e_gwh = found
+        st.success(f"✅ Minimum depolama (Adequacy): {p_gw:.0f} GW / {e_gwh:.0f} GWh  (≈ {h} saat)")
+
+st.subheader("En kötü saatler (otomatik tespit)")
+if "Load shedding" in gen.columns and (gen["Load shedding"] > 1e-6).any():
+    worst_shed = gen["Load shedding"].sort_values(ascending=False).head(50).rename("unserved_MW").to_frame()
+    st.write("Load shedding en yüksek 50 saat")
+    st.dataframe(worst_shed)
+else:
+    st.info("Load shedding yok (veya sıfıra yakın). Fiyat/balance ile kontrol edebilirsin.")
+
+try:
+    price = n.buses_t.marginal_price["TR"].copy()
+    price.index = pd.to_datetime(price.index)
+    worst_price = price.sort_values(ascending=False).head(50).rename("price_$perMWh").to_frame()
+    st.write("Marjinal fiyat en yüksek 50 saat")
+    st.dataframe(worst_price)
+except Exception:
+    st.caption("Marjinal fiyat serisi okunamadı (PyPSA sürüm farkı olabilir).")
+
+# -----------------------------
+# Window chart: stacked generation + load line (Altair)
+# -----------------------------
+st.subheader("Saatlik pencere: üretim stack + Load çizgisi")
+
+start_idx = st.slider("Başlangıç saati", 0, len(snapshots) - 168, 0, step=24, key="dispatch_start_idx")
+win = pd.to_datetime(snapshots[start_idx:start_idx + 168])
+
+gen_w = gen.loc[win, show_cols].copy()
+
+df_area = gen_w.reset_index().rename(columns={"index": "timestamp"})
+df_area = df_area.melt(id_vars=["timestamp"], var_name="tech", value_name="mw")
+
+df_line = pd.DataFrame({"timestamp": win, "mw": load_s.loc[win].values})
+
+area = alt.Chart(df_area).mark_area().encode(
+    x=alt.X("timestamp:T", title="Zaman"),
+    y=alt.Y("mw:Q", stack=True, title="MW"),
+    color=alt.Color("tech:N", title="Üretim"),
+    tooltip=["timestamp:T", "tech:N", alt.Tooltip("mw:Q", format=",.0f")]
+)
+
+line = alt.Chart(df_line).mark_line(strokeWidth=2).encode(
+    x="timestamp:T",
+    y=alt.Y("mw:Q", title=""),
+    tooltip=["timestamp:T", alt.Tooltip("mw:Q", title="Load (MW)", format=",.0f")]
+)
+
+st.altair_chart(area + line, use_container_width=True)
+
+# -----------------------------
+# Export
+# -----------------------------
+st.subheader("Çıktı indir")
+st.download_button(
+    "dispatch_hourly.csv indir",
+    data=gen.reset_index().rename(columns={"index": "timestamp"}).to_csv(index=False).encode("utf-8"),
+    file_name="dispatch_hourly.csv",
+    mime="text/csv"
+)
