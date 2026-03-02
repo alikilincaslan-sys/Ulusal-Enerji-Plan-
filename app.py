@@ -332,3 +332,30 @@ if run_btn:
                 if _p.name == profiles_path.name:
                     continue
                 st.download_button(f"{_p.name} indir", data=_p.read_bytes(), file_name=_p.name, key=f"dl_{_p.name}")
+    # -----------------------------
+    # Download buttons
+    # -----------------------------
+    st.subheader("Parquet indir")
+    
+    # history_hourly.parquet
+    history_path = OUT_DIR / "history_hourly.parquet"
+    if history_path.exists():
+        with open(history_path, "rb") as f:
+            st.download_button(
+                label="⬇ history_hourly.parquet indir",
+                data=f,
+                file_name="history_hourly.parquet",
+                mime="application/octet-stream",
+            )
+    
+    # profiles_YYYY.parquet dosyaları
+    profile_files = sorted(OUT_DIR.glob("profiles_*.parquet"))
+    
+    for pf in profile_files:
+        with open(pf, "rb") as f:
+            st.download_button(
+                label=f"⬇ {pf.name} indir",
+                data=f,
+                file_name=pf.name,
+                mime="application/octet-stream",
+            )
